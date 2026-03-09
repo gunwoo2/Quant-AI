@@ -1,3 +1,10 @@
+/**
+ * App.jsx — QUANT AI 루트 컴포넌트
+ * 페이지 라우팅: MainDashboard ↔ StockDetail
+ *
+ * 현재 구현: React Router 없이 상태 기반 라우팅
+ * Phase 2에서 react-router-dom으로 교체 권장
+ */
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './Layout';
 import MainDashboard from './pages/MainDashboard';
@@ -18,7 +25,6 @@ function App() {
       <Layout>
         <Routes>
           {/* 기본 경로 설정 */}
-          <Route path="/" element={<Navigate to="/main" />} />
           <Route path="/main" element={<MainDashboard />} />
           <Route path="/main/:sectorId" element={<MainDashboard />} />
 

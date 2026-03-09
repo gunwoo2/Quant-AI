@@ -1,0 +1,40 @@
+/* global.css — QUANT AI Global Styles */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --cyan:      #00F5FF;
+  --black:     #000000;
+  --orange:    #D85604;
+  --scarlet:   #AD1B02;
+  --golden:    #E88D14;
+  --yolk:      #F3BE26;
+  --pink:      #E669A2;
+  --bg-dark:   #0f0f0f;
+  --card-bg:   #1a1a1a;
+  --border:    #2d2d2d;
+  --text-gray: #a0a0a0;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-dark);
+  color: #e8e8e8;
+  font-family: 'Inter', -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 스크롤바 */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #0a0a0a; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #3d3d3d; }
+
+/* 기본 버튼 리셋 */
+button { font-family: inherit; }
+input, select { font-family: inherit; }
+
+/* 선택 색상 */
+::selection { background: rgba(0, 245, 255, 0.2); color: #fff; }
