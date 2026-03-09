@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+
+<html lang="ko">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>Quant AI - 스마트 워치리스트</title>
+
+    <link rel="stylesheet" href="/static/style.css">
+
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+
+</head>
+
+<body>
+
+
+
+<div id="sidebar" class="sidebar">
+
+    <div class="sidebar-header">
+
+        <h2 class="logo-text">QUANT AI</h2>
+
+    </div>
+
+   
+
+    <div class="sidebar-scroll">
+
+        <div class="menu-group">
+
+            <a href="#" class="menu-item main-menu" id="dashboardMenu">
+
+                <i class="fa-solid fa-chart-pie"></i>
+
+                <span class="menu-text">대시보드</span>
+
+                <i class="fa-solid fa-chevron-down arrow rotate"></i>
+
+            </a>
+
+            <div class="sub-menu show" id="sectorSubMenu">
+
+                {% for code, s_info in SECTOR_INFO.items() %}
+
+                <a href="/dashboard/{{ code }}" class="sub-item {{ 'active' if current_sector == code else '' }}">
+
+                    {{ s_info.name }}
+
+                </a>
+
+                {% endfor %}
+
+            </div>
+
+        </div>
+
+       
+
+        <a href="https://finviz.com/map.ashx" target="_blank" class="menu-item">
+
+            <i class="fa-solid fa-fire"></i>
+
+            <span class="menu-text">히트맵</span>
+
+        </a>
+
+    </div>
+
+</div>
+
+
+
+<div id="main" class="main">
+
+    <div class="topbar">
+
+        <div class="left-section">
+
+            <button id="toggleBtn" class="toggle-btn"><i class="fa-solid fa-bars"></i></button>
+
+            <div class="header-info">
+
+                <h1>{{ sector_info.name }}</h1>
+
+            </div>
+
+        </div>
+
+       
+
+        <div class="add-ticker-container">
+
+            <input type="text" id="newTicker" placeholder="티커 (예: AAPL)">
+
+            <div class="divider"></div>
+
+            <select id="newSector">
+
+                {% for eng_code, kor_name in dropdown_sectors %}
+
+                    <option value="{{ eng_code }}">{{ kor_name }}</option>
+
+                {% endfor %}
+
+            </select>
+
+            <button class="add-btn" onclick="submit_add_ticker()">
+
+                <i class="fa-solid fa-plus"></i> 추가
+
+            </button>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="sector-card">
+
+        <div class="sector-icon"><i class="fa-solid {{ sector_info.icon }}"></i></div>
+
+        <div class="sector-info">
+
+            <div class="sector-badge">SECTOR INFO</div>
+
+            <h2>{{ sector_info.name }}</h2>
+
+            <p>{{ sector_info.desc }}</p>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="filter-bar">
+
+        <div class="search-box">
+
+            <i class="fa-solid fa-filter"></i>
+
+            <input type="text" id="tableFilter" placeholder="검색어를 입력하세요...">
+
+        </div>
+
+        <span class="current-date">Updated: 2026-02-18</span>
+
+    </div>
+
+
+
+    <div class="table-container">
+
+        <div class="table-scroll" id="tableWrapper">
+
+            <table id="stockTable">
+
+                <tr>
+
+                    <th>티커</th>
+
+                    <th>섹터</th>
+
+                    <th>현재가</th>
+
+                    <th>시가</th>
+
+                    <th>고가</th>
+
+                    <th>저가</th>
+
+                    <th>매수 시그널</th>
+
+                </tr>
+
+            </thead>
+
+            <tbody>
+
+                {% if stocks %}
+
+                    {% for stock in stocks %}
+
+                    <tr>
+
+                        <td><a href="/detail/{{ stock[0] }}" class="ticker-link">{{ stock[0] }}</a></td>
+
+                        <td><span class="sub-sector">{{ stock[5] }}</span></td>
+
+                        <td class="price-up">{{ stock[4] or '-' }}</td>
+
+                        <td>{{ stock[1] or '-' }}</td>
+
+                        <td>{{ stock[2] or '-' }}</td>
+
+                        <td>{{ stock[3] or '-' }}</td>
+
+                        <td>
+
+                            {% if stock[6] %}
+
+                                <span class="signal-badge buy">{{ stock[6] }}</span>
+
+                            {% else %}
+
+                                <span class="signal-badge" style="background:#444;">분석중</span>
+
+                            {% endif %}
+
+                        </td>
+
+                    </tr>
+
+                    {% endfor %}
+
+                {% else %}
+
+                    <tr>
+
+                        <td colspan="7" style="text-align:center;">데이터가 없습니다. 종목을 추가해 주세요.</td>
+
+                    </tr>
+
+                {% endif %}
+
+            </table>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+
+<script>
+
+// 자바스크립트 함수를 DOMContentLoaded 밖으로 빼거나 명확히 정의
+
+function submit_add_ticker() {
+
+    const tickerField = document.getElementById('newTicker');
+
+    const ticker = tickerField.value.trim().toUpperCase();
+
+    const sector = document.getElementById('newSector').value;
+
+
+
+    if (!ticker) {
+
+        alert("티커를 입력해 주세요!");
+
+        tickerField.focus();
+
+        return;
+
+    }
+
+
+
+    const formData = new FormData();
+
+    formData.append('ticker', ticker);
+
+    formData.append('sector', sector);
+
+
+
+    fetch('/add', {
+
+        method: 'POST',
+
+        body: formData
+
+    })
+
+    .then(response => {
+
+        window.location.href = response.url;
+
+    })
+
+    .catch(err => alert("오류가 발생했습니다."));
+
+}
+
+
+
+document.addEventListener("DOMContentLoaded", function() {
+
+    // 사이드바 토글
+
+    document.getElementById("dashboardMenu").addEventListener("click", function(e) {
+
+        e.preventDefault();
+
+        document.getElementById("sectorSubMenu").classList.toggle("show");
+
+        this.querySelector(".arrow").classList.toggle("rotate");
+
+    });
+
+
+
+    // 기존 toggleBtn 이벤트 리스너를 아래와 같이 수정
+
+    document.getElementById("toggleBtn").addEventListener("click", () => {
+
+    if (window.innerWidth <= 768) {
+
+        // 모바일일 때는 왼쪽에서 튀어나오게
+
+        document.getElementById("sidebar").classList.toggle("mobile-open");
+
+    } else {
+
+        // 데스크탑일 때는 기존처럼 너비 조절
+
+        document.getElementById("sidebar").classList.toggle("collapsed");
+
+        document.getElementById("main").classList.toggle("expanded");
+
+    }
+
+});
+
+
+
+    // 필터 기능
+
+    document.getElementById("tableFilter").addEventListener("keyup", function() {
+
+        const value = this.value.toLowerCase();
+
+        document.querySelectorAll("#stockTable tbody tr").forEach(row => {
+
+            row.style.display = row.textContent.toLowerCase().includes(value) ? "" : "none";
+
+        });
+
+    });
+
+
+
+    // =======================
+
+    // 드래그 스크롤 완전 동작 버전
+
+    // =======================
+
+    document.addEventListener("DOMContentLoaded", function () {
+
+
+
+        const slider = document.getElementById("tableWrapper");
+
+
+
+        let isDown = false;
+
+        let startX;
+
+        let scrollLeft;
+
+
+
+        slider.addEventListener("mousedown", (e) => {
+
+            isDown = true;
+
+            slider.classList.add("dragging");
+
+            startX = e.pageX;
+
+            scrollLeft = slider.scrollLeft;
+
+        });
+
+
+
+        document.addEventListener("mouseup", () => {
+
+            isDown = false;
+
+            slider.classList.remove("dragging");
+
+        });
+
+
+
+        slider.addEventListener("mousemove", (e) => {
+
+            if (!isDown) return;
+
+            e.preventDefault();
+
+            const walk = (e.pageX - startX);
+
+            slider.scrollLeft = scrollLeft - walk;
+
+        });
+
+
+
+    });
+
+
+
+});
+
+</script>
+
+</body>
+
+</html>/

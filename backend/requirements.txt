@@ -1,0 +1,11 @@
+flask
+flask-cors
+yfinance
+pandas
+numpy
+psycopg2-binary
+python-dotenv
+gunicorn
+scipy
+scikit-learn
+scikit-learn

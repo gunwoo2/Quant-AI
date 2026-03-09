@@ -1,0 +1,9 @@
+secret_info/
+.env
+venv/
+.venv/
+node_modules/
+__pycache__/
+.env
+secret_info/
+*.pyc
