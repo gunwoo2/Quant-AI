@@ -41,11 +41,11 @@ export default function Sidebar({ activeSector, onSectorClick }) {
       }}>
         {open && (
           <span style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: 14, fontWeight: 700,
-            color: C.primary, letterSpacing: 2,
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 14, fontWeight: 1000,
+            color: C.textGray, letterSpacing: 2,
           }}>
-            QUANT AI
+            SIDE BAR
           </span>
         )}
         <button onClick={() => setOpen(v => !v)} style={{
@@ -91,7 +91,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           <div style={{
             fontSize: 10, color: C.textMuted,
             letterSpacing: 1.5, padding: "4px 14px 8px",
-            fontFamily: "'IBM Plex Mono', monospace",
+            fontFamily: "'Inter', sans-serif",
           }}>
             API STATUS
           </div>
@@ -117,7 +117,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
               </span>
             )}
             <span style={{
-              fontFamily: "'IBM Plex Mono', monospace",
+              fontFamily: "'Inter', sans-serif",
               fontSize: 10, fontWeight: 700,
               // OK → primary(D85604) / 나머지 → 그레이
               color: a.ok ? C.primary : "#555555",
@@ -128,7 +128,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
         ))}
       </nav>
 
-      {/* ── 배치 정보 */}
+      {/* ── 배치 정보
       {open && (
         <div style={{
           borderTop: `1px solid ${C.border}`,
@@ -138,7 +138,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           <div>종목 <span style={{ color: C.textGray }}>510개</span></div>
           <div>배치 <span style={{ color: C.textGray }}>03-09 02:14</span></div>
         </div>
-      )}
+      )} */}
     </aside>
   );
 }
@@ -204,7 +204,7 @@ function SectorFlyout({ activeSector, onSelect }) {
       <div style={{
         padding: "10px 14px",
         borderBottom: `1px solid ${C.border}`,
-        fontFamily: "'IBM Plex Mono', monospace",
+        fontFamily: "'Inter', sans-serif",
         fontSize: 11, color: C.primary,
         letterSpacing: 1, fontWeight: 700,
       }}>
@@ -214,7 +214,7 @@ function SectorFlyout({ activeSector, onSelect }) {
       <div style={{
         display: "grid", gridTemplateColumns: "1fr 46px 54px 56px",
         padding: "5px 14px",
-        fontFamily: "'IBM Plex Mono', monospace",
+        fontFamily: "'Inter', sans-serif",
         fontSize: 10, color: C.textMuted,
         borderBottom: `1px solid ${C.border}`,
       }}>
@@ -267,7 +267,7 @@ function SectorRow({ sector, stat, active, onSelect }) {
             {sector.label}
           </div>
           <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
+            fontFamily: "'Inter', sans-serif",
             fontSize: 9, color: C.textMuted,
           }}>
             {sector.en}
@@ -275,20 +275,20 @@ function SectorRow({ sector, stat, active, onSelect }) {
         </div>
       </div>
       <div style={{
-        fontFamily: "'IBM Plex Mono', monospace",
+        fontFamily: "'Inter', sans-serif",
         fontSize: 11, color: C.textGray, textAlign: "right",
       }}>
         {stat.count}
       </div>
       <div style={{
-        fontFamily: "'IBM Plex Mono', monospace",
+        fontFamily: "'Inter', sans-serif",
         fontSize: 11, color: scoreColor,
         fontWeight: 700, textAlign: "right",
       }}>
         {stat.avgScore}
       </div>
       <div style={{
-        fontFamily: "'IBM Plex Mono', monospace",
+        fontFamily: "'Inter', sans-serif",
         fontSize: 11, color: C.pink, textAlign: "right",
       }}>
         {stat.topTicker}

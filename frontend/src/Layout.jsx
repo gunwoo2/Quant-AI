@@ -1,13 +1,14 @@
 import React from 'react';
 import Footer from './components/Footer'; // 푸터만 유지
 
+
 export default function Layout({ children }) {
   return (
     <div style={{ 
       display: 'flex', 
       flexDirection: 'column', // 위(본문) 아래(푸터) 배치
       minHeight: '100vh', 
-      backgroundColor: '#000',
+      backgroundColor: '#000000',
       width: '100%',
     }}>
       {/* 본문 영역: 본문이 짧아도 푸터를 바닥에 붙이기 위해 flex: 1 부여 */}

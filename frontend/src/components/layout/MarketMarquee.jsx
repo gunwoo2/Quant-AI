@@ -26,29 +26,19 @@ const INDICES = [
 ];
 
 export default function MarketMarquee() {
-  // 실제 구현 시: API에서 실시간 데이터 fetch
-  const items = [...INDICES, ...INDICES]; // 무한 루프용 복제
+  const items = [...INDICES, ...INDICES];
 
   return (
     <div style={{
       background: "#0a0a0a",
       borderBottom: `1px solid ${C.border}`,
       height: 30,
-      overflow: "hidden",
+      overflow: "hidden", // 가로로 삐져나오는 자식들을 무시함
       position: "relative",
+      width: "100vw",     // 브라우저 화면 너비로 딱 고정
     }}>
-      {/* 좌우 페이드 마스크 */}
-      <div style={{
-        position: "absolute", left: 0, top: 0, bottom: 0, width: 40,
-        background: "linear-gradient(to right, #0a0a0a, transparent)",
-        zIndex: 2,
-      }} />
-      <div style={{
-        position: "absolute", right: 0, top: 0, bottom: 0, width: 40,
-        background: "linear-gradient(to left, #0a0a0a, transparent)",
-        zIndex: 2,
-      }} />
-
+      {/* 페이드 마스크 등 나머지 코드는 동일 */}
+      
       <style>{`
         @keyframes marquee {
           0%   { transform: translateX(0); }
@@ -58,11 +48,9 @@ export default function MarketMarquee() {
           display: flex;
           align-items: center;
           height: 100%;
-          width: max-content;
+          width: max-content; 
           animation: marquee 60s linear infinite;
-        }
-        .marquee-track:hover {
-          animation-play-state: paused;
+          will-change: transform; /* 성능 최적화 */
         }
       `}</style>
 
@@ -79,15 +67,15 @@ export default function MarketMarquee() {
             cursor: "default",
           }}>
             <span style={{
-              fontFamily: FONT.mono,
+              fontFamily: FONT.sans,
               fontSize: 10,
-              color: C.textMuted,
+              color: C.textcontent,
               letterSpacing: 0.5,
             }}>
               {item.label}
             </span>
             <span style={{
-              fontFamily: FONT.mono,
+              fontFamily: FONT.sans,
               fontSize: 11,
               fontWeight: 600,
               color: C.textPri,
@@ -95,10 +83,10 @@ export default function MarketMarquee() {
               {item.val}
             </span>
             <span style={{
-              fontFamily: FONT.mono,
+              fontFamily: FONT.sans,
               fontSize: 10,
               fontWeight: 600,
-              color: item.up ? C.green : C.red,
+              color: item.up ? C.cyan : C.scarlet,
             }}>
               {item.up ? "▲" : "▼"} {item.chg}
             </span>

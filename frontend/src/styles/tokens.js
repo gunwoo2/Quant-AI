@@ -37,9 +37,11 @@ export const C = {
   textPri:   "#e8e8e8",
   textGray:  "#a0a0a0",
   textMuted: "#555555",
+  textcontent: "#b0b0b0",
 
   // ── 게이지 / 바
   gaugeTrack: "#2d2d2d",
+  gaugebar: "#686868"
 };
 
 export const FONT = {
@@ -50,12 +52,12 @@ export const FONT = {
 /** 등급 → 색상 */
 export const gradeColor = (g) => ({
   "S":  "#66ddee",
-  "A+": "#66ddee",
+  "A+": "#F3BE26",
   "A":  "#F3BE26",
-  "B+": "#E88D14",
-  "B":  "#E88D14",
-  "C":  "#D85604",
-  "D":  "#7a0000",
+  "B+": "#D85604",
+  "B":  "#D85604",
+  "C":  "#7a0000",
+  "D":  "#FF0033",
 }[g] ?? C.textGray);
 
 /** 등급 → 투자의견 레이블 */
