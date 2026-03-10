@@ -88,10 +88,10 @@ function PlaceholderPage({ label, sub }) {
       flex: 1, display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center", gap: 8,
     }}>
-      <div style={{ fontSize: 13, color: C.textMuted, fontFamily: "'IBM Plex Mono', monospace" }}>
+      <div style={{ fontSize: 13, color: C.textMuted, fontFamily: FONT.sans }}>
         {label}
       </div>
-      <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "'IBM Plex Mono', monospace" }}>
+      <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FONT.sans }}>
         {sub}
       </div>
     </div>

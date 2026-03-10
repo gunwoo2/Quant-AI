@@ -1,349 +1,296 @@
 /**
  * Sidebar.jsx
- * 좌측 사이드바
- * - 접기/펼치기 (240px ↔ 56px)
- * - SECTORS 커서 올리면 우측 flyout (SeekingAlpha 스타일)
- * - HOME, HEATMAP (새 탭), API STATUS
+ *
+ * 수정 사항
+ *   1. API STATUS 색상 → 그레이(#555) + D85604(primary) 2색만 사용
+ *   2. 전체 폰트 Inter
+ *   3. 글자 크기 업
  */
 
-import { useState, useRef } from "react";
-import { C, FONT, SECTORS, SECTOR_STATS, gradeColor } from "../../styles/tokens";
+import { useState } from "react";
+import { C, FONT, SECTORS, SECTOR_STATS } from "../../styles/tokens";
 
-const SIDEBAR_OPEN  = 220;
-const SIDEBAR_CLOSE = 52;
+const W_OPEN  = 210;
+const W_CLOSE = 54;
 
-export default function Sidebar({ onSectorClick, activeSector }) {
-  const [open, setOpen]               = useState(true);
-  const [sectorFlyout, setSectorFlyout] = useState(false);
-  const sectorRef = useRef(null);
-
-  const width = open ? SIDEBAR_OPEN : SIDEBAR_CLOSE;
+export default function Sidebar({ activeSector, onSectorClick }) {
+  const [open,        setOpen]        = useState(true);
+  const [showFlyout,  setShowFlyout]  = useState(false);
 
   return (
-    <>
-      <aside style={{
-        width,
-        minWidth: width,
-        height: "100%",
-        background: "#0a0a0a",
-        borderRight: `1px solid ${C.border}`,
-        display: "flex",
-        flexDirection: "column",
-        transition: "width 0.2s ease",
-        overflow: "visible",
-        position: "relative",
-        zIndex: 50,
+    <aside style={{
+      width:    open ? W_OPEN : W_CLOSE,
+      minWidth: open ? W_OPEN : W_CLOSE,
+      height:   "100%",
+      background: "#0a0a0a",
+      borderRight: `1px solid ${C.border}`,
+      display: "flex", flexDirection: "column",
+      transition: "width 0.2s ease",
+      position: "relative", zIndex: 50,
+      flexShrink: 0, overflow: "visible",
+      fontFamily: "'Inter', sans-serif",
+    }}>
+
+      {/* ── 로고 + 토글 */}
+      <div style={{
+        display: "flex", alignItems: "center",
+        justifyContent: open ? "space-between" : "center",
+        padding: open ? "0 14px" : 0,
+        height: 52, borderBottom: `1px solid ${C.border}`,
         flexShrink: 0,
       }}>
-        {/* ── 로고 + 토글 */}
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: open ? "space-between" : "center",
-          padding: open ? "0 16px" : "0",
-          height: 52,
-          borderBottom: `1px solid ${C.border}`,
-          flexShrink: 0,
+        {open && (
+          <span style={{
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 14, fontWeight: 700,
+            color: C.primary, letterSpacing: 2,
+          }}>
+            QUANT AI
+          </span>
+        )}
+        <button onClick={() => setOpen(v => !v)} style={{
+          background: "none", border: "none",
+          color: C.textGray, cursor: "pointer",
+          padding: 8, fontSize: 15, lineHeight: 1,
         }}>
-          {open && (
-            <span style={{
-              fontFamily: FONT.mono,
-              fontSize: 14,
-              fontWeight: 700,
-              color: C.cyan,
-              letterSpacing: 2,
-            }}>
-              QUANT AI
-            </span>
+          {open ? "✕" : "☰"}
+        </button>
+      </div>
+
+      {/* ── 메뉴 */}
+      <nav style={{ flex: 1, padding: "6px 0", overflow: "visible" }}>
+
+        {/* HOME */}
+        <NavItem icon="🏠" label="HOME" open={open}
+          onClick={() => window.open(window.location.origin + "/main", "_blank")} />
+
+        {/* SECTORS + flyout */}
+        <div style={{ position: "relative" }}
+          onMouseEnter={() => setShowFlyout(true)}
+          onMouseLeave={() => setShowFlyout(false)}
+        >
+          <NavItem icon="📊" label="SECTORS" open={open}
+            active={!!activeSector} arrow={open} />
+          {showFlyout && (
+            <SectorFlyout
+              activeSector={activeSector}
+              onSelect={(key) => { onSectorClick?.(key); setShowFlyout(false); }}
+            />
           )}
-          <button
-            onClick={() => setOpen(v => !v)}
-            style={{
-              background: "none",
-              border: "none",
-              color: C.textGray,
-              cursor: "pointer",
-              padding: 8,
-              fontSize: 16,
-              lineHeight: 1,
-              flexShrink: 0,
-            }}
-            title={open ? "사이드바 닫기" : "사이드바 열기"}
-          >
-            {open ? "✕" : "☰"}
-          </button>
         </div>
 
-        {/* ── 메뉴 항목들 */}
-        <nav style={{ flex: 1, padding: "8px 0", overflowY: "auto", overflowX: "visible" }}>
+        {/* HEATMAP */}
+        <NavItem icon="🔥" label="HEATMAP" open={open}
+          onClick={() => window.open("https://finviz.com/map.ashx", "_blank")} />
 
-          {/* HOME */}
-          <NavItem
-            icon="🏠"
-            label="HOME"
-            open={open}
-            onClick={() => window.open(window.location.href, "_blank")}
-          />
+        {/* 구분선 */}
+        <div style={{ height: 1, background: C.border, margin: open ? "10px 14px" : "10px 10px" }} />
 
-          {/* HEATMAP → finviz 새탭 */}
-          <NavItem
-            icon="🔥"
-            label="HEATMAP"
-            open={open}
-            onClick={() => window.open("https://finviz.com/map.ashx", "_blank")}
-          />
-
-          {/* ── SECTORS + flyout */}
-          <div style={{ position: "relative" }} ref={sectorRef}>
-            <SectionLabel open={open} label="SECTORS" />
-            <div
-              onMouseEnter={() => setSectorFlyout(true)}
-              onMouseLeave={() => setSectorFlyout(false)}
-            >
-              {SECTORS.map(s => (
-                <NavItem
-                  key={s.key}
-                  icon={s.icon}
-                  label={open ? s.label : ""}
-                  subLabel={open ? s.en : ""}
-                  open={open}
-                  active={activeSector === s.key}
-                  onClick={() => onSectorClick?.(s.key)}
-                />
-              ))}
-
-              {/* Flyout 패널 */}
-              {sectorFlyout && (
-                <SectorFlyout onClose={() => setSectorFlyout(false)} onSelect={onSectorClick} />
-              )}
-            </div>
-          </div>
-
-          {/* API STATUS */}
-          <SectionLabel open={open} label="API STATUS" />
-          <div style={{ padding: open ? "4px 12px 8px" : "4px 0 8px" }}>
-            {[
-              { label: "FDR (OHLCV)",   status: "OK",   color: C.green },
-              { label: "SEC EDGAR",     status: "OK",   color: C.green },
-              { label: "KIS API",       status: "OK",   color: C.green },
-              { label: "DART (KR)",     status: "IDLE", color: C.textMuted },
-              { label: "FINRA Short",   status: "T+1",  color: C.golden },
-              { label: "FRED API",      status: "OK",   color: C.green },
-            ].map(api => (
-              <div key={api.label} style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: open ? "space-between" : "center",
-                padding: open ? "3px 4px" : "4px 0",
-                gap: 6,
-              }}>
-                {open && (
-                  <span style={{
-                    fontFamily: FONT.mono,
-                    fontSize: 9,
-                    color: C.textMuted,
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    textOverflow: "ellipsis",
-                  }}>
-                    {api.label}
-                  </span>
-                )}
-                <span style={{
-                  fontFamily: FONT.mono,
-                  fontSize: 9,
-                  color: api.color,
-                  fontWeight: 700,
-                  flexShrink: 0,
-                }}>
-                  ●{open ? ` ${api.status}` : ""}
-                </span>
-              </div>
-            ))}
-          </div>
-        </nav>
-
-        {/* ── 배치 정보 (하단) */}
+        {/* API STATUS 타이틀 */}
         {open && (
           <div style={{
-            borderTop: `1px solid ${C.border}`,
-            padding: "8px 12px",
-            fontFamily: FONT.mono,
-            fontSize: 9,
-            color: C.textMuted,
-            lineHeight: 1.6,
+            fontSize: 10, color: C.textMuted,
+            letterSpacing: 1.5, padding: "4px 14px 8px",
+            fontFamily: "'IBM Plex Mono', monospace",
           }}>
-            <div>● 종목 수: <span style={{ color: C.textGray }}>510개</span></div>
-            <div>● 배치: <span style={{ color: C.textGray }}>03-09 02:14</span></div>
-            <div>● 다음: <span style={{ color: C.textGray }}>03-10 02:00</span></div>
+            API STATUS
           </div>
         )}
-      </aside>
-    </>
+
+        {/* API 항목 — 그레이 + primary 2색만 */}
+        {[
+          { label: "FDR",       status: "OK",   ok: true  },
+          { label: "SEC EDGAR", status: "OK",   ok: true  },
+          { label: "KIS API",   status: "OK",   ok: true  },
+          { label: "DART (KR)", status: "IDLE", ok: false },
+          { label: "FINRA",     status: "T+1",  ok: false },
+          { label: "FRED API",  status: "OK",   ok: true  },
+        ].map(a => (
+          <div key={a.label} style={{
+            display: "flex", alignItems: "center",
+            justifyContent: open ? "space-between" : "center",
+            padding: open ? "3px 14px" : "4px 0",
+          }}>
+            {open && (
+              <span style={{ fontSize: 11, color: C.textMuted }}>
+                {a.label}
+              </span>
+            )}
+            <span style={{
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 10, fontWeight: 700,
+              // OK → primary(D85604) / 나머지 → 그레이
+              color: a.ok ? C.primary : "#555555",
+            }}>
+              ●{open ? ` ${a.status}` : ""}
+            </span>
+          </div>
+        ))}
+      </nav>
+
+      {/* ── 배치 정보 */}
+      {open && (
+        <div style={{
+          borderTop: `1px solid ${C.border}`,
+          padding: "8px 14px",
+          fontSize: 11, color: C.textMuted, lineHeight: 1.7,
+        }}>
+          <div>종목 <span style={{ color: C.textGray }}>510개</span></div>
+          <div>배치 <span style={{ color: C.textGray }}>03-09 02:14</span></div>
+        </div>
+      )}
+    </aside>
   );
 }
 
-// ── 서브 컴포넌트: NavItem
-function NavItem({ icon, label, subLabel, open, active, onClick }) {
-  const [hovered, setHovered] = useState(false);
+/* ── NavItem ──────────────────────────────────── */
+function NavItem({ icon, label, open, active, arrow, onClick }) {
+  const [hov, setHov] = useState(false);
   return (
     <button
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      title={!open ? label : undefined}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
+        display: "flex", alignItems: "center", gap: 10,
         width: "100%",
-        padding: open ? "8px 16px" : "10px 0",
+        padding: open ? "10px 14px" : "11px 0",
         justifyContent: open ? "flex-start" : "center",
-        background: active ? `${C.cyan}12` : hovered ? `${C.border}60` : "none",
+        background: active ? `${C.primary}18` : hov ? "#1a1a1a" : "none",
         border: "none",
-        borderLeft: active ? `2px solid ${C.cyan}` : "2px solid transparent",
-        cursor: "pointer",
-        transition: "background 0.12s",
-        textAlign: "left",
+        borderLeft: active ? `2px solid ${C.primary}` : "2px solid transparent",
+        cursor: "pointer", transition: "background 0.12s",
       }}
     >
-      <span style={{ fontSize: 14, flexShrink: 0 }}>{icon}</span>
+      <span style={{ fontSize: 15, flexShrink: 0 }}>{icon}</span>
       {open && (
-        <div style={{ overflow: "hidden" }}>
-          <div style={{
-            fontFamily: FONT.sans,
-            fontSize: 12,
-            fontWeight: 500,
-            color: active ? C.cyan : hovered ? C.textPri : C.textGray,
-            whiteSpace: "nowrap",
+        <>
+          <span style={{
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 13, fontWeight: 500, flex: 1,
+            color: active ? C.primary : hov ? "#e8e8e8" : C.textGray,
           }}>
             {label}
-          </div>
-          {subLabel && (
-            <div style={{
-              fontFamily: FONT.mono,
-              fontSize: 9,
-              color: C.textMuted,
-              letterSpacing: 0.5,
-            }}>
-              {subLabel}
-            </div>
-          )}
-        </div>
+          </span>
+          {arrow && <span style={{ fontSize: 10, color: C.textMuted }}>›</span>}
+        </>
       )}
     </button>
   );
 }
 
-// ── 서브 컴포넌트: SectionLabel
-function SectionLabel({ open, label }) {
-  if (!open) return <div style={{ height: 8 }} />;
+/* ── SectorFlyout ─────────────────────────────── */
+function SectorFlyout({ activeSector, onSelect }) {
   return (
     <div style={{
-      fontFamily: FONT.mono,
-      fontSize: 9,
-      color: C.textMuted,
-      letterSpacing: 1.5,
-      padding: "12px 16px 4px",
-    }}>
-      {label}
-    </div>
-  );
-}
-
-// ── 서브 컴포넌트: SectorFlyout (SeekingAlpha 스타일)
-function SectorFlyout({ onSelect }) {
-  return (
-    <div style={{
-      position: "absolute",
-      left: "100%",
-      top: 0,
-      width: 320,
-      background: "#111",
+      position: "absolute", left: "100%", top: 0,
+      width: 310,
+      background: "#0d0d0d",
       border: `1px solid ${C.border}`,
-      borderRadius: 4,
-      boxShadow: "0 8px 32px rgba(0,0,0,0.8)",
-      zIndex: 200,
-      overflow: "hidden",
+      borderLeft: `2px solid ${C.primary}`,
+      borderRadius: "0 4px 4px 0",
+      boxShadow: "6px 0 28px rgba(0,0,0,0.85)",
+      zIndex: 200, overflow: "hidden",
+      animation: "flyoutIn 0.15s ease",
+      fontFamily: "'Inter', sans-serif",
     }}>
-      {/* 헤더 */}
+      <style>{`
+        @keyframes flyoutIn {
+          from { opacity: 0; transform: translateX(-8px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+      `}</style>
+
       <div style={{
-        padding: "10px 16px",
+        padding: "10px 14px",
         borderBottom: `1px solid ${C.border}`,
-        fontFamily: FONT.mono,
-        fontSize: 10,
-        color: C.cyan,
-        letterSpacing: 1,
-        fontWeight: 700,
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 11, color: C.primary,
+        letterSpacing: 1, fontWeight: 700,
       }}>
-        SECTORS · 섹터별 현황
+        SECTORS
       </div>
 
-      {/* 테이블 헤더 */}
       <div style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 50px 60px 80px",
-        padding: "5px 16px",
-        fontFamily: FONT.mono,
-        fontSize: 9,
-        color: C.textMuted,
+        display: "grid", gridTemplateColumns: "1fr 46px 54px 56px",
+        padding: "5px 14px",
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 10, color: C.textMuted,
         borderBottom: `1px solid ${C.border}`,
       }}>
         <span>섹터</span>
         <span style={{ textAlign: "right" }}>종목</span>
-        <span style={{ textAlign: "right" }}>평균점수</span>
+        <span style={{ textAlign: "right" }}>Avg</span>
         <span style={{ textAlign: "right" }}>TOP</span>
       </div>
 
-      {/* 섹터 행 */}
-      {SECTORS.map(s => {
-        const stat = SECTOR_STATS[s.key];
-        return (
-          <SectorRow key={s.key} sector={s} stat={stat} onSelect={onSelect} />
-        );
-      })}
+      {SECTORS.map(s => (
+        <SectorRow key={s.key} sector={s} stat={SECTOR_STATS[s.key]}
+          active={activeSector === s.key}
+          onSelect={onSelect} />
+      ))}
     </div>
   );
 }
 
-function SectorRow({ sector, stat, onSelect }) {
-  const [hovered, setHovered] = useState(false);
+function SectorRow({ sector, stat, active, onSelect }) {
+  const [hov, setHov] = useState(false);
+  // Avg 점수 색: 높으면 cyan, 중간 golden, 낮으면 scarlet
   const scoreColor =
-    stat.avgScore >= 65 ? C.green :
-    stat.avgScore >= 50 ? C.golden : C.red;
+    stat.avgScore >= 65 ? C.cyan :
+    stat.avgScore >= 50 ? C.golden : C.scarlet;
 
   return (
     <button
-      onClick={() => onSelect?.(sector.key)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onClick={() => onSelect(sector.key)}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
       style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 50px 60px 80px",
-        padding: "7px 16px",
-        width: "100%",
-        background: hovered ? `${C.border}40` : "none",
+        display: "grid", gridTemplateColumns: "1fr 46px 54px 56px",
+        padding: "8px 14px", width: "100%",
+        background: active ? `${C.primary}18` : hov ? "#1a1a1a" : "none",
         border: "none",
+        borderLeft: active ? `2px solid ${C.primary}` : "2px solid transparent",
         borderBottom: `1px solid ${C.border}20`,
-        cursor: "pointer",
-        textAlign: "left",
+        cursor: "pointer", textAlign: "left",
         transition: "background 0.1s",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         <span style={{ fontSize: 12 }}>{sector.icon}</span>
         <div>
-          <div style={{ fontFamily: FONT.sans, fontSize: 11, color: C.textPri }}>{sector.label}</div>
-          <div style={{ fontFamily: FONT.mono, fontSize: 9, color: C.textMuted }}>{sector.en}</div>
+          <div style={{
+            fontSize: 12,
+            color: active ? C.primary : hov ? "#e8e8e8" : C.textGray,
+            fontWeight: active ? 600 : 400,
+          }}>
+            {sector.label}
+          </div>
+          <div style={{
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 9, color: C.textMuted,
+          }}>
+            {sector.en}
+          </div>
         </div>
       </div>
-      <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.textGray, textAlign: "right" }}>
+      <div style={{
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 11, color: C.textGray, textAlign: "right",
+      }}>
         {stat.count}
       </div>
-      <div style={{ fontFamily: FONT.mono, fontSize: 11, color: scoreColor, textAlign: "right", fontWeight: 700 }}>
+      <div style={{
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 11, color: scoreColor,
+        fontWeight: 700, textAlign: "right",
+      }}>
         {stat.avgScore}
       </div>
-      <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.cyan, textAlign: "right" }}>
+      <div style={{
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 11, color: C.pink, textAlign: "right",
+      }}>
         {stat.topTicker}
       </div>
     </button>

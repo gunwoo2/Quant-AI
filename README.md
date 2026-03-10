@@ -23,15 +23,23 @@ quant-ai/
 │   ├── secret_info/
 │   │   └── config.py
 │   └── main.py
-├── frontend/
-│   └── src/
-│       ├── pages/
-│       │   ├── MainDashboard.jsx    # 메인 스크리너
-│       │   └── StockDetail.jsx      # 종목 상세 (탭: QUANT·SIGNALS·CHART·FINANCIALS)
-│       └── components/
-│           ├── Sidebar.jsx
-│           ├── MainTable.jsx
-│           └── QuantRatingTab.jsx
+├── frontend/src/                   # 🚀 [Front 재설계 中]
+│   ├── App.jsx                     # 루트 — React Router 기반 페이지 라우팅
+│   ├── pages/
+│   │   ├── MainDashboard.jsx       # 메인 페이지 (TopBar + Sidebar + Table 조립)
+│   │   └── StockDetail.jsx         # 종목 상세 (기존 유지 및 추후 통합 예정)
+│   ├── components/
+│   │   ├── layout/                 # 공통 레이아웃 컴포넌트
+│   │   │   ├── TopBar.jsx          # 상단 네비게이션 탭
+│   │   │   ├── MarketMarquee.jsx   # 실시간 지수 스크롤 티커 (Ticker Tape)
+│   │   │   ├── MarketStatus.jsx    # 시장 개장 상태 (US/KR 시간 및 상태 표시)
+│   │   │   └── Sidebar.jsx         # 섹터 필터 및 접이식 사이드바
+│   │   └── dashboard/              # 대시보드 전용 컴포넌트
+│   │       ├── StockTable.jsx      # 메인 스톡 리스트 (필터/정렬/CRUD)
+│   │       └── Modals.jsx          # 종목 추가 및 삭제 확인 팝업
+│   └── styles/
+│       ├── tokens.js               # 디자인 시스템 (색상·폰트·상수값) ★핵심
+│       └── global.css              # 전역 스타일 및 CSS 변수 설정
 ├── docs/
 │   └── QUANT_AI_설계서_v2.0.docx
 └── README.md
