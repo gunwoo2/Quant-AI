@@ -53,46 +53,59 @@ quant-ai/
 └── README.md
 
 ```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🗑  레거시 파일 (비활성, 삭제 예정)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 🗑 레거시 파일 (비활성, 삭제 예정)
 
-components/Header.jsx           → layout/Topbar.jsx + dashboard/Modals.jsx 로 대체
-components/Sidebar.jsx          → layout/Sidebar.jsx 로 대체
-components/MainTable.jsx        → dashboard/StockTable.jsx 로 대체
-components/MarketHoursWidget.jsx→ layout/MarketStatus.jsx 로 대체
-pages/Dashboard.jsx             → pages/MainDashboard.jsx 로 대체
+| Legacy File | Replacement |
+|---|---|
+| `components/Header.jsx` | `layout/Topbar.jsx` + `dashboard/Modals.jsx` |
+| `components/Sidebar.jsx` | `layout/Sidebar.jsx` |
+| `components/MainTable.jsx` | `dashboard/StockTable.jsx` |
+| `components/MarketHoursWidget.jsx` | `layout/MarketStatus.jsx` |
+| `pages/Dashboard.jsx` | `pages/MainDashboard.jsx` |
+
+---
+
+## 🔗 데이터 흐름 요약
+
+### URL 파라미터 흐름
+
+/main/:sectorId
+└─ MainDashboard (useParams)
+├─ Sidebar (activeSector prop)
+└─ StockTable (filterSector prop → useEffect로 select 동기화)
 
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔗  데이터 흐름 요약
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### 상세 페이지 데이터 흐름
 
-URL 파라미터 흐름:
-  /main/:sectorId
-    └─ MainDashboard (useParams)
-         ├─ Sidebar      (activeSector prop)
-         └─ StockTable   (filterSector prop → useEffect로 select 동기화)
+/stock/:ticker/:tabId
+└─ StockDetail (GET /api/stock/detail/:ticker)
+└─ <Outlet context={{ ticker, header, realtime, quantData }}>
+└─ 각 탭 컴포넌트 (useOutletContext() 로 수신)
 
-상세 페이지 데이터 흐름:
-  /stock/:ticker/:tabId
-    └─ StockDetail (GET /api/stock/detail/:ticker)
-         └─ <Outlet context={{ ticker, header, realtime, quantData }}>
-              └─ 각 탭 컴포넌트 (useOutletContext() 로 수신)
 
-ADD TICKER 버튼 위치:
-  ① Topbar (항상 표시 — 메인 페이지)
-  ② StockDetail GlobalBar (항상 표시 — 상세 페이지)
+---
 
-디자인 토큰 의존 관계:
-  styles/tokens.js
-    ├─ C (색상 객체)          → 전 컴포넌트
-    ├─ FONT                   → 전 컴포넌트
-    ├─ SECTORS                → Sidebar, StockTable, Modals
-    ├─ SECTOR_STATS           → Sidebar SectorFlyout
-    ├─ MOCK_STOCKS            → StockTable (백엔드 연결 전 임시)
-    ├─ gradeColor(g)          → StockTable, QuantRatingTab
-    └─ gradeLabel(g)          → StockTable
+## ➕ ADD TICKER 버튼 위치
+
+1. **Topbar**  
+   - 항상 표시 (메인 페이지)
+
+2. **StockDetail GlobalBar**  
+   - 항상 표시 (상세 페이지)
+
+---
+
+## 🎨 디자인 토큰 의존 관계
+
+styles/tokens.js
+├─ C (색상 객체) → 전 컴포넌트
+├─ FONT → 전 컴포넌트
+├─ SECTORS → Sidebar, StockTable, Modals
+├─ SECTOR_STATS → Sidebar SectorFlyout
+├─ MOCK_STOCKS → StockTable (백엔드 연결 전 임시)
+├─ gradeColor(g) → StockTable, QuantRatingTab
+└─ gradeLabel(g) → StockTable
+
 ---
 
 ## 🗂 3-Layer 시그널 아키텍처
