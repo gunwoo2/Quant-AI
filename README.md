@@ -9,42 +9,90 @@
 
 ```
 quant-ai/
-├── backend/
+├── backend/                        # FastAPI 기반 백엔드
+│   ├── main.py                     # 앱 진입점 및 라우트 설정
 │   ├── routes/
-│   │   └── stock_routes.py          # API 엔드포인트 (6개)
+│   │   └── stock_routes.py         # 6개 핵심 API 엔드포인트 정의
 │   ├── services/
-│   │   ├── api_service.py           # 비즈니스 로직 (실시간 시세 통합)
-│   │   ├── kis_api_service.py       # KIS 실시간 시세 (상세 페이지 전용)
-│   │   ├── calculator.py            # 퀀트 점수 계산 (MOAT·VALUE·MOMENTUM·STABILITY)
-│   │   ├── db_pool.py               # ★ Connection Pool + TTL Cache
-│   │   └── sector_percentile.py     # ★ 섹터 Percentile 계산
+│   │   ├── api_service.py          # 실시간 시세 및 비즈니스 로직 통합
+│   │   ├── kis_api_service.py      # KIS API 연동 (상세 실시간 시세)
+│   │   ├── calculator.py           # 퀀트 점수 계산 엔진 (MOAT, VALUE 등)
+│   │   ├── db_pool.py              # ★ Connection Pool + TTL Cache 관리
+│   │   └── sector_percentile.py    # ★ 섹터 내 상대적 백분위 계산 로직
 │   ├── job/
-│   │   └── batch_ticker_item_daily.py   # 배치잡 (매일 02:00 KST)
-│   ├── secret_info/
-│   │   └── config.py
-│   └── main.py
-├── frontend/src/                   # 🚀 [Front 재설계 中]
-│   ├── App.jsx                     # 루트 — React Router 기반 페이지 라우팅
-│   ├── pages/
-│   │   ├── MainDashboard.jsx       # 메인 페이지 (TopBar + Sidebar + Table 조립)
-│   │   └── StockDetail.jsx         # 종목 상세 (기존 유지 및 추후 통합 예정)
-│   ├── components/
-│   │   ├── layout/                 # 공통 레이아웃 컴포넌트
-│   │   │   ├── TopBar.jsx          # 상단 네비게이션 탭
-│   │   │   ├── MarketMarquee.jsx   # 실시간 지수 스크롤 티커 (Ticker Tape)
-│   │   │   ├── MarketStatus.jsx    # 시장 개장 상태 (US/KR 시간 및 상태 표시)
-│   │   │   └── Sidebar.jsx         # 섹터 필터 및 접이식 사이드바
-│   │   └── dashboard/              # 대시보드 전용 컴포넌트
-│   │       ├── StockTable.jsx      # 메인 스톡 리스트 (필터/정렬/CRUD)
-│   │       └── Modals.jsx          # 종목 추가 및 삭제 확인 팝업
-│   └── styles/
-│       ├── tokens.js               # 디자인 시스템 (색상·폰트·상수값) ★핵심
-│       └── global.css              # 전역 스타일 및 CSS 변수 설정
-├── docs/
+│   │   └── batch_ticker_daily.py   # 매일 02:00 실행되는 데이터 배치 작업
+│   └── secret_info/
+│       └── config.py               # API 키 및 보안 설정 관리
+├── frontend/
+│   ├── src/                        # React(Vite) 프론트엔드
+│   │   ├── main.jsx                # 앱 마운트 및 진입점
+│   │   ├── App.jsx                 # 전역 라우터 및 Route 트리 정의
+│   │   ├── Layout.jsx              # 공통 레이아웃 래퍼 (Main/Footer)
+│   │   ├── api.js                  # Axios 인스턴스 (운영/로컬 URL 분기)
+│   │   ├── pages/                  # 페이지 단위 컴포넌트
+│   │   │   ├── MainDashboard.jsx   # 메인 스크리너 페이지
+│   │   │   └── StockDetail.jsx     # 종목 상세 페이지 (탭 레이아웃)
+│   │   ├── components/             # 기능별 재사용 컴포넌트
+│   │   │   ├── layout/             # Topbar, Sidebar, MarketMarquee, Status
+│   │   │   ├── dashboard/          # StockTable(필터/정렬), Modals(추가/삭제)
+│   │   │   ├── tabs/               # 상세 페이지 내 6개 분석 탭
+│   │   │   │   ├── SummaryTab.jsx      # 종합 요약 및 뉴스
+│   │   │   │   ├── QuantRatingTab.jsx  # Layer 1: 퀀트 점수 (Radar Chart)
+│   │   │   │   ├── NlpSignalTab.jsx    # Layer 2: 감성 분석 (AI Summary)
+│   │   │   │   ├── MarketSignalTab.jsx # Layer 3: 기술 지표 (Technical)
+│   │   │   │   ├── FinancialsTab.jsx   # 재무제표 (ECharts)
+│   │   │   │   └── HistoricalTab.jsx   # 가격 이력 (OHLCV)
+│   │   │   ├── TradingViewWidget.jsx   # 공용 차트 위젯 래퍼
+│   │   │   └── MetricCard.jsx          # 툴팁 포함 지표 카드
+│   │   └── styles/                 # 디자인 시스템
+│   │       ├── tokens.js           # ★ 색상, 폰트, 섹터/Mock 데이터 상수
+│   │       └── global.css          # 전역 스타일 및 CSS 변수
+│   └── package.json
+├── docs/                           # 프로젝트 설계 및 기술 문서
 │   └── QUANT_AI_설계서_v2.0.docx
 └── README.md
-```
 
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🗑  레거시 파일 (비활성, 삭제 예정)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+components/Header.jsx           → layout/Topbar.jsx + dashboard/Modals.jsx 로 대체
+components/Sidebar.jsx          → layout/Sidebar.jsx 로 대체
+components/MainTable.jsx        → dashboard/StockTable.jsx 로 대체
+components/MarketHoursWidget.jsx→ layout/MarketStatus.jsx 로 대체
+pages/Dashboard.jsx             → pages/MainDashboard.jsx 로 대체
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔗  데이터 흐름 요약
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+URL 파라미터 흐름:
+  /main/:sectorId
+    └─ MainDashboard (useParams)
+         ├─ Sidebar      (activeSector prop)
+         └─ StockTable   (filterSector prop → useEffect로 select 동기화)
+
+상세 페이지 데이터 흐름:
+  /stock/:ticker/:tabId
+    └─ StockDetail (GET /api/stock/detail/:ticker)
+         └─ <Outlet context={{ ticker, header, realtime, quantData }}>
+              └─ 각 탭 컴포넌트 (useOutletContext() 로 수신)
+
+ADD TICKER 버튼 위치:
+  ① Topbar (항상 표시 — 메인 페이지)
+  ② StockDetail GlobalBar (항상 표시 — 상세 페이지)
+
+디자인 토큰 의존 관계:
+  styles/tokens.js
+    ├─ C (색상 객체)          → 전 컴포넌트
+    ├─ FONT                   → 전 컴포넌트
+    ├─ SECTORS                → Sidebar, StockTable, Modals
+    ├─ SECTOR_STATS           → Sidebar SectorFlyout
+    ├─ MOCK_STOCKS            → StockTable (백엔드 연결 전 임시)
+    ├─ gradeColor(g)          → StockTable, QuantRatingTab
+    └─ gradeLabel(g)          → StockTable
 ---
 
 ## 🗂 3-Layer 시그널 아키텍처
