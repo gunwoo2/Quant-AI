@@ -1,6 +1,6 @@
 /**
  * SummaryTab.jsx
- * 순서 변경: 차트 -> 시그널&히스토리(병렬) -> 지표 영역 -> 뉴스 그리드(3열)
+ * 개선 사항: 반응형 UI 최적화, 시그널 배너 레이아웃 수정, 가독성 강화
  */
 import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -51,16 +51,16 @@ export default function SummaryTab() {
     api.get(`/api/stock/rating-history/${ticker}`)
       .then(res => setRatingHistory(res.data || []))
       .catch(() => setRatingHistory([
-        { date: '2026-02-28', grade: 'S',  color: '#00F5FF', desc: 'Alpha Peak',    score: 88.4 },
+        { date: '2026-02-28', grade: 'S',  color: '#00F5FF', desc: 'Alpha Peak',     score: 88.4 },
         { date: '2026-02-14', grade: 'A+', color: '#00F5FF', desc: 'High Conviction', score: 80.1 },
-        { date: '2026-01-31', grade: 'A',  color: '#D85604', desc: 'Growth Stable',   score: 71.3 },
-        { date: '2025-12-28', grade: 'A',  color: '#D85604', desc: 'Growth Stable',   score: 68.9 },
+        { date: '2026-01-31', grade: 'A',  color: '#D85604', desc: 'Growth Stable',    score: 71.3 },
+        { date: '2025-12-28', grade: 'A',  color: '#D85604', desc: 'Growth Stable',    score: 68.9 },
       ]));
   }, [ticker]);
 
   const valuationStats = [
     { label: 'EPS (TTM)',     value: realtime?.eps       ? `$${Number(realtime.eps).toFixed(2)}`       : 'N/A', tooltip: { title: 'EPS', formula: '당기순이익 ÷ 총발행주식', meaning: '1주가 벌어들인 돈', standard: '우상향이 좋습니다.' } },
-    { label: 'PER (실시간)',   value: realtime?.per       ? `${Number(realtime.per).toFixed(2)}x`       : 'N/A', tooltip: { title: 'PER', formula: '주가 ÷ EPS', meaning: '이익 대비 주가', standard: '15~20배가 적정선.' } },
+    { label: 'PER (실시간)',    value: realtime?.per       ? `${Number(realtime.per).toFixed(2)}x`       : 'N/A', tooltip: { title: 'PER', formula: '주가 ÷ EPS', meaning: '이익 대비 주가', standard: '15~20배가 적정선.' } },
     { label: 'Forward PER',    value: realtime?.forwardPer? `${Number(realtime.forwardPer).toFixed(2)}x`: 'N/A', tooltip: { title: 'Forward PER', formula: '주가 ÷ 예상 EPS', meaning: '미래 가치 대비 주가', standard: '현재 PER보다 낮으면 성장 신호.' } },
     { label: 'PBR',            value: realtime?.pbr       ? `${Number(realtime.pbr).toFixed(2)}`        : 'N/A', tooltip: { title: 'PBR', formula: '주가 ÷ BPS', meaning: '자산 대비 주가', standard: '1배 미만은 저평가.' } },
   ];
@@ -74,37 +74,50 @@ export default function SummaryTab() {
 
   const SectionHeader = ({ title, subTitle, question, description, color }) => (
     <div style={{ marginBottom: '15px', padding: '0 4px', borderTop: `2px solid ${color}`, paddingTop: '16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '6px' }}>
         <h3 style={{ color: '#fff', fontSize: '15px', margin: 0, fontWeight: '800' }}>{title}</h3>
         <span style={{ color: '#555', fontSize: '12px', fontWeight: '600' }}>({subTitle})</span>
-        <span style={{ backgroundColor: `${color}15`, color, padding: '2px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: '900', marginLeft: '8px', border: `1px solid ${color}33` }}>{question}</span>
+        <span style={{ backgroundColor: `${color}15`, color, padding: '2px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: '900', border: `1px solid ${color}33` }}>{question}</span>
       </div>
       <p style={{ color: '#777', fontSize: '12px', margin: 0, lineHeight: '1.5' }}>{description}</p>
     </div>
   );
 
-  const gridContainerStyle = { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', backgroundColor: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '12px', overflow: 'hidden', marginBottom: '30px' };
+  const gridContainerStyle = { 
+    display: 'grid', 
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', 
+    backgroundColor: '#0a0a0a', 
+    border: '1px solid #1a1a1a', 
+    borderRadius: '12px', 
+    overflow: 'hidden', 
+    marginBottom: '30px' 
+  };
+  
   const subTabStyle = isActive => ({ padding: '10px 20px', cursor: 'pointer', fontSize: '14px', fontWeight: '700', color: isActive ? '#D85604' : '#666', borderBottom: isActive ? '2px solid #D85604' : '2px solid transparent', transition: '0.3s' });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '25px', padding: '20px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '25px', padding: 'clamp(10px, 3vw, 20px)', maxWidth: '1600px', margin: '0 auto' }}>
 
       {/* ── 1. TradingView 차트 (최상단) ── */}
-      <div style={{ height: '450px', backgroundColor: '#111', borderRadius: '12px', overflow: 'hidden', border: '1px solid #222' }}>
+      <div style={{ height: 'clamp(300px, 50vh, 450px)', backgroundColor: '#111', borderRadius: '12px', overflow: 'hidden', border: '1px solid #222' }}>
         <TradingViewWidget symbol={ticker || 'AAPL'} />
       </div>
 
       {/* ── 2. 최종 시그널 배너 | AI Rating History (병렬 배치) ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr', gap: '20px', alignItems: 'stretch' }}>
+      <div style={{ 
+        display: 'grid', 
+        gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', 
+        gap: '20px' 
+      }}>
         <SignalBanner signal={signal} ticker={ticker} realtime={realtime} />
         
         {/* AI Rating History 카드 */}
-        <div style={{ padding: '25px', backgroundColor: '#0a0a0a', border: '1px solid #222', borderRadius: '24px', alignSelf: 'stretch' }}>
+        <div style={{ padding: '25px', backgroundColor: '#0a0a0a', border: '1px solid #222', borderRadius: '24px', display: 'flex', flexDirection: 'column' }}>
           <h3 style={{ color: '#fff', fontSize: '16px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800' }}>
             <span style={{ width: '3px', height: '15px', backgroundColor: '#D85604', display: 'inline-block' }} />
             AI Rating History
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             {ratingHistory.map((item, idx) => {
               const gColor = {
                 'S': '#00F5FF', 'A+': '#00F5FF', 'A': '#D85604',
@@ -127,25 +140,25 @@ export default function SummaryTab() {
               );
             })}
           </div>
-          <button style={{ width: '100%', marginTop: '15px', padding: '9px', borderRadius: '8px', backgroundColor: 'transparent', color: '#D85604', border: '1px solid #D85604', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}>
+          <button style={{ width: '100%', marginTop: '20px', padding: '12px', borderRadius: '8px', backgroundColor: 'transparent', color: '#D85604', border: '1px solid #D85604', fontWeight: '800', cursor: 'pointer', fontSize: '12px', transition: 'all 0.2s' }} onMouseOver={(e) => e.target.style.backgroundColor='#D856041a'} onMouseOut={(e) => e.target.style.backgroundColor='transparent'}>
             Download Report (PDF)
           </button>
         </div>
       </div>
 
       {/* ── 3. 지표 영역 ── */}
-      <div style={{ padding: '28px', backgroundColor: '#0f0f0f', borderRadius: '20px', border: '1px solid #1a1a1a', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+      <div style={{ padding: 'clamp(15px, 4vw, 28px)', backgroundColor: '#0f0f0f', borderRadius: '20px', border: '1px solid #1a1a1a', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
         <SectionHeader title="Valuation" subTitle="가치 평가" question="Value: 주가가 저렴한가?" description="현재 주가가 기업의 내재가치나 이익 대비 어느 수준인지 측정합니다." color="#D85604" />
         <div style={gridContainerStyle}>
-          {valuationStats.map((stat, idx) => <MetricCard key={idx} {...stat} isLastInRow={idx === 3} accentColor="#D85604" />)}
+          {valuationStats.map((stat, idx) => <MetricCard key={idx} {...stat} accentColor="#D85604" />)}
         </div>
         <SectionHeader title="Profitability" subTitle="수익성 분석" question="Quality: 돈을 얼마나 잘 버는가?" description="자본과 자산을 얼마나 효율적으로 사용하여 이익을 창출하는지 측정합니다." color="#F3BE26" />
         <div style={gridContainerStyle}>
-          {profitabilityStats.map((stat, idx) => <MetricCard key={idx} {...stat} isLastInRow={idx === 3} accentColor="#F3BE26" />)}
+          {profitabilityStats.map((stat, idx) => <MetricCard key={idx} {...stat} accentColor="#F3BE26" />)}
         </div>
       </div>
 
-      {/* ── 4. 뉴스 섹션 (그리드 레이아웃 변경) ── */}
+      {/* ── 4. 뉴스 섹션 ── */}
       <div>
         <div style={{ display: 'flex', borderBottom: '1px solid #222', marginBottom: '20px' }}>
           <div style={subTabStyle(activeNewsTab === 'news')} onClick={() => setActiveNewsTab('news')}>Latest Intelligence</div>
@@ -154,12 +167,13 @@ export default function SummaryTab() {
         {newsLoading ? (
           <div style={{ color: '#D85604', textAlign: 'center', padding: '40px' }}>Loading Intel...</div>
         ) : displayList.length > 0 ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '20px' }}>
             {displayList.map((item, idx) => (
               <div key={idx} onClick={() => window.open(item.url, '_blank')} style={{ 
                 backgroundColor: '#0a0a0a', borderRadius: '12px', border: '1px solid #1a1a1a', 
-                overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column'
-              }}>
+                overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column',
+                transition: 'transform 0.2s ease',
+              }} onMouseOver={(e) => e.currentTarget.style.transform='translateY(-4px)'} onMouseOut={(e) => e.currentTarget.style.transform='translateY(0)'}>
                 <div style={{ height: '160px', backgroundColor: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                   {item.thumbnail 
                     ? <img src={item.thumbnail} alt="thumb" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -167,7 +181,7 @@ export default function SummaryTab() {
                   }
                 </div>
                 <div style={{ padding: '15px', flex: 1 }}>
-                  <div style={{ display: 'flex', gap: '10px', marginBottom: '8px', fontSize: '11px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '11px' }}>
                     <span style={{ color: '#D85604', fontWeight: '700' }}>{item.source}</span>
                     <span style={{ color: '#555' }}>{item.time}</span>
                   </div>
@@ -185,7 +199,7 @@ export default function SummaryTab() {
   );
 }
 
-/* ── 최종 매수/매도 시그널 배너 ── */
+/* ── 최종 매수/매도 시그널 배너 (반응형 최적화) ── */
 function SignalBanner({ signal, ticker, realtime }) {
   if (!realtime) return null;
   const gColor = signal.color; 
@@ -198,37 +212,56 @@ function SignalBanner({ signal, ticker, realtime }) {
   return (
     <div style={{
       backgroundColor: '#0A0A0A', borderRadius: '24px', border: '1px solid #1A1A1A',
-      padding: '40px', position: 'relative', overflow: 'hidden',
-      display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'center', gap: '30px'
+      padding: 'clamp(20px, 5vw, 40px)', position: 'relative', overflow: 'hidden',
+      display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: '30px',
+      justifyContent: 'space-between'
     }}>
       <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '4px', backgroundColor: gColor, zIndex: 2 }} />
-      <div style={{ zIndex: 1 }}>
+      
+      {/* 점수 영역 */}
+      <div style={{ zIndex: 1, flex: '1 1 300px' }}>
         <div style={{ fontSize: '12px', fontWeight: '800', color: '#555', letterSpacing: '2px', marginBottom: '8px' }}>Final SCORE</div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '15px', marginBottom: '5px' }}>
-          <div style={{ fontSize: '72px', fontWeight: '900', color: gColor, lineHeight: '1', fontFamily: 'monospace' }}>{signal.score}</div>
-          <div style={{ fontSize: '24px', fontWeight: '900', color: gColor }}>{signal.label}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '15px', marginBottom: '5px' }}>
+          <div style={{ fontSize: 'clamp(48px, 10vw, 72px)', fontWeight: '900', color: gColor, lineHeight: '1', fontFamily: 'monospace' }}>{signal.score}</div>
+          <div style={{ fontSize: 'clamp(18px, 4vw, 24px)', fontWeight: '900', color: gColor }}>{signal.label}</div>
         </div>
-        <div style={{ marginTop: '20px', padding: '12px', backgroundColor: '#111', borderRadius: '12px', border: `1px solid ${gColor}20` }}>
+        <div style={{ marginTop: '20px', padding: '12px', backgroundColor: '#111', borderRadius: '12px', border: `1px solid ${gColor}20`, maxWidth: '400px' }}>
           <div style={{ color: gColor, fontSize: '10px', fontWeight: '800', marginBottom: '4px' }}>AI RECOMMENDATION</div>
           <div style={{ color: '#eee', fontSize: '13px', lineHeight: 1.4 }}>
             {signal.label === 'STRONG BUY' ? '적극 매수 및 비중 확대 권고' : signal.label === 'SELL' ? '포지션 축소 및 위험 관리 필요' : '현재 포지션 유지 및 관망'}
           </div>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', zIndex: 1 }}>
+
+      {/* 레이어 영역 */}
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'nowrap', zIndex: 1, overflowX: 'auto', paddingBottom: '5px' }}>
         {layers.map(l => (
-          <div key={l.key} style={{ padding: '15px 10px', borderRadius: '16px', backgroundColor: '#0f0f0f', border: '1px solid #1a1a1a', textAlign: 'center', minWidth: '85px' }}>
+          <div key={l.key} style={{ padding: '15px 10px', borderRadius: '16px', backgroundColor: '#0f0f0f', border: '1px solid #1a1a1a', textAlign: 'center', minWidth: '85px', flex: 1 }}>
             <div style={{ fontSize: '10px', color: '#555', fontWeight: '800', marginBottom: '5px' }}>{l.key}</div>
             <div style={{ fontSize: '22px', fontWeight: '900', color: l.score ? l.color : '#333', fontFamily: 'monospace' }}>{l.score ?? '—'}</div>
             <div style={{ fontSize: '9px', color: '#777', marginTop: '4px' }}>{l.label}</div>
           </div>
         ))}
       </div>
-      <div style={{ position: 'absolute', right: '15px', bottom: '-15px', fontSize: '150px', fontWeight: '900', color: '#131313', zIndex: 0, lineHeight: 1 }}>{realtime.grade}</div>
+
+      {/* 워터마크 (우측 하단 고정) */}
+      <div style={{ 
+        position: 'absolute', 
+        right: '10px', 
+        bottom: '-10px', 
+        fontSize: 'clamp(80px, 15vw, 150px)', 
+        fontWeight: '900', 
+        color: '#131313', 
+        zIndex: 0, 
+        lineHeight: 1,
+        pointerEvents: 'none',
+        userSelect: 'none'
+      }}>
+        {realtime.grade}
+      </div>
     </div>
   );
 }
-
 
 // import React, { useState, useEffect } from 'react';
 // import { useOutletContext } from 'react-router-dom';

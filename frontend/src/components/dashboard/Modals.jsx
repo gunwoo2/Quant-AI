@@ -114,7 +114,7 @@ export function AddTickerModal({ onClose, onAdd }) {
             borderColor: error ? C.red : C.border,
             color: C.cyan,
             letterSpacing: 2,
-            fontFamily: FONT.mono,
+            fontFamily: FONT.sans,
             fontSize: 15,
             fontWeight: 700,
           }}
@@ -153,7 +153,7 @@ export function AddTickerModal({ onClose, onAdd }) {
           <div style={{
             marginTop: 12, padding: "10px 14px",
             background: "#0a0a0a", border: `1px solid ${C.border}`,
-            borderRadius: 4, fontFamily: FONT.mono,
+            borderRadius: 4, fontFamily: FONT.sans,
             fontSize: 11, color: C.primary,
           }}>
             ⟳ {streamMsg}
@@ -210,14 +210,14 @@ export function DeleteConfirmModal({ tickers, onClose, onConfirm }) {
         </div>
 
         {/* 삭제 대상 티커 */}
-        <p style={{ fontFamily: FONT.mono, fontSize: 11, color: C.textMuted, marginBottom: 6 }}>삭제 대상:</p>
+        <p style={{ fontFamily: FONT.sans, fontSize: 11, color: C.textMuted, marginBottom: 6 }}>삭제 대상:</p>
         <div style={{
           display: "flex", flexWrap: "wrap", gap: 6,
           marginBottom: 20, maxHeight: 80, overflowY: "auto",
         }}>
           {tickers.map(t => (
             <span key={t} style={{
-              fontFamily: FONT.mono, fontSize: 11, color: C.primary,
+              fontFamily: FONT.sans, fontSize: 11, color: C.primary,
               background: `${C.primary}15`, border: `1px solid ${C.primary}40`,
               borderRadius: 3, padding: "2px 8px",
             }}>
@@ -238,7 +238,7 @@ export function DeleteConfirmModal({ tickers, onClose, onConfirm }) {
           placeholder="DELETE"
           style={{
             ...inputStyle,
-            fontFamily: FONT.mono, fontSize: 14, letterSpacing: 2,
+            fontFamily: FONT.sans, fontSize: 14, letterSpacing: 2,
             borderColor: canDelete ? C.red : C.border,
             color: canDelete ? C.red : C.textGray,
             textAlign: "center",
@@ -295,7 +295,7 @@ function ModalBox({ children, title, onClose, danger }) {
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
         <span style={{
-          fontFamily: FONT.mono, fontSize: 13, fontWeight: 700,
+          fontFamily: FONT.sans, fontSize: 13, fontWeight: 700,
           color: danger ? C.red : C.primary, letterSpacing: 0.5,
         }}>
           {title}
@@ -322,24 +322,24 @@ const inputStyle = {
 };
 
 const labelStyle = {
-  fontFamily: FONT.mono, fontSize: 10, fontWeight: 700,
+  fontFamily: FONT.sans, fontSize: 10, fontWeight: 700,
   color: C.primary, letterSpacing: 1, display: "block",
 };
 
 const primaryBtn = {
-  flex: 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+  flex: 1, fontFamily: FONT.sans, fontSize: 12, fontWeight: 700,
   letterSpacing: 0.5, background: C.primary, color: "#fff",
   border: "none", borderRadius: 4, padding: "10px 16px",
 };
 
 const secondaryBtn = {
-  fontFamily: FONT.mono, fontSize: 12, color: C.textGray,
+  fontFamily: FONT.sans, fontSize: 12, color: C.textGray,
   background: "none", border: `1px solid ${C.border}`,
   borderRadius: 4, padding: "10px 16px", cursor: "pointer",
 };
 
 const dangerBtn = {
-  flex: 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+  flex: 1, fontFamily: FONT.sans, fontSize: 12, fontWeight: 700,
   background: C.red, color: "#fff", border: "none",
   borderRadius: 4, padding: "10px 16px",
 };
