@@ -1,11 +1,18 @@
-flask
-flask-cors
-yfinance
-pandas
-numpy
+fastapi
+uvicorn[standard]
 psycopg2-binary
 python-dotenv
-gunicorn
-scipy
-scikit-learn
-scikit-learn
+pydantic
+cachetools
+
+# flask
+# flask-cors
+# yfinance
+# pandas
+# numpy
+# psycopg2-binary
+# python-dotenv
+# gunicorn
+# scipy
+# scikit-learn
+# scikit-learn
