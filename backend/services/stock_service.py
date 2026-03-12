@@ -159,3 +159,120 @@ def get_sector_list() -> list[dict]:
         result.append(item)
 
     return result
+
+def get_stock_detail(ticker: str) -> dict | None:
+    """
+    종목 상세 헤더 + 실시간 데이터.
+    없는 ticker면 None 반환 → 404 처리.
+    """
+    sql = """
+        SELECT
+            -- header
+            s.ticker,
+            s.company_name                      AS name,
+            s.description                       AS description,
+            s.listing_date                      AS listing_date,
+            e.exchange_code                     AS exchange,
+            sec.sector_name                     AS sector,
+            m.market_code                       AS market,
+
+            -- realtime
+            rt.current_price                    AS price,
+            rt.price_change                     AS amount_change,
+            rt.price_change_pct                 AS changes_percentage,
+
+            -- 등급/점수
+            fs.grade,
+            fs.weighted_score                   AS score,
+            fs.layer1_score                     AS l1,
+            fs.layer2_score                     AS l2,
+            fs.layer3_score                     AS l3,
+            fs.strong_buy_signal,
+            fs.strong_sell_signal,
+
+            -- 재무 지표 (최신 연간)
+            fin.eps_actual                      AS eps,
+            fin.roic,
+            fin.pb_ratio                        AS pbr,
+            fin.peg_ratio                       AS per
+
+        FROM stocks s
+        JOIN exchanges e
+            ON s.exchange_id = e.exchange_id
+        JOIN markets m
+            ON s.market_id = m.market_id
+        LEFT JOIN sectors sec
+            ON s.sector_id = sec.sector_id
+        LEFT JOIN stock_prices_realtime rt
+            ON s.stock_id = rt.stock_id
+        LEFT JOIN (
+            SELECT DISTINCT ON (stock_id)
+                stock_id, grade, weighted_score,
+                layer1_score, layer2_score, layer3_score,
+                strong_buy_signal, strong_sell_signal
+            FROM stock_final_scores
+            ORDER BY stock_id, calc_date DESC
+        ) fs ON s.stock_id = fs.stock_id
+        LEFT JOIN (
+            SELECT DISTINCT ON (stock_id)
+                stock_id, eps_actual, roic,
+                pb_ratio, peg_ratio
+            FROM stock_financials
+            WHERE report_type = 'ANNUAL'
+            ORDER BY stock_id, fiscal_year DESC
+        ) fin ON s.stock_id = fin.stock_id
+        WHERE s.ticker = %s
+          AND s.is_active = TRUE
+        LIMIT 1
+    """
+
+    with get_cursor() as cur:
+        cur.execute(sql, (ticker.upper(),))
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    row = dict(row)
+
+    # float 변환
+    float_fields = (
+        "price", "amount_change", "changes_percentage",
+        "score", "l1", "l2", "l3",
+        "eps", "roic", "pbr", "per"
+    )
+    for f in float_fields:
+        if row.get(f) is not None:
+            row[f] = float(row[f])
+
+    return {
+        "header": {
+            "ticker":      row["ticker"],
+            "name":        row["name"],
+            "description": row["description"],      # 배치잡에서 추후 업데이트
+            "exchange":    row["exchange"],
+            "sector":      row["sector"],
+            "market":      row["market"],
+            "listingDate": row["listing_date"],
+        },
+        "realtime": {
+            "price":             row.get("price"),
+            "change":            row.get("changes_percentage"),
+            "amount_change":     row.get("amount_change"),
+            "changesPercentage": row.get("changes_percentage"),
+            "grade":             row.get("grade"),
+            "score":             row.get("score"),
+            "l1":                row.get("l1"),
+            "l2":                row.get("l2"),
+            "l3":                row.get("l3"),
+            "eps":               row.get("eps"),
+            "per":               row.get("per"),
+            "forwardPer":        None,   # 배치잡에서 추후 업데이트
+            "pbr":               row.get("pbr"),
+            "roe":               None,   # 배치잡에서 추후 업데이트
+            "roa":               None,
+            "roic":              row.get("roic"),
+            "strong_buy_signal":  row.get("strong_buy_signal", False),
+            "strong_sell_signal": row.get("strong_sell_signal", False),
+        }
+    }    

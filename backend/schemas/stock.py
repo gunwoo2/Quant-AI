@@ -1,42 +1,67 @@
 from pydantic import BaseModel
 from typing import Optional
+from datetime import date
 
 
 class StockListItem(BaseModel):
-    """
-    /api/stocks 응답 단건. 프론트 StockTable.jsx 기준.
-    """
-    ticker:  str
-    name:    str
-    sector:  Optional[str] = None       # 섹터명 (sector_name)
-    country: Optional[str] = "US"       # 시장 코드 (market_code)
-
-    # 가격 (stock_prices_realtime)
-    price:   Optional[float] = None
-    chg:     Optional[float] = None     # 등락률 %
-
-    # 레이어 점수 (stock_final_scores)
-    l1:      Optional[float] = None     # Layer 1 점수
-    l2:      Optional[float] = None     # Layer 2 점수
-    l3:      Optional[float] = None     # Layer 3 점수
-    score:   Optional[float] = None     # 최종 가중 합산 점수
-    grade:   Optional[str]  = None      # S, A+, A, B+, B, C, D
-    signal:  Optional[str]  = None      # STRONG_BUY 등
-
-    # 좋아요
-    like_count: Optional[int] = 0
+    ticker:     str
+    name:       str
+    sector:     Optional[str]   = None
+    country:    Optional[str]   = "US"
+    price:      Optional[float] = None
+    chg:        Optional[float] = None
+    l1:         Optional[float] = None
+    l2:         Optional[float] = None
+    l3:         Optional[float] = None
+    score:      Optional[float] = None
+    grade:      Optional[str]   = None
+    signal:     Optional[str]   = None
+    like_count: Optional[int]   = 0
 
     class Config:
         from_attributes = True
 
 
 class SectorItem(BaseModel):
-    """
-    /api/sectors 응답 단건. 프론트 Sidebar.jsx 기준.
-    """
-    key:        str             # sector_code  (ex: '45')
-    en:         str             # sector_name  (ex: 'Information Technology')
-    ko:         Optional[str]   # 한글명 (없으면 en 그대로)
-    stock_count: int = 0
-    avg_score:  Optional[float] = None
-    top_grade:  Optional[str]  = None
+    key:         str
+    en:          str
+    ko:          Optional[str]   = None
+    stock_count: int             = 0
+    avg_score:   Optional[float] = None
+    top_grade:   Optional[str]   = None
+
+
+class StockHeader(BaseModel):
+    ticker:      str
+    name:        str
+    description: Optional[str]  = None
+    exchange:    Optional[str]  = None
+    sector:      Optional[str]  = None
+    market:      Optional[str]  = None
+    listingDate: Optional[date] = None
+
+
+class RealtimeData(BaseModel):
+    price:             Optional[float] = None
+    change:            Optional[float] = None
+    amount_change:     Optional[float] = None
+    changesPercentage: Optional[float] = None
+    grade:             Optional[str]   = None
+    score:             Optional[float] = None
+    l1:                Optional[float] = None
+    l2:                Optional[float] = None
+    l3:                Optional[float] = None
+    eps:               Optional[float] = None
+    per:               Optional[float] = None
+    forwardPer:        Optional[float] = None
+    pbr:               Optional[float] = None
+    roe:               Optional[float] = None
+    roa:               Optional[float] = None
+    roic:              Optional[float] = None
+    strong_buy_signal:  Optional[bool] = False
+    strong_sell_signal: Optional[bool] = False
+
+
+class StockDetailResponse(BaseModel):
+    header:   StockHeader
+    realtime: RealtimeData
