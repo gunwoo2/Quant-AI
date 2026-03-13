@@ -1,6 +1,8 @@
 import FinanceDataReader as fdr
 from datetime import datetime, time, timedelta
 import pytz
+import json
+import pandas_market_calendars as mcal
 
 
 NY_TZ = pytz.timezone("America/New_York")
@@ -97,47 +99,49 @@ def get_market_indices() -> list[dict]:
 
 
 def get_market_status() -> dict:
-    """
-    미국 시장 개장 상태
-    - pandas_market_calendars로 공휴일 자동 처리
-    - 정규장: 9:30~16:00 ET 고정 (NYSE 기준 변경 없음)
-    """
-    now_ny   = datetime.now(NY_TZ)
+    """미국 시장 상태 및 시간 정보 반환"""
+    # 1. 시간대 설정
+    now_utc = datetime.now(pytz.utc)
+    now_ny = now_utc.astimezone(NY_TZ)
     now_time = now_ny.time()
-    today    = now_ny.date()
+    today = now_ny.date()
 
-    # NYSE 캘린더로 오늘 개장 여부 확인 (공휴일 자동 처리)
-    nyse = mcal.get_calendar("NYSE")
-    schedule = nyse.schedule(
-        start_date=str(today),
-        end_date=str(today)
-    )
-
-    # 오늘 휴장 (주말 or 공휴일)
-    if schedule.empty:
-        return {
-            "isOpen":   False,
-            "session":  "CLOSED",
-            "nextOpen": _next_open_str(now_ny),
-        }
-
-    # 장중
-    if MARKET_OPEN <= now_time < MARKET_CLOSE:
-        return {"isOpen": True,  "session": "OPEN",        "nextOpen": None}
-
-    # 프리마켓
-    if PRE_MARKET_OPEN <= now_time < MARKET_OPEN:
-        return {"isOpen": False, "session": "PRE_MARKET",  "nextOpen": None}
-
-    # 애프터마켓
-    if MARKET_CLOSE <= now_time < AFTER_HOURS_CLOSE:
-        return {"isOpen": False, "session": "AFTER_HOURS", "nextOpen": None}
-
-    return {
-        "isOpen":   False,
-        "session":  "CLOSED",
-        "nextOpen": _next_open_str(now_ny),
+    # 2. 결과용 공통 필드 미리 생성
+    res = {
+        "isOpen": False,
+        "session": "CLOSED",
+        "etStr": now_ny.strftime("%H:%M"),
+        "kstStr": datetime.now(pytz.timezone("Asia/Seoul")).strftime("%H:%M"),
+        "currentET": now_ny.strftime("%H:%M:%S"),
+        "nextOpen": None
     }
+
+    # 3. 휴장일 체크
+    nyse = mcal.get_calendar("NYSE")
+    schedule = nyse.schedule(start_date=str(today), end_date=str(today))
+
+    if schedule.empty:
+        res["session"] = "CLOSED"
+        res["nextOpen"] = _next_open_str(now_ny)
+    
+    # 4. 개장 상태 판별 (시간별)
+    elif MARKET_OPEN <= now_time < MARKET_CLOSE:
+        res["isOpen"] = True
+        res["session"] = "OPEN"
+    elif PRE_MARKET_OPEN <= now_time < MARKET_OPEN:
+        res["session"] = "PRE_MARKET"
+    elif MARKET_CLOSE <= now_time < AFTER_HOURS_CLOSE:
+        res["session"] = "AFTER_HOURS"
+    else:
+        res["session"] = "CLOSED"
+        res["nextOpen"] = _next_open_str(now_ny)
+
+    # 5. [디버그 프린트] 터미널에서 확인용
+    # print("\n" + "="*40)
+    # print(f" [DEBUG] NY TIME: {res['currentET']} | SESSION: {res['session']}")
+    # print("="*40)
+
+    return res
 
 
 def _next_open_str(now_ny: datetime) -> str:

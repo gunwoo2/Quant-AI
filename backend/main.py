@@ -3,7 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 import db_pool
-from routers import stocks, sectors, tickers, market, stock_detail, quant
+# from routers import stocks, sectors, tickers, market, stock_detail, quant
+from routers import stocks, sectors, tickers, market, stock_detail, quant, historical, financials
+
 
 
 @asynccontextmanager
@@ -41,6 +43,8 @@ app.include_router(tickers.router, prefix="/api")
 app.include_router(market.router,  prefix="/api")  # 추가
 app.include_router(stock_detail.router, prefix="/api")  # 추가
 app.include_router(quant.router, prefix="/api")  # 추가
+app.include_router(historical.router, prefix="/api")
+app.include_router(financials.router, prefix="/api")
 
 
 @app.get("/health")

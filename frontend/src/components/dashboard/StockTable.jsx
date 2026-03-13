@@ -1,34 +1,37 @@
 /**
- * StockTable.jsx — v3 (필드 순서 변경)
+ * StockTable.jsx — v4 (백엔드 API 연결)
  *
- * 수정:
- * 1. 필드 순서 재배치: Ticker -> Name -> Sector -> Price -> Chg% -> L1 -> L2 -> L3 -> Score -> Grade -> Signal
- * 2. 기존의 모든 스타일, 로직, 압축된 컬럼 너비 유지
+ * 변경:
+ *  - MOCK_STOCKS → GET /api/stocks 실제 호출
+ *  - 섹터 필터: backendName 역매핑으로 정확한 비교
+ *  - 삭제: DELETE /api/ticker 실제 호출 후 목록에서 제거
+ *  - API 실패 시 MOCK_STOCKS fallback + 배너 표시
+ *  - null 값 안전 처리 (배치잡 전 score/price 등 null 가능)
  */
 
-import { useState, useMemo, useEffect } from "react";
-import { C, SECTORS, MOCK_STOCKS, gradeColor, gradeLabel } from "../../styles/tokens";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { C, SECTORS, MOCK_STOCKS, gradeColor, gradeLabel, sectorByBackendName } from "../../styles/tokens";
 import { DeleteConfirmModal } from "./Modals";
+import api from "../../api";
 
 const GRADES    = ["ALL", "S", "A+", "A", "B+", "B", "C", "D"];
 const COUNTRIES = ["ALL", "US", "KR", "JP"];
 
-// ── 컬럼 순서 및 너비 재배치 (요청하신 순서대로)
+// ── 컬럼 총합 목표 ~870px (사이드바 210 포함 시 1080px → 1280px 이상 화면에서 스크롤 없음)
 const COLUMNS = [
-  { key: "ticker", label: "TICKER",   width: 84  },
-  { key: "name",   label: "COMPANY", width: 210 },
-  { key: "sector", label: "SECTOR",   width: 110 },
-  { key: "price",  label: "PRICE",   width: 105 },
-  { key: "chg",    label: "CHG%",    width: 82  },
-  { key: "l1",     label: "L1",      width: 60, tip: "퀀트 레이팅 (Fundamental)"      },
-  { key: "l2",     label: "L2",      width: 60, tip: "텍스트·감성 신호 (NLP/AI)"      },
-  { key: "l3",     label: "L3",      width: 60, tip: "시장 신호 (Price/Order Flow)"  },
-  { key: "score",  label: "SCORE",   width: 120 },
-  { key: "grade",  label: "GRADE",   width: 56  },
-  { key: "signal", label: "SIGNAL",  width: 120 },
+  { key: "ticker", label: "TICKER",  width: 74  },
+  { key: "name",   label: "COMPANY", width: 155 },
+  { key: "sector", label: "SECTOR",  width: 88  },
+  { key: "price",  label: "PRICE",   width: 88  },
+  { key: "chg",    label: "CHG%",    width: 68  },
+  { key: "l1",     label: "L1",      width: 50,  tip: "퀀트 레이팅 (Fundamental)"     },
+  { key: "l2",     label: "L2",      width: 50,  tip: "텍스트·감성 신호 (NLP/AI)"     },
+  { key: "l3",     label: "L3",      width: 50,  tip: "시장 신호 (Price/Order Flow)"  },
+  { key: "score",  label: "SCORE",   width: 100 },
+  { key: "grade",  label: "GRADE",   width: 50  },
+  { key: "signal", label: "SIGNAL",  width: 100 },
 ];
-
-const sectorEn = (key) => SECTORS.find(s => s.key === key)?.en ?? key;
+// 체크박스(28) + 컬럼합(873) + 좌우패딩(32) = 933px
 
 function nextSort(dir, clickedKey, sortKey) {
   if (sortKey !== clickedKey) return { key: clickedKey, dir: "desc" };
@@ -36,42 +39,93 @@ function nextSort(dir, clickedKey, sortKey) {
   return { key: null, dir: null };
 }
 
+/** sector_name (API) → 프론트 표시용 짧은 이름 */
+const sectorDisplay = (apiName) => {
+  if (!apiName) return "—";
+  const found = sectorByBackendName(apiName);
+  return found ? found.en : apiName.split(" ")[0];
+};
+
 export default function StockTable({ onTickerClick, filterSector, onResetSector }) {
+  // ── 데이터 상태
+  const [stocks,      setStocks]      = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [isMockData,  setIsMockData]  = useState(false);
+
+  // ── 필터 상태
   const [search,     setSearch]     = useState("");
   const [searchName, setSearchName] = useState("");
   const [selSector,  setSelSector]  = useState("ALL");
   const [selCountry, setSelCountry] = useState("ALL");
   const [selGrade,   setSelGrade]   = useState("ALL");
   const [sort,       setSort]       = useState({ key: "score", dir: "desc" });
+
+  // ── 체크박스 / 삭제
   const [checked,    setChecked]    = useState(new Set());
   const [showDelete, setShowDelete] = useState(false);
+  const [deleting,   setDeleting]   = useState(false);
 
+  // ── /api/stocks 호출
+  const fetchStocks = useCallback(() => {
+    setLoading(true);
+    api.get("/api/stocks")
+      .then(res => {
+        const data = Array.isArray(res.data) ? res.data : [];
+        setStocks(data);
+        setIsMockData(false);
+      })
+      .catch(() => {
+        setStocks(MOCK_STOCKS);
+        setIsMockData(true);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchStocks(); }, [fetchStocks]);
+
+  // filterSector (URL param) → selSector 동기화
   useEffect(() => {
     setSelSector(filterSector ?? "ALL");
   }, [filterSector]);
 
+  // ── 필터 / 정렬
   const rows = useMemo(() => {
-    let data = [...MOCK_STOCKS];
-    if (search)               data = data.filter(s => s.ticker.includes(search.toUpperCase()));
-    if (searchName)           data = data.filter(s => s.name.toLowerCase().includes(searchName.toLowerCase()));
-    if (selSector  !== "ALL") data = data.filter(s => s.sector  === selSector);
+    let data = [...stocks];
+
+    if (search)               data = data.filter(s => s.ticker?.includes(search.toUpperCase()));
+    if (searchName)           data = data.filter(s => s.name?.toLowerCase().includes(searchName.toLowerCase()));
+
+    if (selSector !== "ALL") {
+      // key("TECHNOLOGY") → backendName("Information Technology") 역매핑 비교
+      const sectorObj = SECTORS.find(s => s.key === selSector);
+      if (sectorObj) {
+        data = data.filter(s =>
+          s.sector === sectorObj.backendName ||
+          s.sector === sectorObj.en ||
+          sectorByBackendName(s.sector)?.key === selSector
+        );
+      }
+    }
+
     if (selCountry !== "ALL") data = data.filter(s => s.country === selCountry);
     if (selGrade   !== "ALL") data = data.filter(s => s.grade   === selGrade);
+
     if (sort.key && sort.dir) {
       data.sort((a, b) => {
-        let av = a[sort.key], bv = b[sort.key];
-        if (typeof av === "string") { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+        let av = a[sort.key] ?? -Infinity;
+        let bv = b[sort.key] ?? -Infinity;
+        if (typeof av === "string") { av = av.toLowerCase(); bv = String(bv).toLowerCase(); }
         if (av < bv) return sort.dir === "desc" ?  1 : -1;
         if (av > bv) return sort.dir === "desc" ? -1 :  1;
         return 0;
       });
     }
     return data;
-  }, [search, searchName, selSector, selCountry, selGrade, sort]);
+  }, [stocks, search, searchName, selSector, selCountry, selGrade, sort]);
 
+  // ── 체크박스
   const allIds     = rows.map(r => r.ticker);
   const allChecked = allIds.length > 0 && allIds.every(id => checked.has(id));
-  const someChecked = allIds.some(id => checked.has(id));
   const toggleAll  = () => setChecked(allChecked ? new Set() : new Set(allIds));
   const toggleOne  = (t) => {
     const n = new Set(checked);
@@ -79,18 +133,54 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
     setChecked(n);
   };
 
+  // ── 리셋
   const reset = () => {
     setSearch(""); setSearchName("");
     setSelSector("ALL"); setSelCountry("ALL"); setSelGrade("ALL");
     onResetSector?.();
   };
 
+  // ── 정렬
   const handleSort = (key) => {
     setSort(prev => nextSort(prev.dir, key, prev.key));
   };
 
+  // ── 실제 삭제: DELETE /api/ticker
+  const handleDelete = async () => {
+    const tickers = [...checked];
+    setDeleting(true);
+    try {
+      await api.delete("/api/ticker", { data: { tickers } });
+      setStocks(prev => prev.filter(s => !checked.has(s.ticker)));
+      setChecked(new Set());
+      setShowDelete(false);
+    } catch (e) {
+      console.error("Delete failed:", e);
+      // 실패해도 UI 초기화
+      setChecked(new Set());
+      setShowDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", fontFamily: "'Inter', sans-serif" }}>
+
+      {/* ── Mock 데이터 배너 */}
+      {isMockData && (
+        <div style={{
+          padding: "5px 16px", background: `${C.golden}12`,
+          borderBottom: `1px solid ${C.golden}40`,
+          fontSize: 10, color: C.golden, fontFamily: "'Inter', sans-serif",
+          display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
+        }}>
+          ⚠ MOCK DATA — 백엔드 연결 실패. 실제 데이터를 불러오지 못했습니다.
+          <button onClick={fetchStocks} style={{ background: "none", border: `1px solid ${C.golden}50`, color: C.golden, fontSize: 10, padding: "2px 8px", cursor: "pointer", borderRadius: 2 }}>
+            재시도
+          </button>
+        </div>
+      )}
 
       {/* ── 필터 바 */}
       <div style={{
@@ -101,7 +191,7 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
         gap: 7, flexWrap: "nowrap", flexShrink: 0,
         overflowX: "auto",
       }}>
-        <FInput value={search}     onChange={setSearch}     placeholder="Ticker"     width={80}  />
+        <FInput value={search}     onChange={setSearch}     placeholder="Ticker"       width={80}  />
         <FInput value={searchName} onChange={setSearchName} placeholder="Company Name" width={150} />
         <FSelect value={selCountry} onChange={setSelCountry}
           options={COUNTRIES.map(c => ({ value: c, label: c === "ALL" ? "All Countries" : c }))} />
@@ -121,68 +211,93 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
           Reset
         </button>
 
-        <div style={{ flex: 1, minWidth: 8 }} />
-
+        {/* 삭제 버튼 */}
         {checked.size > 0 && (
           <button onClick={() => setShowDelete(true)} style={{
-            fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 700,
-            color: "#fff", background: C.scarlet,
-            border: "none", borderRadius: 3,
-            padding: "6px 13px", cursor: "pointer",
-            whiteSpace: "nowrap", flexShrink: 0,
+            fontFamily: "'Inter', sans-serif", fontSize: 12,
+            color: C.red, background: "none",
+            border: `1px solid ${C.red}55`,
+            borderRadius: 3, padding: "5px 11px", cursor: "pointer",
+            whiteSpace: "nowrap", flexShrink: 0, marginLeft: "auto",
           }}>
-            🗑 {checked.size}개 삭제
+            ✕ {checked.size}개 삭제
           </button>
         )}
+      </div>
 
+      {/* ── 헤더 + 바디: 단일 가로스크롤 컨테이너로 묶어야 열 정렬 유지 */}
+      <div style={{ flex: 1, overflowX: "auto", overflowY: "hidden", display: "flex", flexDirection: "column" }}>
+
+        {/* 헤더 */}
         <div style={{
-          fontFamily: "'Inter', sans-serif", fontSize: 10,
-          color: C.textMuted, textAlign: "right", lineHeight: 1.6,
+          display: "flex", alignItems: "center",
+          padding: "0 16px", height: 34,
+          background: "#050505",
+          borderBottom: `1px solid ${C.border}`,
           flexShrink: 0,
+          minWidth: "fit-content",
         }}>
-          <div style={{ color: C.textGray }}>{rows.length} / {MOCK_STOCKS.length} 종목</div>
-          <div>Last Batch : '26.03.09 02:14</div>
+          <div style={{ width: 28, flexShrink: 0 }}>
+            <input type="checkbox" checked={allChecked} onChange={toggleAll}
+              style={{ accentColor: C.primary, cursor: "pointer" }} />
+          </div>
+          {COLUMNS.map(col => (
+            <ColHead key={col.key} col={col} sort={sort}
+              onSort={() => handleSort(col.key)} />
+          ))}
         </div>
+
+        {/* 바디: 세로 스크롤만, 가로는 부모 컨테이너가 담당 */}
+        <div style={{ flex: 1, overflowY: "auto", overflowX: "visible" }}>
+          {loading ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", gap: 10 }}>
+              <div style={{ width: 16, height: 16, border: `2px solid ${C.primary}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+              <span style={{ color: C.textMuted, fontSize: 13, fontFamily: "'Inter', sans-serif" }}>데이터 로딩 중...</span>
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+          ) : rows.length === 0 ? (
+            <Empty />
+          ) : (
+            rows.map((row, i) => (
+              <Row
+                key={row.ticker}
+                row={row}
+                odd={i % 2 === 1}
+                checked={checked.has(row.ticker)}
+                onCheck={() => toggleOne(row.ticker)}
+                onClick={() => onTickerClick?.(row.ticker)}
+              />
+            ))
+          )}
+        </div>
+
       </div>
 
-      {/* ── 테이블 헤더 */}
+      {/* ── 푸터 */}
       <div style={{
-        display: "flex", alignItems: "center",
-        padding: "0 16px",
-        background: "#000000",
-        borderBottom: `1px solid ${C.border}`,
-        height: 34, flexShrink: 0,
+        borderTop: `1px solid ${C.border}`,
+        padding: "5px 16px",
+        fontSize: 11, color: C.textMuted,
+        background: "#050505",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        flexShrink: 0,
       }}>
-        <div style={{ width: 28, flexShrink: 0 }}>
-          <input type="checkbox" checked={allChecked}
-            ref={el => el && (el.indeterminate = !allChecked && someChecked)}
-            onChange={toggleAll}
-            style={{ accentColor: C.primary, cursor: "pointer" }}
-          />
-        </div>
-        {COLUMNS.map(col => (
-          <ColHead key={col.key} col={col} sort={sort} onSort={() => handleSort(col.key)} />
-        ))}
+        <span>
+          {loading ? "로딩 중..." : `총 ${stocks.length}개 종목 · 필터 결과 ${rows.length}개`}
+          {isMockData && <span style={{ color: C.golden, marginLeft: 8 }}>[MOCK]</span>}
+        </span>
+        {checked.size > 0 && (
+          <span style={{ color: C.primary }}>{checked.size}개 선택됨</span>
+        )}
       </div>
 
-      {/* ── 테이블 바디 */}
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
-        {rows.length === 0
-          ? <Empty />
-          : rows.map((row, i) => (
-            <Row key={row.ticker} row={row} odd={i % 2 !== 0}
-              checked={checked.has(row.ticker)}
-              onCheck={() => toggleOne(row.ticker)}
-              onClick={() => onTickerClick?.(row.ticker)}
-            />
-          ))
-        }
-      </div>
-
+      {/* ── 삭제 모달 */}
       {showDelete && (
-        <DeleteConfirmModal tickers={[...checked]}
+        <DeleteConfirmModal
+          tickers={[...checked]}
           onClose={() => setShowDelete(false)}
-          onConfirm={() => { setChecked(new Set()); setShowDelete(false); }}
+          onConfirm={handleDelete}
+          isLoading={deleting}
         />
       )}
     </div>
@@ -215,7 +330,7 @@ function ColHead({ col, sort, onSort }) {
   );
 }
 
-/* ── Row (요청하신 필드 순서로 JSX 재배치) */
+/* ── Row */
 function Row({ row, odd, checked, onCheck, onClick }) {
   const [rowHov,    setRowHov]    = useState(false);
   const [tickerHov, setTickerHov] = useState(false);
@@ -224,11 +339,18 @@ function Row({ row, odd, checked, onCheck, onClick }) {
   const label = gradeLabel(row.grade);
 
   const sigColor =
-    row.grade === "S"                         ? C.cyan :
-    row.grade === "A"  || row.grade === "A+"  ? C.yolk :
-    row.grade === "B+" || row.grade === "B"   ? C.primary :
-    row.grade === "C"                         ? C.scarlet : 
-    row.grade === 'd'                         ? C.red : "#FF0033";
+    row.grade === "S"                         ? C.cyan   :
+    row.grade === "A"  || row.grade === "A+"  ? C.yolk   :
+    row.grade === "B+" || row.grade === "B"   ? C.primary:
+    row.grade === "C"                         ? C.scarlet: C.red;
+
+  // null 안전 렌더
+  const fmtPrice = (v) => v != null
+    ? `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : "—";
+  const fmtChg   = (v) => v != null ? `${v > 0 ? "▲" : v < 0 ? "▼" : ""}${Math.abs(v).toFixed(2)}%` : "—";
+  const fmtScore = (v) => v != null ? Number(v).toFixed(1) : "—";
+  const fmtL     = (v) => v != null ? Number(v).toFixed(0) : "—";
 
   return (
     <div onMouseEnter={() => setRowHov(true)} onMouseLeave={() => setRowHov(false)}
@@ -239,6 +361,7 @@ function Row({ row, odd, checked, onCheck, onClick }) {
         borderBottom: `1px solid ${C.border}22`,
         cursor: "pointer", transition: "background 0.1s",
         fontFamily: "'Inter', sans-serif",
+        minWidth: "fit-content",  // 부모 스크롤 컨테이너 안에서 열 너비 보장
       }}
     >
       {/* 0. 체크박스 */}
@@ -250,13 +373,12 @@ function Row({ row, odd, checked, onCheck, onClick }) {
       </div>
 
       {/* 1. TICKER */}
-      <div style={{ width: 84, minWidth: 84, flexShrink: 0, padding: "0 4px" }}
+      <div style={{ width: 74, minWidth: 74, flexShrink: 0, padding: "0 4px" }}
         onMouseEnter={() => setTickerHov(true)}
         onMouseLeave={() => setTickerHov(false)}
         onClick={onClick}
       >
         <span style={{
-          fontFamily: "'Inter', sans-serif",
           fontSize: 13, fontWeight: 850,
           color: tickerHov ? C.yolk : C.primary,
           textDecoration: tickerHov ? "underline" : "none",
@@ -269,68 +391,65 @@ function Row({ row, odd, checked, onCheck, onClick }) {
         </span>
       </div>
 
-      {/* 2. COMPANY (NAME) */}
-      <div style={{ width: 190, minWidth: 210, flexShrink: 0, padding: "0 4px", overflow: "hidden" }}>
+      {/* 2. COMPANY */}
+      <div style={{ width: 155, minWidth: 155, flexShrink: 0, padding: "0 4px", overflow: "hidden" }}>
         <span style={{ fontSize: 12, color: C.textGray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
-          {row.name}
+          {row.name ?? "—"}
         </span>
       </div>
 
-      {/* 3. SECTOR */}
-      <div style={{ width: 110, minWidth: 110, flexShrink: 0, padding: "0 4px" }}>
-        <span style={{ fontSize: 11, color: C.textMuted }}>{sectorEn(row.sector)}</span>
+      {/* 3. SECTOR — backendName("Information Technology") → 짧은 표시명 */}
+      <div style={{ width: 88, minWidth: 88, flexShrink: 0, padding: "0 4px" }}>
+        <span style={{ fontSize: 11, color: C.textMuted }}>{sectorDisplay(row.sector)}</span>
       </div>
 
       {/* 4. PRICE */}
-      <div style={{ width: 105, minWidth: 105, flexShrink: 0, padding: "0 4px" }}>
-        <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: C.textGray }}>
-          ${row.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </span>
+      <div style={{ width: 88, minWidth: 88, flexShrink: 0, padding: "0 4px" }}>
+        <span style={{ fontSize: 12, color: C.textGray }}>{fmtPrice(row.price)}</span>
       </div>
 
       {/* 5. CHG% */}
-      <div style={{ width: 82, minWidth: 82, flexShrink: 0, padding: "0 4px" }}>
+      <div style={{ width: 68, minWidth: 68, flexShrink: 0, padding: "0 4px" }}>
         <span style={{
-          fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600,
-          color: row.chg > 0 ? C.cyan : row.chg < 0 ? C.scarlet : C.textMuted,
+          fontSize: 12, fontWeight: 600,
+          color: (row.chg ?? 0) > 0 ? C.cyan : (row.chg ?? 0) < 0 ? C.scarlet : C.textMuted,
         }}>
-          {row.chg > 0 ? "▲" : row.chg < 0 ? "▼" : ""}
-          {Math.abs(row.chg).toFixed(2)}%
+          {fmtChg(row.chg)}
         </span>
       </div>
 
       {/* 6~8. L1, L2, L3 */}
       {[row.l1, row.l2, row.l3].map((v, i) => (
-        <div key={i} style={{ width: 60, minWidth: 60, flexShrink: 0, padding: "0 4px" }}>
-          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: C.textGray, marginBottom: 2 }}>{v}</div>
-          <MiniBar value={v} />
+        <div key={i} style={{ width: 50, minWidth: 50, flexShrink: 0, padding: "0 4px" }}>
+          <div style={{ fontSize: 12, color: C.textGray, marginBottom: 2 }}>{fmtL(v)}</div>
+          <MiniBar value={v ?? 0} />
         </div>
       ))}
 
       {/* 9. SCORE */}
-      <div style={{ width: 120, minWidth: 120, flexShrink: 0, padding: "0 4px" }}>
-        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 700, color: C.textGray, marginBottom: 2 }}>
-          {row.score.toFixed(1)}
+      <div style={{ width: 100, minWidth: 100, flexShrink: 0, padding: "0 4px" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.textGray, marginBottom: 2 }}>
+          {fmtScore(row.score)}
         </div>
-        <MiniBar value={row.score} />
+        <MiniBar value={row.score ?? 0} />
       </div>
 
       {/* 10. GRADE */}
-      <div style={{ width: 56, minWidth: 56, flexShrink: 0, padding: "0 4px" }}>
-        <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 800, color: gc }}>
-          {row.grade}
+      <div style={{ width: 50, minWidth: 50, flexShrink: 0, padding: "0 4px" }}>
+        <span style={{ fontSize: 15, fontWeight: 800, color: gc }}>
+          {row.grade ?? "—"}
         </span>
       </div>
 
       {/* 11. SIGNAL */}
-      <div style={{ width: 120, minWidth: 120, flexShrink: 0, padding: "0 4px" }}>
+      <div style={{ width: 100, minWidth: 100, flexShrink: 0, padding: "0 4px" }}>
         <span style={{
           fontSize: 10, fontWeight: 700, letterSpacing: 0.2,
           color: sigColor, background: `${sigColor}12`,
           border: `1px solid ${sigColor}35`, borderRadius: 3,
           padding: "3px 7px", display: "inline-block", whiteSpace: "nowrap",
         }}>
-          {label}
+          {row.signal ?? label}
         </span>
       </div>
     </div>
@@ -340,7 +459,7 @@ function Row({ row, odd, checked, onCheck, onClick }) {
 function MiniBar({ value }) {
   return (
     <div style={{ width: "100%", height: 2, background: "#2a2a2a", borderRadius: 1, overflow: "hidden" }}>
-      <div style={{ width: `${value}%`, height: "100%", background: C.gaugebar, borderRadius: 1 }} />
+      <div style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, height: "100%", background: C.gaugebar, borderRadius: 1 }} />
     </div>
   );
 }

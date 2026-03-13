@@ -1,21 +1,62 @@
 /**
- * Sidebar.jsx
+ * Sidebar.jsx — v2 (백엔드 API 연결)
  *
- * 수정 사항
- *   1. API STATUS 색상 → 그레이(#555) + D85604(primary) 2색만 사용
- *   2. 전체 폰트 Inter
- *   3. 글자 크기 업
+ * GET /api/sectors
+ *   { key(GICS code), en, ko, stock_count, avg_score, top_grade }
+ *
+ * - API 성공 시 실제 종목 수·평균 점수 표시
+ * - API 실패 시 SECTOR_STATS fallback
+ * - sectorByCode()로 GICS code → 프론트 SECTORS 키 매핑
  */
 
-import { useState } from "react";
-import { C, FONT, SECTORS, SECTOR_STATS } from "../../styles/tokens";
+import { useState, useEffect } from "react";
+import { C, FONT, SECTORS, SECTOR_STATS, sectorByCode } from "../../styles/tokens";
+import api from "../../api";
 
 const W_OPEN  = 210;
 const W_CLOSE = 54;
 
 export default function Sidebar({ activeSector, onSectorClick }) {
-  const [open,        setOpen]        = useState(true);
-  const [showFlyout,  setShowFlyout]  = useState(false);
+  const [open,       setOpen]       = useState(true);
+  const [showFlyout, setShowFlyout] = useState(false);
+  // key: frontendKey(예: "TECHNOLOGY"), value: { count, avgScore, topGrade }
+  const [sectorStats, setSectorStats] = useState(null);
+
+  useEffect(() => {
+    api.get("/api/sectors")
+      .then(res => {
+        if (!Array.isArray(res.data) || res.data.length === 0) return;
+        const map = {};
+        res.data.forEach(item => {
+          // item.key 는 GICS 코드 ("45") 또는 영문명일 수 있음
+          const matched = sectorByCode(item.key) ??
+            SECTORS.find(s => s.en.toLowerCase() === String(item.en ?? "").toLowerCase());
+          if (!matched) return;
+          map[matched.key] = {
+            count:    item.stock_count ?? 0,
+            avgScore: item.avg_score   != null ? Number(item.avg_score).toFixed(1) : "—",
+            topGrade: item.top_grade   ?? "—",
+          };
+        });
+        setSectorStats(map);
+      })
+      .catch(() => {
+        // SECTOR_STATS fallback: topTicker → topGrade 없음, 그대로 사용
+        setSectorStats(null);
+      });
+  }, []);
+
+  // sectorStats가 없으면 SECTOR_STATS 기반 fallback 구성
+  const getStatFor = (key) => {
+    if (sectorStats && sectorStats[key]) {
+      const s = sectorStats[key];
+      return { count: s.count, avgScore: s.avgScore, top: s.topGrade };
+    }
+    // Fallback
+    const fb = SECTOR_STATS[key];
+    if (!fb) return { count: 0, avgScore: "—", top: "—" };
+    return { count: fb.count, avgScore: fb.avgScore, top: fb.topTicker };
+  };
 
   return (
     <aside style={{
@@ -74,6 +115,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           {showFlyout && (
             <SectorFlyout
               activeSector={activeSector}
+              getStatFor={getStatFor}
               onSelect={(key) => { onSectorClick?.(key); setShowFlyout(false); }}
             />
           )}
@@ -86,7 +128,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
         {/* 구분선 */}
         <div style={{ height: 1, background: C.border, margin: open ? "10px 14px" : "10px 10px" }} />
 
-        {/* API STATUS 타이틀 */}
+        {/* API STATUS */}
         {open && (
           <div style={{
             fontSize: 10, color: C.textMuted,
@@ -97,7 +139,6 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           </div>
         )}
 
-        {/* API 항목 — 그레이 + primary 2색만 */}
         {[
           { label: "FDR",       status: "OK",   ok: true  },
           { label: "SEC EDGAR", status: "OK",   ok: true  },
@@ -111,15 +152,10 @@ export default function Sidebar({ activeSector, onSectorClick }) {
             justifyContent: open ? "space-between" : "center",
             padding: open ? "3px 14px" : "4px 0",
           }}>
-            {open && (
-              <span style={{ fontSize: 11, color: C.textMuted }}>
-                {a.label}
-              </span>
-            )}
+            {open && <span style={{ fontSize: 11, color: C.textMuted }}>{a.label}</span>}
             <span style={{
               fontFamily: "'Inter', sans-serif",
               fontSize: 10, fontWeight: 700,
-              // OK → primary(D85604) / 나머지 → 그레이
               color: a.ok ? C.primary : "#555555",
             }}>
               ●{open ? ` ${a.status}` : ""}
@@ -127,23 +163,11 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           </div>
         ))}
       </nav>
-
-      {/* ── 배치 정보
-      {open && (
-        <div style={{
-          borderTop: `1px solid ${C.border}`,
-          padding: "8px 14px",
-          fontSize: 11, color: C.textMuted, lineHeight: 1.7,
-        }}>
-          <div>종목 <span style={{ color: C.textGray }}>510개</span></div>
-          <div>배치 <span style={{ color: C.textGray }}>03-09 02:14</span></div>
-        </div>
-      )} */}
     </aside>
   );
 }
 
-/* ── NavItem ──────────────────────────────────── */
+/* ── NavItem */
 function NavItem({ icon, label, open, active, arrow, onClick }) {
   const [hov, setHov] = useState(false);
   return (
@@ -179,8 +203,8 @@ function NavItem({ icon, label, open, active, arrow, onClick }) {
   );
 }
 
-/* ── SectorFlyout ─────────────────────────────── */
-function SectorFlyout({ activeSector, onSelect }) {
+/* ── SectorFlyout */
+function SectorFlyout({ activeSector, getStatFor, onSelect }) {
   return (
     <div style={{
       position: "absolute", left: "100%", top: 0,
@@ -204,7 +228,6 @@ function SectorFlyout({ activeSector, onSelect }) {
       <div style={{
         padding: "10px 14px",
         borderBottom: `1px solid ${C.border}`,
-        fontFamily: "'Inter', sans-serif",
         fontSize: 11, color: C.primary,
         letterSpacing: 1, fontWeight: 700,
       }}>
@@ -214,7 +237,6 @@ function SectorFlyout({ activeSector, onSelect }) {
       <div style={{
         display: "grid", gridTemplateColumns: "1fr 46px 54px 56px",
         padding: "5px 14px",
-        fontFamily: "'Inter', sans-serif",
         fontSize: 10, color: C.textMuted,
         borderBottom: `1px solid ${C.border}`,
       }}>
@@ -224,21 +246,27 @@ function SectorFlyout({ activeSector, onSelect }) {
         <span style={{ textAlign: "right" }}>TOP</span>
       </div>
 
-      {SECTORS.map(s => (
-        <SectorRow key={s.key} sector={s} stat={SECTOR_STATS[s.key]}
-          active={activeSector === s.key}
-          onSelect={onSelect} />
-      ))}
+      {SECTORS.map(s => {
+        const stat = getStatFor(s.key);
+        return (
+          <SectorRow
+            key={s.key}
+            sector={s}
+            stat={stat}
+            active={activeSector === s.key}
+            onSelect={onSelect}
+          />
+        );
+      })}
     </div>
   );
 }
 
 function SectorRow({ sector, stat, active, onSelect }) {
   const [hov, setHov] = useState(false);
-  // Avg 점수 색: 높으면 cyan, 중간 golden, 낮으면 scarlet
+  const avg = parseFloat(stat.avgScore);
   const scoreColor =
-    stat.avgScore >= 65 ? C.cyan :
-    stat.avgScore >= 50 ? C.golden : C.scarlet;
+    !isNaN(avg) ? (avg >= 65 ? C.cyan : avg >= 50 ? C.golden : C.scarlet) : C.textMuted;
 
   return (
     <button
@@ -266,32 +294,17 @@ function SectorRow({ sector, stat, active, onSelect }) {
           }}>
             {sector.label}
           </div>
-          <div style={{
-            fontFamily: "'Inter', sans-serif",
-            fontSize: 9, color: C.textMuted,
-          }}>
-            {sector.en}
-          </div>
+          <div style={{ fontSize: 9, color: C.textMuted }}>{sector.en}</div>
         </div>
       </div>
-      <div style={{
-        fontFamily: "'Inter', sans-serif",
-        fontSize: 11, color: C.textGray, textAlign: "right",
-      }}>
+      <div style={{ fontSize: 11, color: C.textGray, textAlign: "right" }}>
         {stat.count}
       </div>
-      <div style={{
-        fontFamily: "'Inter', sans-serif",
-        fontSize: 11, color: scoreColor,
-        fontWeight: 700, textAlign: "right",
-      }}>
+      <div style={{ fontSize: 11, color: scoreColor, fontWeight: 700, textAlign: "right" }}>
         {stat.avgScore}
       </div>
-      <div style={{
-        fontFamily: "'Inter', sans-serif",
-        fontSize: 11, color: C.pink, textAlign: "right",
-      }}>
-        {stat.topTicker}
+      <div style={{ fontSize: 11, color: C.pink, textAlign: "right" }}>
+        {stat.top}
       </div>
     </button>
   );

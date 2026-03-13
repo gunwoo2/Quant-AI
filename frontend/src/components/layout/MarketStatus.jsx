@@ -1,84 +1,84 @@
 /**
- * MarketStatus.jsx
- * 변경사항:
- *   - 정규장(open): 초록 LED 펄스 ✅
- *   - 프리장(pre): 앰버 LED 펄스 (다른 색) ✅
- *   - 애프터(after): 시안 LED 펄스 (다른 색) ✅
- *   - 마감(closed): 회색, 펄스 없음 ✅
- *   - 서머타임 자동 계산 포함
+ * MarketStatus.jsx — v2 (백엔드 API 연결)
+ *
+ * GET /api/market/status
+ *   { isOpen, session: "OPEN"|"CLOSED"|"PRE_MARKET"|"AFTER_HOURS", nextOpen }
+ *
+ * - API 성공 시 서버 기준 US 세션 상태 반영
+ * - API 실패 시 클라이언트 DST 계산 Fallback
+ * - 30초마다 자동 갱신
  */
 
 import { useState, useEffect } from "react";
 import { C, FONT } from "../../styles/tokens";
+import api from "../../api";
 
+// ── 로컬 Fallback: DST 자동 계산
 function isDST(now) {
   const y = now.getUTCFullYear();
-  // 3월 두 번째 일요일
   const mar = new Date(Date.UTC(y, 2, 1));
   mar.setUTCDate(1 + ((7 - mar.getUTCDay()) % 7) + 7);
-  // 11월 첫 번째 일요일
   const nov = new Date(Date.UTC(y, 10, 1));
   nov.setUTCDate(1 + ((7 - nov.getUTCDay()) % 7));
   return now >= mar && now < nov;
 }
 
-function getMarketStatus() {
-  const now      = new Date();
-  const utcMs    = now.getTime() + now.getTimezoneOffset() * 60000;
-  const utcNow   = new Date(utcMs);
-  const dayOfWeek = utcNow.getUTCDay(); // 0=일, 6=토
-  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+function getLocalStatus() {
+  const now   = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  const dow   = new Date(utcMs).getUTCDay();
+  const isWd  = dow >= 1 && dow <= 5;
 
-  // ── 미국 (ET, 서머타임 자동)
-  const etOffset  = isDST(now) ? -4 : -5;
-  const etNow     = new Date(utcMs + etOffset * 3600000);
-  const etMin     = etNow.getUTCHours() * 60 + etNow.getUTCMinutes();
+  const etOffset = isDST(now) ? -4 : -5;
+  const etNow  = new Date(utcMs + etOffset * 3600000);
+  const etMin  = etNow.getUTCHours() * 60 + etNow.getUTCMinutes();
 
-  let usStatus = "closed";
-  if (isWeekday) {
-    if      (etMin >= 240  && etMin < 570)  usStatus = "pre";    // 04:00~09:30 ET
-    else if (etMin >= 570  && etMin < 960)  usStatus = "open";   // 09:30~16:00 ET
-    else if (etMin >= 960  && etMin < 1200) usStatus = "after";  // 16:00~20:00 ET
+  let usSession = "CLOSED";
+  if (isWd) {
+    if      (etMin >= 240 && etMin < 570)  usSession = "PRE_MARKET";
+    else if (etMin >= 570 && etMin < 960)  usSession = "OPEN";
+    else if (etMin >= 960 && etMin < 1200) usSession = "AFTER_HOURS";
   }
 
-  // ── 한국 (KST = UTC+9)
   const kstNow = new Date(utcMs + 9 * 3600000);
   const kstMin = kstNow.getUTCHours() * 60 + kstNow.getUTCMinutes();
 
-  let krStatus = "closed";
-  if (isWeekday) {
-    if      (kstMin >= 480 && kstMin < 540)  krStatus = "pre";   // 08:00~09:00 KST
-    else if (kstMin >= 540 && kstMin < 930)  krStatus = "open";  // 09:00~15:30 KST
-    else if (kstMin >= 930 && kstMin < 1080) krStatus = "after"; // 15:30~18:00 KST
+  let krSession = "CLOSED";
+  if (isWd) {
+    if      (kstMin >= 480 && kstMin < 540)  krSession = "PRE_MARKET";
+    else if (kstMin >= 540 && kstMin < 930)  krSession = "OPEN";
+    else if (kstMin >= 930 && kstMin < 1080) krSession = "AFTER_HOURS";
   }
 
+  // getLocalStatus 함수 내부 하단 수정
   const fmt = d =>
-    `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 
-  return { usStatus, krStatus, etStr: fmt(etNow), kstStr: fmt(kstNow) };
+  // 이제 아래 리턴값이 정상적으로 시차가 적용된 시간을 반환합니다.
+  return { usSession, krSession, etStr: fmt(etNow), kstStr: fmt(kstNow) };
 }
 
-const STATUS_META = {
-  open:   { label: "OPEN",   color: "#22c55e", pulse: true  },
-  pre:    { label: "PRE",    color: C.golden,  pulse: true  },
-  after:  { label: "AFTER",  color: C.cyan,    pulse: true  },
-  closed: { label: "CLOSED", color: C.textMuted, pulse: false },
+const SESSION_META = {
+  OPEN:        { label: "OPEN",   color: C.green, pulse: true  },
+  PRE_MARKET:  { label: "PRE",    color: C.golden,  pulse: true  },
+  AFTER_HOURS: { label: "AFTER",  color: C.cyan,    pulse: true  },
+  CLOSED:      { label: "CLOSED", color: C.textMuted, pulse: false },
 };
 
-function StatusDot({ status }) {
-  const { color, pulse } = STATUS_META[status];
+function StatusDot({ session }) {
+  const meta = SESSION_META[session] ?? SESSION_META.CLOSED;
   return (
     <span style={{ position: "relative", display: "inline-flex", width: 8, height: 8, flexShrink: 0 }}>
       <span style={{
         display: "block", width: 8, height: 8, borderRadius: "50%",
-        background: color,
-        boxShadow: pulse ? `0 0 6px ${color}` : "none",
+        background: meta.color,
+        boxShadow: meta.pulse ? `0 0 6px ${meta.color}` : "none",
         position: "relative", zIndex: 1,
       }} />
-      {pulse && (
+      {meta.pulse && (
         <span style={{
           position: "absolute", inset: 0, borderRadius: "50%",
-          background: color, opacity: 0,
+          background: meta.color, opacity: 0,
           animation: "mkt-pulse 1.8s ease-out infinite",
         }} />
       )}
@@ -92,52 +92,65 @@ function StatusDot({ status }) {
   );
 }
 
-export default function MarketStatus() {
-  const [s, setS] = useState(getMarketStatus());
-  useEffect(() => {
-    const id = setInterval(() => setS(getMarketStatus()), 30000);
-    return () => clearInterval(id);
-  }, []);
-
-  const { usStatus, krStatus, etStr, kstStr } = s;
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, fontFamily: FONT.mono, paddingRight: 4 }}>
-      {/* US */}
-      <MarketChip
-        flag="🇺🇸"
-        label="US · ET"
-        timeStr={etStr}
-        status={usStatus}
-      />
-      <div style={{ width: 1, height: 22, background: C.border }} />
-      {/* KR */}
-      <MarketChip
-        flag="🇰🇷"
-        label="KR · KST"
-        timeStr={kstStr}
-        status={krStatus}
-      />
-    </div>
-  );
-}
-
-function MarketChip({ flag, label, timeStr, status }) {
-  const { color, label: statusLabel } = STATUS_META[status];
+function MarketChip({ flag, label, timeStr, session }) {
+  const meta = SESSION_META[session] ?? SESSION_META.CLOSED;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <StatusDot status={status} />
+      <StatusDot session={session} />
       <div>
         <div style={{ fontSize: 9, color: C.textMuted, letterSpacing: 0.5 }}>
           {flag} {label}
         </div>
         <div style={{ fontSize: 11, color: C.textPri, fontWeight: 600, lineHeight: 1.2 }}>
           {timeStr}
-          <span style={{ fontSize: 9, color, marginLeft: 4, fontWeight: 700 }}>
-            {statusLabel}
+          <span style={{ fontSize: 9, color: meta.color, marginLeft: 4, fontWeight: 700 }}>
+            {meta.label}
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+export default function MarketStatus() {
+  const [s, setS] = useState(() => getLocalStatus());
+
+  const refresh = () => {
+    // getLocalStatus()는 API 응답 전까지만 보여주는 임시 데이터용
+    const local = getLocalStatus(); 
+
+    api.get("/api/market/status")
+      .then(res => {
+        // 🔍 데이터가 잘 오는지 확인용 (필요 없으면 삭제)
+        console.log("Market API Data:", res.data);
+
+        setS({
+          // 1. 세션 상태 업데이트 (OPEN, CLOSED 등)
+          usSession: res.data.session ?? local.usSession,
+          krSession: local.krSession, 
+          
+          // 2. 💡 가장 중요한 부분: 백엔드에서 계산된 정확한 시간을 화면에 표시
+          etStr: res.data.etStr ?? local.etStr,     // "21:51" 형태
+          kstStr: res.data.kstStr ?? local.kstStr, // "10:51" 형태 (한국 시간)
+        });
+      })
+      .catch((err) => {
+        console.error("Market API Error:", err);
+        setS(local);
+      });
+  };
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, fontFamily: FONT.mono, paddingRight: 4 }}>
+      <MarketChip flag="🇺🇸" label="US · ET"  timeStr={s.etStr}  session={s.usSession} />
+      <div style={{ width: 1, height: 22, background: C.border }} />
+      <MarketChip flag="🇰🇷" label="KR · KST" timeStr={s.kstStr} session={s.krSession} />
     </div>
   );
 }
