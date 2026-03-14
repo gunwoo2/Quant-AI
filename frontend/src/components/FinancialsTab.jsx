@@ -377,119 +377,111 @@ const FinancialsTab = () => {
     });
   }, [rows]);
 
-  const chartOption = useMemo(() => {
-  if (!financialData) return {};
-  // fc, fcVals, fcYears를 useMemo 안에서 정의 (stale closure 방지)
-  const fc = financialData?.financialCharts || {};
-  const fcVals = (key) => (fc[key] || []).map(d => d.value ?? 0);
-  const fcYears = (key) => (fc[key] || []).map(d => String(d.year));
-  const chartYears = fcYears('revenue').length ? fcYears('revenue') : periods;
+const chartOption = useMemo(() => {
+  if (!rows || rows.length === 0) return {};
+
+  // ── 데이터 추출 도우미 함수 (rows에서 직접 추출)
+  const getVal = (pathStr) => {
+    return rows.map(r => {
+      // r.incomeStatement.revenue 형태의 문자열 경로 탐색
+      const parts = pathStr.split('.');
+      let current = r;
+      for (const part of parts) {
+        if (current == null) break;
+        current = current[part];
+      }
+      return current ?? 0;
+    });
+  };
+
+  const chartYears = periods; // 테이블 헤더와 동일한 연도 사용
+
+  // 차트 타입별 시리즈 구성
+  const getSeries = () => {
+    switch (chartType) {
+      case "revenueProfits":
+        return [
+          { name: "Revenue (매출)", type: "bar", data: getVal('incomeStatement.revenue'), itemStyle: { color: '#3b82f6' } },
+          { name: "Gross Profit (총이익)", type: "bar", data: getVal('incomeStatement.grossProfit'), itemStyle: { color: '#10b981' } },
+          { name: "Net Income (순이익)", type: "line", data: getVal('incomeStatement.netIncome'), itemStyle: { color: '#fbbf24' }, symbolSize: 8 }
+        ];
+
+      case "fcfYield":
+        return [
+          { name: "OCF (영업현금흐름)", type: "bar", data: getVal('cashFlow.ocf'), itemStyle: { color: '#fbbf24', opacity: 0.4 } },
+          { name: "Free Cash Flow (FCF)", type: "line", data: getVal('cashFlow.fcf'), itemStyle: { color: '#10b981' }, symbolSize: 10 }
+        ];
+
+      case "roic":
+        return [
+          { name: "Net Income (순이익)", type: "bar", data: getVal('incomeStatement.netIncome'), itemStyle: { color: '#fbbf24', opacity: 0.2 } },
+          { name: "ROIC (%)", type: "line", yAxisIndex: 1, smooth: true, data: getVal('keyRatios.roic').map(v => Number((v * 100).toFixed(2))), itemStyle: { color: '#8b5cf6' }, lineStyle: { width: 3 } }
+        ];
+
+      case "opLeverage":
+        return [
+          { name: "Net Income (순이익)", type: "bar", data: getVal('incomeStatement.netIncome'), itemStyle: { color: '#fbbf24', opacity: 0.2 } },
+          { name: "Op Leverage", type: "line", yAxisIndex: 1, data: getVal('keyRatios.opLeverage').map(v => Number(v.toFixed(2))), itemStyle: { color: '#10b981' }, lineStyle: { width: 3 } }
+        ];
+
+      case "solvency":
+        const totalDebt = getVal('balanceSheet.totalDebt');
+        const cash = getVal('balanceSheet.cash');
+        const netDebt = totalDebt.map((d, i) => d - cash[i]);
+        return [
+          { name: "Net Debt (순부채)", type: "bar", data: netDebt, itemStyle: { color: (p) => p.value > 0 ? '#ef4444' : '#10b981' } },
+          { name: "Net Debt/EBITDA", type: "line", yAxisIndex: 1, data: getVal('keyRatios.netDebtEbitda'), itemStyle: { color: '#ffffff' }, lineStyle: { width: 2, type: 'dashed' }, symbolSize: 8 }
+        ];
+
+      case "ruleOf40":
+        const revs = getVal('incomeStatement.revenue');
+        const fcfs = getVal('cashFlow.fcf');
+        const r40 = revs.map((rev, i) => {
+          const growth = i > 0 && revs[i-1] > 0 ? ((rev - revs[i-1]) / revs[i-1]) * 100 : 0;
+          const fcfMargin = rev > 0 ? (fcfs[i] / rev) * 100 : 0;
+          return Number((growth + fcfMargin).toFixed(2));
+        });
+        return [{
+          name: "Rule of 40 (%)", type: "bar", yAxisIndex: 1,
+          data: r40, itemStyle: { color: "#10b981", borderRadius: [4, 4, 0, 0] },
+          markLine: { silent: true, symbol: "none", data: [{ yAxis: 40 }], lineStyle: { color: "#D85604", type: "dashed", width: 2 }, label: { formatter: "Target 40%", position: "end" } }
+        }];
+
+      default: return [];
+    }
+  };
 
   return {
     backgroundColor: 'transparent',
-    tooltip: { 
-      trigger: "axis", 
-      backgroundColor: 'rgba(20, 20, 20, 0.9)', 
-      borderColor: '#333', 
-      textStyle: { color: '#fff', fontSize: 12 } 
-    },
-    legend: { 
-      textStyle: { color: "#aaa", fontSize: 11 }, 
-      top: 0 
-    },
+    tooltip: { trigger: "axis", backgroundColor: 'rgba(20, 20, 20, 0.9)', borderColor: '#333', textStyle: { color: '#fff', fontSize: 12 } },
+    legend: { textStyle: { color: "#aaa", fontSize: 11 }, top: 0 },
     grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
-    xAxis: { 
-      type: "category", 
-      data: chartYears, 
-      axisLabel: { color: "#666", fontSize: 11 } 
-    },
+    xAxis: { type: "category", data: chartYears, axisLabel: { color: "#666", fontSize: 11 } },
     yAxis: [
       {
         type: "value",
-        name: "Amount",
         splitLine: { lineStyle: { color: '#161616' } },
         axisLabel: { 
           color: "#666", fontSize: 10,
           formatter: (value) => {
             if (Math.abs(value) >= 1e12) return (value / 1e12).toFixed(1) + 'T';
             if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(1) + 'B';
+            if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(1) + 'M';
             return value.toLocaleString();
           }
         }
       },
       {
         type: "value",
-        name: "Ratio (%)",
         position: 'right',
-        // solvency 포함, 퍼센트 지표를 쓰는 차트에서만 우측 축 표시
         show: ["roic", "ruleOf40", "opLeverage", "solvency"].includes(chartType),
         splitLine: { show: false },
-        axisLabel: { 
-          color: "#fbbf24", fontSize: 10,
-          formatter: (value) => value.toFixed(0) + '%'
-        }
+        axisLabel: { color: "#fbbf24", fontSize: 10, formatter: (value) => value.toFixed(0) + '%' }
       }
     ],
-    series: (function() {
-      // 모든 케이스에서 markLine: null을 기본으로 설정하여 Rule of 40의 잔상을 제거합니다.
-      switch (chartType) {
-        case "revenueProfits":
-          return [
-            { name: "Revenue (매출)",       type: "bar",  data: fcVals('revenue'),   itemStyle: { color: '#3b82f6' } },
-            { name: "Gross Profit (총이익)", type: "bar",  data: fcVals('grossProfit'), itemStyle: { color: '#10b981' } },
-            { name: "Net Income (순이익)",   type: "line", data: fcVals('netIncome'),  itemStyle: { color: '#fbbf24' }, symbolSize: 8, markLine: null }
-          ];
-
-        case "fcfYield":
-          return [
-            { name: "OCF (영업현금흐름)",     type: "bar",  data: fcVals('ocf'), itemStyle: { color: '#fbbf24', opacity: 0.4 } },
-            { name: "Free Cash Flow (FCF)",   type: "line", data: fcVals('fcf'), itemStyle: { color: '#10b981' }, symbolSize: 10, markLine: null }
-          ];
-
-        case "roic": {
-          const roicPct = fcVals('roic').map(v => Number((v * 100).toFixed(2)));
-          return [
-            { name: "Net Income (순이익)", type: "bar", data: fcVals('netIncome'), itemStyle: { color: '#fbbf24', opacity: 0.2 } },
-            { name: "ROIC (%)", type: "line", yAxisIndex: 1, smooth: true, data: roicPct, itemStyle: { color: '#8b5cf6' }, lineStyle: { width: 3 }, markLine: null }
-          ];
-        }
-
-        case "opLeverage":
-          return [
-            { name: "Net Income (순이익)", type: "bar", data: fcVals('netIncome'), itemStyle: { color: '#fbbf24', opacity: 0.2 } },
-            { name: "Op Leverage", type: "line", yAxisIndex: 1, data: fcVals('opLeverage').map(v => Number(v.toFixed(2))), itemStyle: { color: '#10b981' }, lineStyle: { width: 3 }, markLine: null }
-          ];
-
-        case "solvency": {
-          const debtData = (fc.debtSolvency || []).map(d => d.totalDebt - d.cash);
-          const netDebtEbitda = (fc.debtSolvency || []).map(d => d.netDebtEbitda ?? 0);
-          return [
-            { name: "Net Debt (순부채)", type: "bar", data: debtData, itemStyle: { color: (p) => p.value > 0 ? '#ef4444' : '#10b981' } },
-            { name: "Net Debt/EBITDA", type: "line", yAxisIndex: 1, data: netDebtEbitda, itemStyle: { color: '#ffffff' }, lineStyle: { width: 2, type: 'dashed' }, symbolSize: 8, connectNulls: true, markLine: null }
-          ];
-        }
-
-        case "ruleOf40": {
-          // Rule of 40 = 매출성장률% + FCF마진%
-          const revArr = fcVals('revenue');
-          const fcfArr = fcVals('fcf');
-          const r40 = revArr.map((rev, i) => {
-            const growth = i > 0 && revArr[i-1] > 0 ? ((rev - revArr[i-1]) / revArr[i-1]) * 100 : 0;
-            const fcfMargin = rev > 0 ? (fcfArr[i] / rev) * 100 : 0;
-            return Number((growth + fcfMargin).toFixed(2));
-          });
-          return [{
-            name: "Rule of 40 (%)", type: "bar", yAxisIndex: 1,
-            data: r40, itemStyle: { color: "#10b981", borderRadius: [4, 4, 0, 0] },
-            markLine: { silent: true, symbol: "none", data: [{ yAxis: 40 }], lineStyle: { color: "#D85604", type: "dashed", width: 2 }, label: { formatter: "Target 40%", position: "end" } }
-          }];
-        }
-
-        default: return [];
-      }
-    })()
+    series: getSeries().map(s => ({ ...s, markLine: s.markLine || null }))
   };
-}, [chartType, financialData, periods]);
+}, [chartType, rows, periods]); // 의존성을 financialData 대신 rows로 변경
 
   const btnStyle = (active) => ({
     padding: "8px 16px",

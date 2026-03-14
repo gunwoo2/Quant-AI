@@ -76,10 +76,13 @@ export default function MarketMarquee() {
         background: "#0a0a0a",
         borderBottom: `1px solid ${C.border}`,
         height: 30,
-        overflow: "hidden",
+        // 중요: 가로 스크롤 방지를 위한 핵심 설정
+        overflow: "hidden", 
         position: "relative",
         width: "100%",
+        maxWidth: "100vw", // 브라우저 너비를 절대 넘지 못하게 차단
         flexShrink: 0,
+        boxSizing: "border-box"
       }}
     >
       {/* 좌우 페이드 마스크 */}

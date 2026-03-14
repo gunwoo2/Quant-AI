@@ -120,8 +120,16 @@ export default function StockDetail() {
         {realtime && (
           <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 14 }}>
             <span style={{ fontSize: 30, fontWeight: 600 }}>${realtime.price?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-            <div style={{ color: (realtime.change >= 0) ? C.cyan : C.scarlet, backgroundColor: (realtime.change >= 0) ? `${C.cyan}15` : `${C.scarlet}15`, padding: '5px 20px', borderRadius: 4, fontSize: 17 }}>
-              {realtime.change > 0 ? '▲' : '▼'} {Math.abs(realtime.amount_change || 0).toFixed(2)} ({realtime.changesPercentage}%)
+            <div style={{ 
+              color: (realtime.change >= 0) ? C.cyan : C.scarlet, 
+              backgroundColor: (realtime.change >= 0) ? `${C.cyan}15` : `${C.scarlet}15`, 
+              padding: '5px 20px', 
+              borderRadius: 4, 
+              fontSize: 17 
+            }}>
+              {realtime.change > 0 ? '▲' : '▼'} 
+              {Math.abs(realtime.amount_change || 0).toFixed(2)} 
+              ({Number(realtime.changesPercentage || 0).toFixed(2)}%)
             </div>
           </div>
         )}

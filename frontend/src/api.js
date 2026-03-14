@@ -1,7 +1,8 @@
 import axios from 'axios';
 
 // 1. 끝에 붙은 /api 를 과감하게 지웁니다.
-const LOCAL_API_URL = 'https://8080-cs-1007043672332-default.cs-asia-east1-duck.cloudshell.dev';
+// const LOCAL_API_URL = 'https://8080-cs-1007043672332-default.cs-asia-east1-duck.cloudshell.dev';
+const LOCAL_API_URL = 'http://localhost:8080';
 const PROD_API_URL = 'https://stock-api-759997754570.asia-northeast3.run.app';
 
 const isLocal = window.location.hostname.includes('cloudshell.dev') || window.location.hostname === 'localhost';
