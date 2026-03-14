@@ -30,9 +30,6 @@ def get_stock_list(
 ) -> list[dict]:
     """
     메인 종목 목록 조회.
-    - v_latest_stock_scores 뷰 사용 (stocks + final_scores + realtime + likes JOIN)
-    - KIS API 호출 없음. DB close_price 직접 반환.
-    - 데이터 없으면 빈 배열 반환 (프론트는 빈 테이블 렌더링).
     """
     conditions = ["1=1"]
     params: list = []
@@ -73,7 +70,6 @@ def get_stock_list(
         LEFT JOIN sectors sec
             ON s.sector_id = sec.sector_id
         LEFT JOIN (
-            -- 종목별 최신 calc_date 기준 점수 1행만 가져오기
             SELECT DISTINCT ON (stock_id)
                 stock_id,
                 layer1_score,
@@ -100,16 +96,12 @@ def get_stock_list(
         cur.execute(sql, params)
         rows = cur.fetchall()
 
-    # RealDictCursor → 일반 dict 변환 후 반환
     result = []
     for row in rows:
         item = dict(row)
-
-        # Decimal → float 변환 (JSON 직렬화 대비)
         for key in ("price", "chg", "l1", "l2", "l3", "score"):
             if item.get(key) is not None:
                 item[key] = float(item[key])
-
         result.append(item)
 
     return result
@@ -119,11 +111,7 @@ def get_stock_list(
 #  GET /api/sectors
 # ──────────────────────────────────────────────────────────
 def get_sector_list() -> list[dict]:
-    """
-    사이드바용 섹터 목록.
-    - 종목 수, 평균 점수, 최고 등급 포함.
-    - 데이터 없으면 섹터 마스터만 반환 (종목 수 0).
-    """
+    """사이드바용 섹터 목록."""
     sql = """
         SELECT
             sec.sector_code                         AS key,
@@ -160,18 +148,89 @@ def get_sector_list() -> list[dict]:
 
     return result
 
+
+# ──────────────────────────────────────────────────────────
+#  GET /api/stock/detail/{ticker}  ★ TTM 기반
+# ──────────────────────────────────────────────────────────
 def get_stock_detail(ticker: str) -> dict | None:
     """
     종목 상세 헤더 + 실시간 데이터.
-    없는 ticker면 None 반환 → 404 처리.
+    ★ 재무지표를 TTM(Trailing Twelve Months) 기반으로 계산.
     """
     sql = """
+        WITH ttm_flow AS (
+            SELECT
+                sf_sub.stock_id,
+                SUM(sf_sub.revenue)             AS ttm_revenue,
+                SUM(sf_sub.ebit)                AS ttm_ebit,
+                SUM(sf_sub.net_income)          AS ttm_net_income,
+                SUM(sf_sub.operating_cash_flow) AS ttm_ocf,
+                SUM(sf_sub.free_cash_flow)      AS ttm_fcf,
+                SUM(sf_sub.gross_profit)        AS ttm_gross_profit,
+                SUM(sf_sub.ebitda)              AS ttm_ebitda,
+                SUM(sf_sub.income_tax)          AS ttm_income_tax,
+                SUM(sf_sub.pretax_income)       AS ttm_pretax_income,
+                SUM(sf_sub.eps_actual)          AS ttm_eps
+            FROM (
+                SELECT stock_id, revenue, ebit, net_income,
+                       operating_cash_flow, free_cash_flow,
+                       gross_profit, ebitda, income_tax, pretax_income,
+                       eps_actual,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY stock_id
+                           ORDER BY fiscal_year DESC, fiscal_quarter DESC
+                       ) AS rn
+                FROM stock_financials
+                WHERE report_type = 'QUARTERLY'
+            ) sf_sub
+            WHERE sf_sub.rn <= 4
+            GROUP BY sf_sub.stock_id
+        ),
+        eps_consensus AS (
+            SELECT DISTINCT ON (stock_id)
+                stock_id,
+                eps_estimated AS consensus_eps
+            FROM stock_financials
+            WHERE report_type = 'ANNUAL'
+              AND eps_estimated IS NOT NULL
+            ORDER BY stock_id, fiscal_year DESC
+        ),
+        eps_annual_hist AS (
+            SELECT
+                stock_id,
+                MAX(CASE WHEN rn = 1 THEN eps_actual END) AS eps_y1,
+                MAX(CASE WHEN rn = 4 THEN eps_actual END) AS eps_y4
+            FROM (
+                SELECT stock_id, eps_actual,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY stock_id
+                           ORDER BY fiscal_year DESC
+                       ) AS rn
+                FROM stock_financials
+                WHERE report_type = 'ANNUAL' AND eps_actual IS NOT NULL
+            ) sub
+            WHERE rn <= 5
+            GROUP BY stock_id
+        ),
+        latest_balance AS (
+            SELECT DISTINCT ON (stock_id)
+                stock_id,
+                total_assets         AS latest_ta,
+                total_equity         AS latest_equity,
+                total_debt           AS latest_debt,
+                cash_and_equivalents AS latest_cash,
+                invested_capital     AS latest_ic
+            FROM stock_financials
+            WHERE report_type = 'QUARTERLY'
+            ORDER BY stock_id, fiscal_year DESC, fiscal_quarter DESC
+        )
         SELECT
             -- header
             s.ticker,
             s.company_name                      AS name,
-            s.description                       AS description,
-            s.listing_date                      AS listing_date,
+            s.description,
+            s.listing_date,
+            s.shares_outstanding,
             e.exchange_code                     AS exchange,
             sec.sector_name                     AS sector,
             m.market_code                       AS market,
@@ -190,21 +249,39 @@ def get_stock_detail(ticker: str) -> dict | None:
             fs.strong_buy_signal,
             fs.strong_sell_signal,
 
-            -- 재무 지표 (최신 연간)
-            fin.eps_actual                      AS eps,
-            fin.roic,
-            fin.pb_ratio                        AS pbr,
-            fin.peg_ratio                       AS per
+            -- TTM 손익
+            tf.ttm_revenue,
+            tf.ttm_ebit,
+            tf.ttm_net_income,
+            tf.ttm_ocf,
+            tf.ttm_fcf,
+            tf.ttm_gross_profit,
+            tf.ttm_ebitda,
+            tf.ttm_income_tax,
+            tf.ttm_pretax_income,
+            tf.ttm_eps,
+
+            -- 최신 잔액
+            lb.latest_ta,
+            lb.latest_equity,
+            lb.latest_debt,
+            lb.latest_cash,
+            lb.latest_ic,
+
+            -- Forward PER용
+            ec.consensus_eps,
+            eah.eps_y1,
+            eah.eps_y4
 
         FROM stocks s
-        JOIN exchanges e
-            ON s.exchange_id = e.exchange_id
-        JOIN markets m
-            ON s.market_id = m.market_id
-        LEFT JOIN sectors sec
-            ON s.sector_id = sec.sector_id
-        LEFT JOIN stock_prices_realtime rt
-            ON s.stock_id = rt.stock_id
+        JOIN exchanges e ON s.exchange_id = e.exchange_id
+        JOIN markets m   ON s.market_id   = m.market_id
+        LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
+        LEFT JOIN stock_prices_realtime rt ON s.stock_id = rt.stock_id
+        LEFT JOIN ttm_flow tf ON s.stock_id = tf.stock_id
+        LEFT JOIN latest_balance lb ON s.stock_id = lb.stock_id
+        LEFT JOIN eps_consensus ec ON s.stock_id = ec.stock_id
+        LEFT JOIN eps_annual_hist eah ON s.stock_id = eah.stock_id
         LEFT JOIN (
             SELECT DISTINCT ON (stock_id)
                 stock_id, grade, weighted_score,
@@ -213,14 +290,6 @@ def get_stock_detail(ticker: str) -> dict | None:
             FROM stock_final_scores
             ORDER BY stock_id, calc_date DESC
         ) fs ON s.stock_id = fs.stock_id
-        LEFT JOIN (
-            SELECT DISTINCT ON (stock_id)
-                stock_id, eps_actual, roic,
-                pb_ratio, peg_ratio
-            FROM stock_financials
-            WHERE report_type = 'ANNUAL'
-            ORDER BY stock_id, fiscal_year DESC
-        ) fin ON s.stock_id = fin.stock_id
         WHERE s.ticker = %s
           AND s.is_active = TRUE
         LIMIT 1
@@ -235,12 +304,90 @@ def get_stock_detail(ticker: str) -> dict | None:
 
     row = dict(row)
 
+    def _f(key):
+        v = row.get(key)
+        return round(float(v), 4) if v is not None else None
+
+    # ── TTM 파생지표 계산 ──
+    ttm_ebit   = _f("ttm_ebit")
+    ttm_ni     = _f("ttm_net_income")
+    ttm_ocf    = _f("ttm_ocf")
+    ttm_eps    = _f("ttm_eps")
+    ttm_tax    = _f("ttm_income_tax")
+    ttm_pretax = _f("ttm_pretax_income")
+
+    ta     = _f("latest_ta")
+    equity = _f("latest_equity")
+    debt   = _f("latest_debt")
+    cash   = _f("latest_cash")
+    ic     = _f("latest_ic")
+    shares = _f("shares_outstanding")
+    price  = _f("price")
+
+    market_cap = price * shares if (price and shares) else None
+
+    # ROIC (TTM)
+    roic = None
+    if ttm_ebit is not None and ic and ic != 0:
+        if ttm_tax is not None and ttm_pretax and ttm_pretax != 0:
+            eff_tax = max(0.0, min(abs(ttm_tax / ttm_pretax), 0.50))
+        else:
+            eff_tax = 0.21
+        nopat = ttm_ebit * (1 - eff_tax)
+        roic = round(nopat / ic, 4)
+
+    # PER (TTM) = 주가 / TTM EPS
+    per = None
+    if price and ttm_eps and ttm_eps != 0:
+        per = round(price / ttm_eps, 2)
+
+    # ── Forward PER (컨센서스 우선 → CAGR 폴백) ──
+    forward_per = None
+    forward_eps = None
+    forward_method = None  # "consensus" | "cagr"
+
+    # 1순위: 애널리스트 컨센서스 EPS
+    consensus_eps = _f("consensus_eps")
+    if consensus_eps and consensus_eps > 0 and price:
+        fwd = round(price / consensus_eps, 2)
+        if 0 < fwd <= 200:
+            forward_per = fwd
+            forward_eps = round(consensus_eps, 4)
+            forward_method = "consensus"
+
+    # 2순위: EPS 3년 CAGR 기반 자체 추정
+    if forward_per is None and ttm_eps and ttm_eps > 0 and price:
+        eps_y1 = _f("eps_y1")  # 최신 ANNUAL
+        eps_y4 = _f("eps_y4")  # 3년 전
+        if eps_y1 and eps_y1 > 0 and eps_y4 and eps_y4 > 0:
+            cagr = (eps_y1 / eps_y4) ** (1.0 / 3.0) - 1.0
+            if -0.30 <= cagr <= 0.80:
+                est_eps = round(ttm_eps * (1 + cagr), 4)
+                if est_eps > 0:
+                    fwd = round(price / est_eps, 2)
+                    if 0 < fwd <= 200:
+                        forward_per = fwd
+                        forward_eps = est_eps
+                        forward_method = "cagr"
+
+    # PBR (TTM) = 시총 / 자본
+    pbr = None
+    if market_cap and equity and equity != 0:
+        pbr = round(market_cap / equity, 2)
+
+    # ROE (TTM) = TTM 순이익 / 자본
+    roe = None
+    if ttm_ni and equity and equity != 0:
+        roe = round(ttm_ni / equity, 4)
+
+    # ROA (TTM) = TTM 순이익 / 총자산
+    roa = None
+    if ttm_ni and ta and ta != 0:
+        roa = round(ttm_ni / ta, 4)
+
     # float 변환
-    float_fields = (
-        "price", "amount_change", "changes_percentage",
-        "score", "l1", "l2", "l3",
-        "eps", "roic", "pbr", "per"
-    )
+    float_fields = ("price", "amount_change", "changes_percentage",
+                    "score", "l1", "l2", "l3")
     for f in float_fields:
         if row.get(f) is not None:
             row[f] = float(row[f])
@@ -249,11 +396,11 @@ def get_stock_detail(ticker: str) -> dict | None:
         "header": {
             "ticker":      row["ticker"],
             "name":        row["name"],
-            "description": row["description"],      # 배치잡에서 추후 업데이트
-            "exchange":    row["exchange"],
-            "sector":      row["sector"],
-            "market":      row["market"],
-            "listingDate": row["listing_date"],
+            "description": row.get("description"),
+            "exchange":    row.get("exchange"),
+            "sector":      row.get("sector"),
+            "market":      row.get("market"),
+            "listingDate": row.get("listing_date"),
         },
         "realtime": {
             "price":             row.get("price"),
@@ -265,14 +412,16 @@ def get_stock_detail(ticker: str) -> dict | None:
             "l1":                row.get("l1"),
             "l2":                row.get("l2"),
             "l3":                row.get("l3"),
-            "eps":               row.get("eps"),
-            "per":               row.get("per"),
-            "forwardPer":        None,   # 배치잡에서 추후 업데이트
-            "pbr":               row.get("pbr"),
-            "roe":               None,   # 배치잡에서 추후 업데이트
-            "roa":               None,
-            "roic":              row.get("roic"),
+            "eps":               ttm_eps,
+            "per":               per,
+            "forwardPer":        forward_per,
+            "forwardEps":        forward_eps,
+            "forwardMethod":     forward_method,
+            "pbr":               pbr,
+            "roe":               roe,
+            "roa":               roa,
+            "roic":              roic,
             "strong_buy_signal":  row.get("strong_buy_signal", False),
             "strong_sell_signal": row.get("strong_sell_signal", False),
-        }
-    }    
+        },
+    }
