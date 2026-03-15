@@ -1,15 +1,18 @@
 /**
  * NlpSignalTab.jsx  —  Layer 2: 텍스트·감성 신호 (NLP / AI)
  *
- * 설계서 v2.0 반영 항목:
+ * v3.4 — API 실데이터 연결 + 한글 병기
+ *
+ * API: GET /api/stock/layer2/{ticker}
  *  ✅ 뉴스 Sentiment (FinBERT, 이벤트 태깅)
- *  ✅ 애널리스트 Revision (EPS 상향/하향 비율, Upgrade/Downgrade 이력) ← 기존 누락
- *  ✅ 내부자거래 Signal (SEC Form 4, CEO 20%↑ 매도 경보 로직)
- *  ✅ Earnings Call Tone (CEO/CFO 발언 분기별 Tone 점수)
+ *  ✅ 애널리스트 Consensus + Upgrade/Downgrade
+ *  ✅ 내부자거래 Signal (SEC Form 4, CEO 매도 경보)
+ *  ✅ Calibration 상태 (FIXED → ADAPTIVE 전환 표시)
+ *  ⏳ Earnings Call Tone (Phase 3 — Mock 유지)
  *
  * 디자인: Bloomberg Terminal × Seeking Alpha — 단색 위주, 데이터 밀도 우선
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -17,6 +20,7 @@ import {
   RadarChart, PolarGrid, PolarAngleAxis, Radar,
 } from 'recharts';
 import { C, FONT } from '../styles/tokens';
+import api from '../api';
 
 /* ─────────────────────────────────────────────
    Design Tokens
@@ -82,93 +86,122 @@ const TD = ({ children, style = {} }) => (
   <td style={{ padding:'10px 14px', fontSize:11, color:T.textSub, ...style }}>{children}</td>
 );
 
+/* ─────────────────────────────────────────────
+   로딩 / 에러 표시
+───────────────────────────────────────────── */
+const Loader = () => (
+  <div style={{ display:'flex', justifyContent:'center', alignItems:'center', height:200, color:T.textMuted, fontSize:11, fontFamily:FONT.sans }}>
+    데이터 로딩 중...
+  </div>
+);
+const ErrorMsg = ({ msg }) => (
+  <div style={{ padding:'14px 18px', background:`${T.down}08`, border:`1px solid ${T.down}30`,
+    borderLeft:`3px solid ${T.down}`, fontSize:10, color:T.down, fontFamily:FONT.sans }}>
+    {msg}
+  </div>
+);
+
 /* ═══════════════════════════════════════════
    SUBTAB 네비게이터
 ═══════════════════════════════════════════ */
 const SUBTABS = [
-  { id:'OVERVIEW',    label:'Overview'          },
-  { id:'NEWS',        label:'News Sentiment'    },
-  { id:'ANALYST',     label:'Analyst Revision'  },
-  { id:'INSIDER',     label:'Insider Flow'      },
-  { id:'TRANSCRIPT',  label:'Earnings Call'     },
+  { id:'OVERVIEW',    label:'Overview (종합)'              },
+  { id:'NEWS',        label:'News Sentiment (뉴스 감성)'   },
+  { id:'ANALYST',     label:'Analyst Revision (애널리스트)' },
+  { id:'INSIDER',     label:'Insider Flow (내부자 거래)'    },
+  { id:'TRANSCRIPT',  label:'(미사용_Phase 2 구현예정) Earnings Call (실적 발표)'    },
 ];
 
 export default function NlpSignalTab() {
   const { ticker } = useOutletContext();
   const [tab, setTab] = useState('OVERVIEW');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!ticker) return;
+    setLoading(true);
+    setError(null);
+    api.get(`/api/stock/layer2/${ticker}`)
+      .then(res => { setData(res.data); setLoading(false); })
+      .catch(err => {
+        console.error('[NlpSignalTab] API error:', err);
+        setError(err?.response?.data?.detail || 'Layer 2 데이터를 불러올 수 없습니다.');
+        setLoading(false);
+      });
+  }, [ticker]);
+
   return (
-    <div style={{ fontFamily:FONT.sans, color:T.text }}>
-
-      {/* Layer 2 헤더 */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
-        padding:'9px 14px', background:T.surface, border:`1px solid ${T.border}`,
-        borderLeft:`3px solid ${T.l2}`, marginBottom:14 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <span style={{ fontSize:9, fontWeight:800, color:T.l2, letterSpacing:2, fontFamily:FONT.sans }}>LAYER 2</span>
-          <span style={{ width:1, height:12, background:T.border, display:'inline-block' }} />
-          <span style={{ fontSize:11, color:T.textSub }}>텍스트·감성 신호 (NLP / AI)</span>
-          <span style={{ fontSize:9, color:T.textMuted, fontFamily:FONT.sans }}>· 가중치 25%</span>
-        </div>
-        <span style={{ fontSize:9, color:T.textMuted, fontFamily:FONT.sans }}>뉴스 매일 / 내부자 T+2 / 어닝콜 분기</span>
-      </div>
-
-      {/* 서브탭 */}
-      <div style={{ display:'flex', borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+    <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+      {/* Subtab bar */}
+      <div style={{ display:'flex', gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
         {SUBTABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            padding:'9px 16px', background:'none', border:'none',
-            borderBottom: tab === t.id ? `2px solid ${T.accent}` : '2px solid transparent',
-            color: tab === t.id ? T.text : T.textMuted,
-            fontSize:11, fontWeight: tab === t.id ? 700 : 400,
-            cursor:'pointer', transition:'color 0.12s',
-            position:'relative', top:1,
+            background:'none', border:'none', cursor:'pointer',
+            padding:'10px 22px', fontSize:10, fontWeight:700,
+            color: tab===t.id ? T.accent : T.textMuted,
+            borderBottom: tab===t.id ? `2px solid ${T.accent}` : '2px solid transparent',
+            letterSpacing:1.2, textTransform:'uppercase', fontFamily:FONT.sans,
+            transition:'color 0.12s', position:'relative', top:1,
           }}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {tab === 'OVERVIEW'   && <OverviewTab  ticker={ticker} />}
-      {tab === 'NEWS'       && <NewsTab      ticker={ticker} />}
-      {tab === 'ANALYST'    && <AnalystTab   ticker={ticker} />}
-      {tab === 'INSIDER'    && <InsiderTab   ticker={ticker} />}
-      {tab === 'TRANSCRIPT' && <TranscriptTab ticker={ticker} />}
+      {loading && <Loader />}
+      {error && <ErrorMsg msg={error} />}
+
+      {!loading && !error && data && <>
+        {tab === 'OVERVIEW'   && <OverviewTab  data={data} />}
+        {tab === 'NEWS'       && <NewsTab      data={data} />}
+        {tab === 'ANALYST'    && <AnalystTab   data={data} />}
+        {tab === 'INSIDER'    && <InsiderTab   data={data} />}
+        {tab === 'TRANSCRIPT' && <TranscriptTab />}
+      </>}
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════
-   1. OVERVIEW
+   1. OVERVIEW (종합) — 실데이터
 ═══════════════════════════════════════════ */
-function OverviewTab() {
-  const radar = [
-    { axis:'News',     score:82 },
-    { axis:'Analyst',  score:74 },
-    { axis:'Insider',  score:91 },
-    { axis:'Earnings', score:56 },
-    { axis:'Social',   score:63 },
-  ];
-  const rows = [
-    { label:'FinBERT News Sentiment', score:82, sig:'BULLISH',    color:T.up,      phase:2, note:'최근 30일 평균 감성 +0.61' },
-    { label:'Analyst Revision',       score:74, sig:'POSITIVE',   color:'#f59e0b', phase:2, note:'EPS 상향 67% · Upgrade +2건(90일)' },
-    { label:'SEC Insider Flow',        score:91, sig:'STRONG BUY', color:T.up,      phase:2, note:'CEO+CFO 동시 매수 포착' },
-    { label:'Earnings Call Tone',      score:56, sig:'NEUTRAL',    color:T.neutral, phase:3, note:'Management Tone 중립' },
-    { label:'Social Momentum',         score:63, sig:'WATCH',      color:'#f59e0b', phase:3, note:'Google Trends +140% (주간)' },
-  ];
+function OverviewTab({ data }) {
+  const { overview, confidence } = data;
+  const totalScore = overview?.totalScore ?? 50;
+  const radar = overview?.radar || [];
+  const signals = overview?.signals || [];
+  const conviction = overview?.conviction || 'NO DATA';
+
+  const conf = confidence || {};
+  const isAdaptive = conf.scoringMode === 'ADAPTIVE';
+
+  const convColor = totalScore >= 75 ? T.up : totalScore >= 65 ? '#4ade80' : totalScore >= 50 ? T.warn : totalScore >= 35 ? T.accent : T.down;
+  const convArrow = totalScore >= 50 ? '▲' : '▼';
+
   return (
     <div style={{ display:'grid', gridTemplateColumns:'340px 1fr', gap:16 }}>
       <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+        {/* Calibration 상태 배너 */}
+        <div style={{ padding:'8px 14px', background: isAdaptive ? `${T.up}08` : `${T.accent}08`,
+          border:`1px solid ${isAdaptive ? T.up : T.accent}30`,
+          borderLeft:`3px solid ${isAdaptive ? T.up : T.accent}`,
+          fontSize:9, color: isAdaptive ? T.up : T.accent, fontFamily:FONT.sans }}>
+          {isAdaptive ? '🧠' : '📊'} {conf.message || `스코어링 모드: ${conf.scoringMode || 'FIXED'}`}
+        </div>
+
         <Card>
-          <SL right={`L2 COMPOSITE`}>LAYER 2 SCORE</SL>
+          <SL right="L2 COMPOSITE">LAYER 2 SCORE (AI 분석 점수)</SL>
           <div style={{ display:'flex', alignItems:'flex-end', gap:14, marginBottom:18 }}>
-            <div style={{ fontSize:68, fontWeight:900, color:T.text, fontFamily:FONT.sans, lineHeight:1 }}>74</div>
+            <div style={{ fontSize:68, fontWeight:900, color:convColor, fontFamily:FONT.sans, lineHeight:1 }}>{totalScore}</div>
             <div style={{ paddingBottom:6 }}>
-              <div style={{ fontSize:9, color:T.up, fontWeight:700, letterSpacing:1, marginBottom:3 }}>▲ BULLISH CONVICTION</div>
-              <div style={{ fontSize:9, color:T.textMuted, fontFamily:FONT.sans }}>100점 만점 · 상위 28%ile</div>
+              <div style={{ fontSize:9, color:convColor, fontWeight:700, letterSpacing:1, marginBottom:3 }}>{convArrow} {conviction}</div>
+              <div style={{ fontSize:9, color:T.textMuted, fontFamily:FONT.sans }}>100점 만점</div>
             </div>
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-            {rows.map(r => (
+            {signals.map(r => (
               <div key={r.label}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:6 }}>
@@ -181,52 +214,75 @@ function OverviewTab() {
                   </div>
                 </div>
                 <MiniBar val={r.score} color={r.color} />
-                <div style={{ fontSize:9, color:T.textMuted, marginTop:2 }}>{r.note}</div>
               </div>
             ))}
           </div>
         </Card>
+
         <Card>
-          <SL>HIGH CONVICTION CONDITIONS</SL>
-          {[
-            { met:true,  label:'애널리스트 Upgrade 2건 이상 (90일)' },
-            { met:true,  label:'CEO 내부자 매수 존재' },
-            { met:null,  label:'VIX < 25 (Phase 3)' },
-            { met:null,  label:'섹터 ETF 자금 유입 (Phase 3)' },
-          ].map(r => (
-            <div key={r.label} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 0', borderBottom:`1px solid ${T.border}22` }}>
-              <span style={{ fontSize:12, color: r.met == null ? T.textMuted : r.met ? T.up : T.down }}>
-                {r.met == null ? '◦' : r.met ? '✓' : '✗'}
-              </span>
-              <span style={{ fontSize:10, color: r.met == null ? T.textMuted : T.textSub }}>{r.label}</span>
+          <SL>DATA CONFIDENCE (데이터 신뢰도)</SL>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {[
+              { label:'News Articles (뉴스 기사·7일)', val: conf.newsCount || 0, max: 20 },
+              { label:'Analyst Coverage (애널리스트 수)', val: conf.analystCount || 0, max: 30 },
+              { label:'Insider Txns (내부자 거래·90일)', val: conf.insiderCount || 0, max: 10 },
+            ].map(r => (
+              <div key={r.label}>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
+                  <span style={{ fontSize:10, color:T.textSub }}>{r.label}</span>
+                  <span style={{ fontSize:10, fontWeight:700, color:T.text, fontFamily:FONT.sans }}>{r.val}</span>
+                </div>
+                <MiniBar val={r.val} max={r.max} color={
+                  r.val >= r.max * 0.7 ? T.up : r.val >= r.max * 0.3 ? '#f59e0b' : T.down
+                } />
+              </div>
+            ))}
+            <div style={{ paddingTop:8, borderTop:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between' }}>
+              <span style={{ fontSize:9, color:T.textMuted }}>Confidence Grade (신뢰 등급)</span>
+              <Badge color={
+                conf.grade === 'HIGH' ? T.up : conf.grade === 'MED' ? '#f59e0b' : T.down
+              }>{conf.grade || 'N/A'}</Badge>
             </div>
-          ))}
+          </div>
         </Card>
       </div>
 
+      {/* Radar */}
       <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
         <Card>
-          <SL right="5-FACTOR NLP RADAR">SIGNAL DISTRIBUTION</SL>
-          <ResponsiveContainer width="100%" height={260}>
-            <RadarChart data={radar}>
-              <PolarGrid stroke={T.borderHi} />
-              <PolarAngleAxis dataKey="axis" tick={{ fill:T.textMuted, fontSize:10, fontFamily:FONT.sans }} />
-              <Radar name="L2 Score" dataKey="score" stroke={T.accent} fill={T.accent} fillOpacity={0.1} strokeWidth={1.5} />
-              <Tooltip contentStyle={tt} formatter={v => [`${v}점`,'Score']} />
-            </RadarChart>
-          </ResponsiveContainer>
+          <SL right="Layer 2 Dimensions">NLP SIGNAL RADAR (신호 레이더)</SL>
+          {radar.length > 0 ? (
+            <ResponsiveContainer width="100%" height={320}>
+              <RadarChart data={radar} cx="50%" cy="50%">
+                <PolarGrid stroke={T.borderHi} />
+                <PolarAngleAxis dataKey="axis" tick={{ fill:T.textSub, fontSize:10, fontFamily:FONT.sans }} />
+                <Radar name="Score" dataKey="score" stroke={T.accent} fill={T.accent}
+                  fillOpacity={0.15} strokeWidth={2} dot={{ r:4, fill:T.accent }} />
+                <Tooltip contentStyle={tt} />
+              </RadarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height:320, display:'flex', alignItems:'center', justifyContent:'center', color:T.textMuted, fontSize:11 }}>
+              Radar 데이터 없음
+            </div>
+          )}
         </Card>
+
         <Card>
-          <SL>SIGNAL INTERPRETATION</SL>
-          <p style={{ fontSize:12, color:T.textSub, lineHeight:1.85, margin:'0 0 12px 0' }}>
-            Layer 2 종합 <strong style={{ color:T.text }}>74점</strong>은 Bullish Conviction 구간입니다.
-            내부자거래(91점)가 가장 강력한 근거를 제공하며 CEO·CFO 동시 매수 이벤트가 포착됐습니다.
-            어닝콜 Tone(56점, Phase 3)은 중립 수준으로 단기 관망 병행을 권장합니다.
-          </p>
-          <div style={{ padding:'9px 12px', background:T.surface, borderLeft:`2px solid ${T.up}`, fontSize:11, color:T.textSub, lineHeight:1.7 }}>
-            <strong style={{ color:T.text }}>High Conviction 2/4 충족</strong> —
-            Upgrade 2건 + CEO 매수 동시 조건 충족. 설계서 Strong Buy 발동 조건 근접.
-          </div>
+          <SL>HIGH CONVICTION CONDITIONS (확신 조건)</SL>
+          {[
+            { met: (data.analyst?.upgradeCount || 0) >= 2, label: `애널리스트 Upgrade ${data.analyst?.upgradeCount || 0}건 (90일)` },
+            { met: (data.insider?.cLevelBuyCount || 0) > 0, label: `CEO/C-Level 매수 ${data.insider?.cLevelBuyCount || 0}건` },
+            { met: data.insider?.largeSellAlert === true, label: 'CEO 대규모 매도 경보', warn: true },
+            { met: null, label: 'Earnings Call Tone (Phase 3)' },
+          ].map(r => (
+            <div key={r.label} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 0', borderBottom:`1px solid ${T.border}22` }}>
+              <span style={{ fontSize:12, color: r.met == null ? T.textMuted : r.warn ? (r.met ? T.down : T.up) : (r.met ? T.up : T.textMuted) }}>
+                {r.met == null ? '○' : r.warn ? (r.met ? '⚠' : '✓') : (r.met ? '✓' : '○')}
+              </span>
+              <span style={{ fontSize:10, color: r.met == null ? T.textMuted : T.textSub, fontFamily:FONT.sans }}>{r.label}</span>
+            </div>
+          ))}
         </Card>
       </div>
     </div>
@@ -234,60 +290,59 @@ function OverviewTab() {
 }
 
 /* ═══════════════════════════════════════════
-   2. NEWS — FinBERT 감성 + 이벤트 태깅
+   2. NEWS (뉴스 감성) — FinBERT 실데이터
 ═══════════════════════════════════════════ */
-function NewsTab() {
-  const trend = [
-    { d:'03/01', s:0.32 },{ d:'03/02', s:0.45 },{ d:'03/03', s:-0.12 },
-    { d:'03/04', s:0.68 },{ d:'03/05', s:0.72 },{ d:'03/06', s:0.85 },{ d:'03/07', s:0.61 },
+function NewsTab({ data }) {
+  const news = data.news || {};
+  const trend = news.trend || [];
+  const dist = news.distribution || {};
+  const articles = news.articles || [];
+  const totalArt = dist.total || 1;
+
+  const distBars = [
+    { label:'Positive (긍정)', v: Math.round((dist.positive || 0) / totalArt * 100), c:T.up },
+    { label:'Neutral (중립)',  v: Math.round((dist.neutral || 0) / totalArt * 100),  c:T.neutral },
+    { label:'Negative (부정)', v: Math.round((dist.negative || 0) / totalArt * 100), c:T.down },
   ];
-  const news = [
-    { src:'Bloomberg',     time:'2h',  event:'Earnings Beat', score:+0.94, title:'Blackwell chip orders exceed production capacity by 3x' },
-    { src:'SEC EDGAR',     time:'5h',  event:'Buyback',       score:+0.82, title:'Form 8-K: $25B share repurchase program authorized' },
-    { src:'Reuters',       time:'8h',  event:'Regulatory',    score:-0.45, title:'New AI chip export restrictions under consideration' },
-    { src:'WSJ',           time:'1d',  event:'Partnership',   score:+0.71, title:'Strategic AWS deal expands CUDA cloud infrastructure' },
-    { src:'FT',            time:'1d',  event:'Guidance',      score:+0.56, title:'Management raises FY2025 revenue guidance by 12%' },
-    { src:'Seeking Alpha', time:'2d',  event:'Management',    score:-0.23, title:'COO departure raises execution risk questions' },
-  ];
-  const dist = [
-    { label:'Very Positive', v:28, c:T.up },
-    { label:'Positive',      v:35, c:'#86efac' },
-    { label:'Neutral',       v:22, c:T.textMuted },
-    { label:'Negative',      v:10, c:'#fca5a5' },
-    { label:'Very Negative', v:5,  c:T.down },
-  ];
+
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 280px', gap:16 }}>
         <Card>
-          <SL right="FinBERT · 7일">SENTIMENT INTENSITY TREND</SL>
-          <ResponsiveContainer width="100%" height={170}>
-            <ComposedChart data={trend} margin={{ left:-20, right:0, top:4, bottom:0 }}>
-              <XAxis dataKey="d" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} domain={[-1,1]} />
-              <Tooltip contentStyle={tt} formatter={v => [v.toFixed(2),'Sentiment']} />
-              <ReferenceLine y={0} stroke={T.borderHi} strokeDasharray="3 3" />
-              <Bar dataKey="s" maxBarSize={22} radius={[2,2,0,0]}>
-                {trend.map((e,i) => <Cell key={i} fill={e.s>=0 ? T.up : T.down} fillOpacity={0.65} />)}
-              </Bar>
-              <Line type="monotone" dataKey="s" stroke={T.accent} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
-            </ComposedChart>
-          </ResponsiveContainer>
+          <SL right="FinBERT · 30일">SENTIMENT INTENSITY TREND (감성 강도 추이)</SL>
+          {trend.length > 0 ? (
+            <ResponsiveContainer width="100%" height={170}>
+              <ComposedChart data={trend} margin={{ left:-20, right:0, top:4, bottom:0 }}>
+                <XAxis dataKey="d" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} domain={[-1,1]} />
+                <Tooltip contentStyle={tt} formatter={v => [typeof v === 'number' ? v.toFixed(2) : v, 'Sentiment']} />
+                <ReferenceLine y={0} stroke={T.borderHi} strokeDasharray="3 3" />
+                <Bar dataKey="s" maxBarSize={22} radius={[2,2,0,0]}>
+                  {trend.map((e,i) => <Cell key={i} fill={e.s>=0 ? T.up : T.down} fillOpacity={0.65} />)}
+                </Bar>
+                <Line type="monotone" dataKey="s" stroke={T.accent} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height:170, display:'flex', alignItems:'center', justifyContent:'center', color:T.textMuted, fontSize:11 }}>
+              감성 트렌드 데이터 없음
+            </div>
+          )}
         </Card>
         <Card>
-          <SL>DISTRIBUTION</SL>
+          <SL>DISTRIBUTION (분포)</SL>
           <div style={{ display:'flex', flexDirection:'column', gap:9 }}>
-            {dist.map(d => (
+            {distBars.map(d => (
               <div key={d.label}>
                 <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
                   <span style={{ fontSize:10, color:T.textSub }}>{d.label}</span>
                   <span style={{ fontSize:10, fontWeight:700, color:d.c, fontFamily:FONT.sans }}>{d.v}%</span>
                 </div>
-                <MiniBar val={d.v} max={40} color={d.c} />
+                <MiniBar val={d.v} max={100} color={d.c} />
               </div>
             ))}
             <div style={{ paddingTop:8, borderTop:`1px solid ${T.border}`, fontSize:9, color:T.textMuted }}>
-              FinBERT F1 ≈ 0.87 (금융 특화)
+              FinBERT F1 ≈ 0.87 (금융 특화) · Avg: {(news.avgSentiment || 0).toFixed(4)}
             </div>
           </div>
         </Card>
@@ -295,268 +350,244 @@ function NewsTab() {
 
       <Card style={{ padding:0 }}>
         <div style={{ padding:'12px 20px', borderBottom:`1px solid ${T.border}` }}>
-          <SL right="Finnhub API">AI ANALYZED NEWS FEED</SL>
+          <SL right={`${articles.length}건 · Finnhub API`}>AI ANALYZED NEWS FEED (AI 뉴스 분석)</SL>
         </div>
-        <table style={{ width:'100%', borderCollapse:'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-              <TH>Source</TH><TH>Time</TH><TH>Event</TH><TH>Headline</TH><TH right>Score</TH>
-            </tr>
-          </thead>
-          <tbody>
-            {news.map((n,i) => (
-              <tr key={i} style={{ borderBottom:`1px solid ${T.border}22`, background:i%2?T.surface:'transparent' }}>
-                <TD style={{ color:T.accent, fontWeight:700, fontFamily:FONT.sans, whiteSpace:'nowrap' }}>{n.src}</TD>
-                <TD style={{ color:T.textMuted, fontFamily:FONT.sans, whiteSpace:'nowrap' }}>{n.time} ago</TD>
-                <TD><Badge color={n.score>0.5?T.up:n.score<0?T.down:T.neutral}>{n.event}</Badge></TD>
-                <TD style={{ lineHeight:1.5 }}>{n.title}</TD>
-                <TD style={{ fontWeight:800, fontFamily:FONT.sans, textAlign:'right', color:n.score>0?T.up:T.down, whiteSpace:'nowrap' }}>
-                  {n.score>0?'+':''}{n.score.toFixed(2)}
-                </TD>
+        {articles.length > 0 ? (
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                <TH>Source (출처)</TH><TH>Time (시간)</TH><TH>Label (판정)</TH><TH>Headline (제목)</TH><TH right>Score (점수)</TH><TH right>Conf (확신도)</TH>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {articles.map((n,i) => (
+                <tr key={i} style={{ borderBottom:`1px solid ${T.border}22`, background:i%2?T.surface:'transparent' }}>
+                  <TD style={{ color:T.accent, fontWeight:700, fontFamily:FONT.sans, whiteSpace:'nowrap' }}>{n.src || '-'}</TD>
+                  <TD style={{ color:T.textMuted, fontFamily:FONT.sans, whiteSpace:'nowrap' }}>{n.time ? `${n.time} ago` : '-'}</TD>
+                  <TD><Badge color={n.label==='POSITIVE'?T.up:n.label==='NEGATIVE'?T.down:T.neutral}>{n.label}</Badge></TD>
+                  <TD style={{ lineHeight:1.5 }}>
+                    {n.url ? <a href={n.url} target="_blank" rel="noopener noreferrer"
+                      style={{ color:T.textSub, textDecoration:'none', borderBottom:`1px dotted ${T.border}` }}>{n.title}</a> : n.title}
+                  </TD>
+                  <TD style={{ fontWeight:800, fontFamily:FONT.sans, textAlign:'right',
+                    color:n.score>0?T.up:n.score<0?T.down:T.neutral, whiteSpace:'nowrap' }}>
+                    {n.score>0?'+':''}{(n.score || 0).toFixed(2)}
+                  </TD>
+                  <TD style={{ fontFamily:FONT.sans, textAlign:'right', fontSize:10, color:T.textMuted }}>
+                    {((n.confidence || 0) * 100).toFixed(0)}%
+                  </TD>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ padding:30, textAlign:'center', color:T.textMuted, fontSize:11 }}>분석된 뉴스가 없습니다.</div>
+        )}
       </Card>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════
-   3. ANALYST — EPS Revision + Rating Actions
-   (설계서 Layer 2 필수 항목 — 기존 누락)
+   3. ANALYST (애널리스트) — Consensus 실데이터
 ═══════════════════════════════════════════ */
-function AnalystTab() {
-  const revTrend = [
-    { q:"Q1'24", up:5, dn:2 },{ q:"Q2'24", up:4, dn:3 },
-    { q:"Q3'24", up:8, dn:1 },{ q:"Q4'24", up:11,dn:2 },{ q:"Q1'25", up:14,dn:3 },
-  ];
-  const eps = [
-    { p:'FY2025E EPS',  cur:11.93, prior:11.20, chg:+6.5 },
-    { p:'FY2026E EPS',  cur:15.40, prior:14.10, chg:+9.2 },
-    { p:'Revenue FY25 (B)', cur:128.5,prior:121.0,chg:+6.2 },
-    { p:'Revenue FY26 (B)', cur:162.0,prior:148.5,chg:+9.1 },
-  ];
-  const actions = [
-    { firm:'Goldman Sachs', date:'2025-03-01', action:'UPGRADE',   from:'Neutral',    to:'Buy',         tp:'$1,100' },
-    { firm:'Morgan Stanley',date:'2025-02-28', action:'REITERATE', from:'Overweight', to:'Overweight',  tp:'$1,050' },
-    { firm:'JP Morgan',     date:'2025-02-25', action:'UPGRADE',   from:'Neutral',    to:'Overweight',  tp:'$980' },
-    { firm:'Bernstein',     date:'2025-02-20', action:'INITIATE',  from:'-',          to:'Outperform',  tp:'$960' },
-    { firm:'HSBC',          date:'2025-02-15', action:'DOWNGRADE', from:'Buy',        to:'Hold',        tp:'$800' },
-    { firm:'BofA',          date:'2025-02-10', action:'REITERATE', from:'Buy',        to:'Buy',         tp:'$1,000' },
-  ];
-  const ac = a => a==='UPGRADE'?T.up:a==='DOWNGRADE'?T.down:T.textMuted;
+function AnalystTab({ data }) {
+  const a = data.analyst || {};
+  const con = a.consensus || {};
+
+  const revTrend = [];
+  if (a.upgradeCount || a.downgradeCount) {
+    revTrend.push({ q:'90d Total', up: a.upgradeCount || 0, dn: a.downgradeCount || 0 });
+  }
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-      {/* 상단 3열 스코어카드 */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+        {/* Consensus Breakdown */}
         <Card>
-          <SL>CONSENSUS (26명)</SL>
-          {[{ l:'Strong Buy / Buy', v:18, c:T.up },{ l:'Hold / Neutral', v:7, c:T.neutral },{ l:'Sell', v:1, c:T.down }].map(d => (
-            <div key={d.l} style={{ marginBottom:9 }}>
-              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
-                <span style={{ fontSize:10, color:T.textSub }}>{d.l}</span>
-                <span style={{ fontSize:12, fontWeight:700, color:d.c, fontFamily:FONT.sans }}>{d.v}명</span>
-              </div>
-              <MiniBar val={d.v} max={20} color={d.c} />
-            </div>
-          ))}
-          <div style={{ paddingTop:10, borderTop:`1px solid ${T.border}`, marginTop:4 }}>
-            <div style={{ fontSize:9, color:T.textMuted }}>Consensus</div>
-            <div style={{ fontSize:20, fontWeight:900, color:T.up, fontFamily:FONT.sans }}>BUY 69%</div>
-          </div>
-        </Card>
-
-        <Card style={{ textAlign:'center' }}>
-          <SL right="90일">REVISION MOMENTUM</SL>
-          <div style={{ fontSize:52, fontWeight:900, color:T.up, fontFamily:FONT.sans, lineHeight:1, marginTop:8 }}>74</div>
-          <div style={{ fontSize:9, color:T.up, letterSpacing:1.5, marginTop:8 }}>▲ POSITIVE REVISION</div>
-          <div style={{ fontSize:10, color:T.textMuted, marginTop:4 }}>EPS 상향 67% · 하향 13%</div>
-          <div style={{ marginTop:14, padding:'8px', background:T.surface, borderRadius:2, textAlign:'left' }}>
-            <div style={{ fontSize:10, color:T.textSub }}>Upgrade 2건↑ (90일)</div>
-            <div style={{ fontSize:9, color:T.up, marginTop:2 }}>✓ Strong Buy 조건 충족</div>
-          </div>
-        </Card>
-
-        <Card>
-          <SL>12M PRICE TARGET</SL>
-          <div style={{ textAlign:'center', padding:'4px 0 8px' }}>
-            <div style={{ fontSize:9, color:T.textMuted, marginBottom:4 }}>컨센서스 목표가</div>
-            <div style={{ fontSize:38, fontWeight:900, fontFamily:FONT.sans }}>$984</div>
-            <div style={{ fontSize:11, color:T.up, fontWeight:700 }}>현재가 대비 +12.4%</div>
-          </div>
-          <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:10 }}>
-            {[['High','$1,100'],['Median','$984'],['Low','$800']].map(([k,v]) => (
-              <div key={k} style={{ display:'flex', justifyContent:'space-between', marginBottom:5 }}>
-                <span style={{ fontSize:10, color:T.textMuted }}>{k}</span>
-                <span style={{ fontSize:11, fontFamily:FONT.sans, fontWeight:700 }}>{v}</span>
+          <SL right={`${con.total || 0}명`}>CONSENSUS BREAKDOWN (컨센서스 분석)</SL>
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            {[
+              { label:'Buy / Strong Buy (매수)', val: con.buy || 0, pct: con.total ? Math.round(con.buy / con.total * 100) : 0, color:T.up },
+              { label:'Hold (보유)', val: con.hold || 0, pct: con.total ? Math.round(con.hold / con.total * 100) : 0, color:'#f59e0b' },
+              { label:'Sell / Strong Sell (매도)', val: con.sell || 0, pct: con.total ? Math.round(con.sell / con.total * 100) : 0, color:T.down },
+            ].map(r => (
+              <div key={r.label}>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                  <span style={{ fontSize:10, color:T.textSub }}>{r.label}</span>
+                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                    <span style={{ fontSize:10, color:T.textMuted, fontFamily:FONT.sans }}>{r.val}명</span>
+                    <span style={{ fontSize:12, fontWeight:700, color:r.color, fontFamily:FONT.sans }}>{r.pct}%</span>
+                  </div>
+                </div>
+                <MiniBar val={r.pct} max={100} color={r.color} />
               </div>
             ))}
           </div>
+          <div style={{ marginTop:14, paddingTop:10, borderTop:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <span style={{ fontSize:9, color:T.textMuted }}>Analyst Score (애널리스트 점수)</span>
+            <span style={{ fontSize:20, fontWeight:900, color:T.text, fontFamily:FONT.sans }}>{a.score || 50}</span>
+          </div>
+        </Card>
+
+        {/* Upgrade / Downgrade */}
+        <Card>
+          <SL right="90일">UPGRADE / DOWNGRADE (상향 / 하향)</SL>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14, marginBottom:16 }}>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontSize:28, fontWeight:900, color:T.up, fontFamily:FONT.sans }}>{a.upgradeCount || 0}</div>
+              <div style={{ fontSize:9, color:T.textMuted, letterSpacing:1 }}>UPGRADES (상향)</div>
+            </div>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontSize:28, fontWeight:900, color:T.down, fontFamily:FONT.sans }}>{a.downgradeCount || 0}</div>
+              <div style={{ fontSize:9, color:T.textMuted, letterSpacing:1 }}>DOWNGRADES (하향)</div>
+            </div>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontSize:28, fontWeight:900, color: (a.netUpgrade||0)>=0?T.up:T.down, fontFamily:FONT.sans }}>
+                {(a.netUpgrade||0)>=0?'+':''}{a.netUpgrade||0}
+              </div>
+              <div style={{ fontSize:9, color:T.textMuted, letterSpacing:1 }}>NET (순변동)</div>
+            </div>
+          </div>
+          {revTrend.length > 0 && (
+            <ResponsiveContainer width="100%" height={100}>
+              <BarChart data={revTrend} margin={{ left:-20, right:0 }}>
+                <XAxis dataKey="q" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tt} />
+                <Bar dataKey="up" name="Upgrade (상향)" fill={T.up} fillOpacity={0.7} maxBarSize={30} radius={[2,2,0,0]} />
+                <Bar dataKey="dn" name="Downgrade (하향)" fill={T.down} fillOpacity={0.6} maxBarSize={30} radius={[2,2,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </Card>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-        <Card>
-          <SL right="분기별">UPGRADE vs DOWNGRADE</SL>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={revTrend} margin={{ left:-20, right:0 }}>
-              <XAxis dataKey="q" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={tt} />
-              <Bar dataKey="up" name="Upgrade"   fill={T.up}   fillOpacity={0.7} maxBarSize={22} radius={[2,2,0,0]} />
-              <Bar dataKey="dn" name="Downgrade" fill={T.down} fillOpacity={0.6} maxBarSize={22} radius={[2,2,0,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
+      {/* EPS Revision — Phase 3 */}
+      <Card>
+        <div style={{ padding:'9px 14px', background:T.surface, border:`1px solid #f59e0b40`,
+          borderLeft:`3px solid #f59e0b`, fontSize:9, color:'#f59e0b', fontFamily:FONT.sans }}>
+          ⚙ EPS Estimate Revision (EPS 추정치 변동) / Rating Action History (투자의견 이력) — Phase 3에서 FMP API 연동 예정
+        </div>
+      </Card>
+    </div>
+  );
+}
 
-        <Card style={{ padding:0 }}>
-          <div style={{ padding:'12px 18px', borderBottom:`1px solid ${T.border}` }}>
-            <SL>EPS ESTIMATE REVISION</SL>
+/* ═══════════════════════════════════════════
+   4. INSIDER (내부자 거래) — SEC Form 4 실데이터
+═══════════════════════════════════════════ */
+function InsiderTab({ data }) {
+  const ins = data.insider || {};
+  const flow = ins.monthlyFlow || [];
+  const trades = ins.trades || [];
+  const score = ins.score || 50;
+  const signal = ins.signal || 'NEUTRAL';
+
+  const sigColor = signal === 'BULLISH' ? T.up : signal === 'BEARISH' ? T.down : T.neutral;
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      {ins.largeSellAlert && (
+        <div style={{ padding:'9px 14px', background:`${T.down}10`, border:`1px solid ${T.down}40`,
+          borderLeft:`3px solid ${T.down}`, fontSize:10, color:T.down, fontFamily:FONT.sans, fontWeight:700 }}>
+          ⚠ CEO 대규모 매도 경보 — 보유 지분 20% 이상 처분 가능성
+        </div>
+      )}
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 280px', gap:16 }}>
+        <Card>
+          <SL right="SEC Form 4 · 6개월">INSIDER NET FLOW (내부자 자금 흐름·$M)</SL>
+          {flow.length > 0 ? (
+            <ResponsiveContainer width="100%" height={170}>
+              <BarChart data={flow} margin={{ left:-10, right:0 }}>
+                <XAxis dataKey="m" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tt} />
+                <Bar dataKey="buy" name="Buy (매수·$M)" fill={T.up} fillOpacity={0.7} maxBarSize={24} radius={[2,2,0,0]} stackId="a" />
+                <Bar dataKey="sell" name="Sell (매도·$M)" fill={T.down} fillOpacity={0.6} maxBarSize={24} radius={[2,2,0,0]} stackId="a" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height:170, display:'flex', alignItems:'center', justifyContent:'center', color:T.textMuted, fontSize:11 }}>
+              최근 6개월 거래 데이터 없음
+            </div>
+          )}
+        </Card>
+        <Card>
+          <SL>INSIDER SIGNAL (내부자 신호)</SL>
+          <div style={{ textAlign:'center', marginBottom:14 }}>
+            <div style={{ fontSize:48, fontWeight:900, color:T.text, fontFamily:FONT.sans, lineHeight:1 }}>{score}</div>
+            <div style={{ marginTop:6 }}><Badge color={sigColor}>{signal}</Badge></div>
           </div>
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-                <TH>Period</TH><TH right>Current</TH><TH right>Prior</TH><TH right>Δ</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {eps.map((r,i) => (
-                <tr key={i} style={{ borderBottom:`1px solid ${T.border}22`, background:i%2?T.surface:'transparent' }}>
-                  <TD>{r.p}</TD>
-                  <TD style={{ textAlign:'right', fontWeight:700, fontFamily:FONT.sans }}>{r.cur}</TD>
-                  <TD style={{ textAlign:'right', color:T.textMuted, fontFamily:FONT.sans }}>{r.prior}</TD>
-                  <TD style={{ textAlign:'right', fontWeight:700, fontFamily:FONT.sans, color:T.up }}>+{r.chg}%</TD>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {[
+              { label:'Buy Transactions (매수 건수)', val: ins.buyCount || 0, color:T.up },
+              { label:'Sell Transactions (매도 건수)', val: ins.sellCount || 0, color:T.down },
+              { label:'C-Level Buyers (임원 매수자)', val: ins.cLevelBuyCount || 0, color:'#f59e0b' },
+            ].map(r => (
+              <div key={r.label} style={{ display:'flex', justifyContent:'space-between', padding:'4px 0', borderBottom:`1px solid ${T.border}22` }}>
+                <span style={{ fontSize:10, color:T.textSub }}>{r.label}</span>
+                <span style={{ fontSize:12, fontWeight:700, color:r.color, fontFamily:FONT.sans }}>{r.val}</span>
+              </div>
+            ))}
+          </div>
         </Card>
       </div>
 
       <Card style={{ padding:0 }}>
         <div style={{ padding:'12px 18px', borderBottom:`1px solid ${T.border}` }}>
-          <SL right="FMP API · Phase 2">ANALYST RATING ACTIONS</SL>
+          <SL right={`${trades.length}건 · Finnhub`}>INSIDER TRANSACTION LOG (내부자 거래 기록)</SL>
         </div>
-        <table style={{ width:'100%', borderCollapse:'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-              <TH>Firm</TH><TH>Date</TH><TH>Action</TH><TH>From</TH><TH>To</TH><TH right>Target</TH>
-            </tr>
-          </thead>
-          <tbody>
-            {actions.map((r,i) => (
-              <tr key={i} style={{ borderBottom:`1px solid ${T.border}22`, background:i%2?T.surface:'transparent' }}>
-                <TD style={{ fontWeight:600, color:T.text }}>{r.firm}</TD>
-                <TD style={{ color:T.textMuted, fontFamily:FONT.sans }}>{r.date}</TD>
-                <TD><Badge color={ac(r.action)}>{r.action}</Badge></TD>
-                <TD style={{ color:T.textMuted }}>{r.from}</TD>
-                <TD style={{ fontWeight:700, color:ac(r.action) }}>{r.to}</TD>
-                <TD style={{ fontWeight:700, fontFamily:FONT.sans, textAlign:'right' }}>{r.tp}</TD>
+        {trades.length > 0 ? (
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                <TH>Name (이름)</TH><TH>Role (직책)</TH><TH>Type (유형)</TH><TH right>Shares (주식수)</TH><TH right>Value (금액)</TH><TH>Date (일자)</TH>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {trades.map((t,i) => (
+                <tr key={i} style={{ borderBottom:`1px solid ${T.border}22`, background:i%2?T.surface:'transparent' }}>
+                  <TD style={{ fontWeight:600, color: t.isCLevel ? T.text : T.textSub }}>
+                    {t.name} {t.isCLevel && <span style={{ color:'#f59e0b', fontSize:9 }}>★</span>}
+                  </TD>
+                  <TD style={{ color:T.textMuted }}>{t.role}</TD>
+                  <TD>
+                    <Badge color={t.type==='BUY'?T.up:T.down}>
+                      {t.type==='BUY'?'PURCHASE (매수)':'SALE (매도)'}
+                    </Badge>
+                  </TD>
+                  <TD style={{ textAlign:'right', fontFamily:FONT.sans }}>{t.shares}</TD>
+                  <TD style={{ textAlign:'right', fontWeight:700, fontFamily:FONT.sans,
+                    color:t.type==='BUY'?T.up:T.down }}>{t.val}</TD>
+                  <TD style={{ color:T.textMuted, fontFamily:FONT.sans }}>{t.date}</TD>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ padding:30, textAlign:'center', color:T.textMuted, fontSize:11 }}>내부자 거래 데이터 없음</div>
+        )}
       </Card>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════
-   4. INSIDER — SEC Form 4
-═══════════════════════════════════════════ */
-function InsiderTab() {
-  const flow = [
-    { m:'Oct', buy:4.2, sell:0.8 },{ m:'Nov', buy:2.1, sell:1.4 },
-    { m:'Dec', buy:6.8, sell:0.3 },{ m:'Jan', buy:3.5, sell:2.1 },
-    { m:'Feb', buy:5.3, sell:0.9 },{ m:'Mar', buy:4.1, sell:0.5 },
-  ];
-  const trades = [
-    { name:'Jensen Huang',   role:'CEO',      type:'PURCHASE', shares:'12,000', val:'$4.2M', date:'2025-03-05', note:'임원진 집단 매수 ★★★★★' },
-    { name:'Colette Kress',  role:'CFO',      type:'PURCHASE', shares:'4,200',  val:'$1.1M', date:'2025-03-02', note:'' },
-    { name:'Mark Stevens',   role:'Director', type:'PURCHASE', shares:'3,100',  val:'$0.8M', date:'2025-02-28', note:'3명 동시 = 내부 저평가 인식' },
-    { name:'Harvey C. Jones',role:'Director', type:'SALE',     shares:'700',    val:'$0.2M', date:'2025-02-20', note:'세금 목적 (D코드)' },
-  ];
-  return (
-    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 260px', gap:16 }}>
-        <Card>
-          <SL right="6개월">INSIDER NET FLOW (M$)</SL>
-          <ResponsiveContainer width="100%" height={190}>
-            <BarChart data={flow} margin={{ left:-20, right:0 }}>
-              <XAxis dataKey="m" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={tt} formatter={(v,n) => [`$${v}M`,n]} />
-              <Bar dataKey="buy"  name="Buy"  fill={T.up}   fillOpacity={0.65} maxBarSize={26} radius={[2,2,0,0]} />
-              <Bar dataKey="sell" name="Sell" fill={T.down} fillOpacity={0.5}  maxBarSize={26} radius={[2,2,0,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-        <Card>
-          <SL>CONVICTION SCORE</SL>
-          <div style={{ textAlign:'center', padding:'10px 0' }}>
-            <div style={{ fontSize:52, fontWeight:900, color:T.up, fontFamily:FONT.sans, lineHeight:1 }}>91</div>
-            <div style={{ fontSize:9, color:T.up, letterSpacing:1.5, marginTop:8 }}>STRONG CONVICTION</div>
-          </div>
-          <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:10, marginTop:8 }}>
-            {[['임원진 집단 매수','3명 동시',true],['CEO 대규모 매도','없음',false],
-              ['신뢰도','★★★★★',null],['소스','SEC Form 4',null]].map(([k,v,a]) => (
-              <div key={k} style={{ display:'flex', justifyContent:'space-between', marginBottom:5 }}>
-                <span style={{ fontSize:9, color:T.textMuted }}>{k}</span>
-                <span style={{ fontSize:9, fontWeight:700, fontFamily:FONT.sans, color:a===true?T.up:a===false?T.neutral:T.text }}>{v}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      <Card style={{ padding:0 }}>
-        <div style={{ padding:'12px 18px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-          <SL>SEC FORM 4 RECENT TRADES</SL>
-        </div>
-        <div style={{ padding:'8px 18px', background:'#0a0a0a', borderBottom:`1px solid ${T.border}`,
-          fontSize:9, color:T.textMuted, fontFamily:FONT.sans }}>
-          ⚡ ALERT: CEO 지분 20%↑ 매도 감지 시 Layer 2 단독 경보 발동 (설계서 기준). 현재 미감지.
-        </div>
-        <table style={{ width:'100%', borderCollapse:'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-              <TH>Name</TH><TH>Role</TH><TH>Type</TH><TH right>Shares</TH><TH right>Value</TH><TH>Date</TH><TH>Note</TH>
-            </tr>
-          </thead>
-          <tbody>
-            {trades.map((t,i) => (
-              <tr key={i} style={{ borderBottom:`1px solid ${T.border}22`, background:i%2?T.surface:'transparent' }}>
-                <TD style={{ fontWeight:600, color:T.text }}>{t.name}</TD>
-                <TD style={{ color:T.textMuted }}>{t.role}</TD>
-                <TD><Badge color={t.type==='PURCHASE'?T.up:T.down}>{t.type}</Badge></TD>
-                <TD style={{ textAlign:'right', fontFamily:FONT.sans }}>{t.shares}</TD>
-                <TD style={{ textAlign:'right', fontWeight:700, fontFamily:FONT.sans, color:t.type==='PURCHASE'?T.up:T.down }}>{t.val}</TD>
-                <TD style={{ color:T.textMuted, fontFamily:FONT.sans }}>{t.date}</TD>
-                <TD style={{ color:T.textMuted, fontSize:10 }}>{t.note}</TD>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════
-   5. TRANSCRIPT — 어닝콜 Tone (Phase 3)
+   5. TRANSCRIPT (실적 발표) — Phase 3 Mock 유지
 ═══════════════════════════════════════════ */
 function TranscriptTab() {
   const toneRadar = [
-    { axis:'Growth Optimism', A:88, B:72 },{ axis:'Cost Control', A:62, B:68 },
-    { axis:'Guidance Tone',   A:75, B:60 },{ axis:'Stability',    A:55, B:71 },
-    { axis:'Capex Confidence',A:92, B:65 },
+    { axis:'Optimism (낙관)',   A:82, B:68 },{ axis:'Certainty (확신)', A:78, B:71 },
+    { axis:'Urgency (긴급)',    A:45, B:55 },{ axis:'Risk (위험)',       A:35, B:40 },
+    { axis:'Forward (전망)',    A:88, B:73 },{ axis:'Hedging (회피)',    A:22, B:38 },
   ];
   const qHist = [
-    { q:"Q1'24", ceo:62, cfo:70 },{ q:"Q2'24", ceo:68, cfo:72 },
-    { q:"Q3'24", ceo:74, cfo:69 },{ q:"Q4'24", ceo:88, cfo:82 },
+    { q:"Q1'24", ceo:62, cfo:55 },{ q:"Q2'24", ceo:68, cfo:58 },
+    { q:"Q3'24", ceo:71, cfo:61 },{ q:"Q4'24", ceo:82, cfo:67 },
   ];
+
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
       <div style={{ padding:'9px 14px', background:T.surface, border:`1px solid #f59e0b40`,
@@ -566,7 +597,7 @@ function TranscriptTab() {
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
         <Card>
-          <SL right="Q4'24 vs Q3'24">TONE SHIFT RADAR</SL>
+          <SL right="Q4'24 vs Q3'24">TONE SHIFT RADAR (톤 변화 레이더)</SL>
           <ResponsiveContainer width="100%" height={250}>
             <RadarChart data={toneRadar}>
               <PolarGrid stroke={T.borderHi} />
@@ -579,30 +610,30 @@ function TranscriptTab() {
         </Card>
 
         <Card>
-          <SL>AI TRANSCRIPT INSIGHTS</SL>
+          <SL>AI TRANSCRIPT INSIGHTS (AI 실적발표 분석)</SL>
           <div style={{ display:'flex', flexDirection:'column', gap:14, marginBottom:16 }}>
             <div style={{ borderLeft:`2px solid ${T.up}`, paddingLeft:12 }}>
-              <div style={{ fontSize:9, fontWeight:800, color:T.up, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>BULLISH SIGNAL</div>
+              <div style={{ fontSize:9, fontWeight:800, color:T.up, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>BULLISH SIGNAL (강세 신호)</div>
               <div style={{ fontSize:11, color:T.textSub, lineHeight:1.75 }}>
-                Jensen Huang CEO가 AI 인프라 수요를 'unprecedented'로 12회 언급. 역대 어닝콜 최고 낙관 Tone 기록. Blackwell GPU 수요가 공급 초과 상황을 구체 수치와 함께 강조.
+                CEO가 AI 인프라 수요를 'unprecedented'로 언급. 역대 어닝콜 최고 낙관 Tone 기록.
               </div>
             </div>
             <div style={{ borderLeft:`2px solid ${T.down}`, paddingLeft:12 }}>
-              <div style={{ fontSize:9, fontWeight:800, color:T.down, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>RISK FACTOR</div>
+              <div style={{ fontSize:9, fontWeight:800, color:T.down, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>RISK FACTOR (위험 요인)</div>
               <div style={{ fontSize:11, color:T.textSub, lineHeight:1.75 }}>
-                HBM 공급 부족에 따른 리드타임 지연이 잠재 리스크로 언급. CFO 재무 가이던스 언어는 중립~보수적.
+                공급 부족에 따른 리드타임 지연 리스크. CFO 재무 가이던스 언어는 중립~보수적.
               </div>
             </div>
           </div>
-          <div style={{ fontSize:9, color:T.textMuted, letterSpacing:1.5, marginBottom:8, fontFamily:FONT.sans }}>KEY PHRASES</div>
+          <div style={{ fontSize:9, color:T.textMuted, letterSpacing:1.5, marginBottom:8, fontFamily:FONT.sans }}>KEY PHRASES (핵심 키워드)</div>
           <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginBottom:5 }}>
-            {['Blackwell','Sovereign AI','Cloud Capex','HBM3e','unprecedented'].map(w => (
+            {['Sovereign AI','Cloud Capex','unprecedented'].map(w => (
               <span key={w} style={{ fontSize:9, padding:'3px 8px', borderRadius:2,
                 background:`${T.up}10`, color:T.up, border:`1px solid ${T.up}30`, fontFamily:FONT.sans }}>{w}</span>
             ))}
           </div>
           <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
-            {['supply constraints','lead time','execution risk'].map(w => (
+            {['supply constraints','execution risk'].map(w => (
               <span key={w} style={{ fontSize:9, padding:'3px 8px', borderRadius:2,
                 background:`${T.down}10`, color:T.down, border:`1px solid ${T.down}30`, fontFamily:FONT.sans }}>{w}</span>
             ))}
@@ -611,7 +642,7 @@ function TranscriptTab() {
       </div>
 
       <Card>
-        <SL right="CEO·CFO Tone 점수">QUARTERLY TONE HISTORY</SL>
+        <SL right="CEO·CFO Tone 점수">QUARTERLY TONE HISTORY (분기별 톤 추이)</SL>
         <ResponsiveContainer width="100%" height={160}>
           <ComposedChart data={qHist} margin={{ left:-20, right:0 }}>
             <XAxis dataKey="q" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
@@ -619,10 +650,11 @@ function TranscriptTab() {
             <Tooltip contentStyle={tt} />
             <Bar dataKey="ceo" name="CEO" fill={T.accent} fillOpacity={0.6} maxBarSize={30} radius={[2,2,0,0]} />
             <Bar dataKey="cfo" name="CFO" fill={T.borderHi} maxBarSize={30} radius={[2,2,0,0]} />
-            <Line type="monotone" dataKey="ceo" stroke={T.accent} strokeWidth={1.5} dot={{ fill:T.accent, r:3 }} />
+            <Line type="monotone" dataKey="ceo" stroke={T.accent} strokeWidth={1.5} dot={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </Card>
     </div>
   );
 }
+

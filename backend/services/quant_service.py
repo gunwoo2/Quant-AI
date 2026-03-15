@@ -32,6 +32,7 @@ def get_quant_detail(ticker: str) -> dict | None:
                        ) AS rn
                 FROM stock_financials
                 WHERE report_type = 'QUARTERLY'
+                  AND revenue IS NOT NULL
             ) sf_sub
             WHERE sf_sub.rn <= 4
             GROUP BY sf_sub.stock_id
@@ -49,6 +50,7 @@ def get_quant_detail(ticker: str) -> dict | None:
                        ) AS rn
                 FROM stock_financials
                 WHERE report_type = 'QUARTERLY'
+                  AND revenue IS NOT NULL
             ) sf_sub
             WHERE sf_sub.rn BETWEEN 5 AND 8
             GROUP BY sf_sub.stock_id
@@ -63,6 +65,7 @@ def get_quant_detail(ticker: str) -> dict | None:
                 invested_capital     AS latest_ic
             FROM stock_financials
             WHERE report_type = 'QUARTERLY'
+              AND total_assets IS NOT NULL
             ORDER BY stock_id, fiscal_year DESC, fiscal_quarter DESC
         ),
         eps_consensus AS (

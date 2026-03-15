@@ -1,18 +1,17 @@
+transformers
+torch
 fastapi
 uvicorn[standard]
 psycopg2-binary
 python-dotenv
 pydantic
 cachetools
-
-# flask
-# flask-cors
-# yfinance
-# pandas
-# numpy
-# psycopg2-binary
-# python-dotenv
-# gunicorn
-# scipy
-# scikit-learn
-# scikit-learn
+yfinance
+pandas
+numpy
+finance-datareader
+requests
+scipy
+scikit-learn
+APScheduler>=3.10
+pytz

@@ -281,7 +281,7 @@ def run_supplement_financials():
             fins = []
             with get_cursor() as cur:
                 cur.execute("""
-                    SELECT fiscal_year, revenue, ebit, net_income,
+                    SELECT fiscal_year, revenue, gross_profit, ebit, net_income,
                            operating_cash_flow, total_assets, total_equity,
                            total_debt, cash_and_equivalents, ebitda,
                            invested_capital, free_cash_flow,

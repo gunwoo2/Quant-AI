@@ -10,6 +10,15 @@ class MarketIndexItem(BaseModel):
 
 
 class MarketStatusResponse(BaseModel):
-    isOpen:   bool
-    session:  str       # OPEN, CLOSED, PRE_MARKET, AFTER_HOURS
-    nextOpen: Optional[str] = None
+    # 미국 시장 (NYSE)
+    isOpen:     bool
+    session:    str             # OPEN, CLOSED, PRE_MARKET, AFTER_HOURS
+    etStr:      Optional[str] = None    # "21:30" (뉴욕 현지시간)
+    nextOpen:   Optional[str] = None
+
+    # 한국 시장 (KRX)
+    krIsOpen:   bool = False
+    krSession:  str = "CLOSED"  # OPEN, CLOSED, PRE_MARKET, AFTER_HOURS
+    kstStr:     Optional[str] = None    # "10:30" (한국시간)
+    krNextOpen: Optional[str] = None
+

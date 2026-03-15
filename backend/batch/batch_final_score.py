@@ -1,5 +1,5 @@
 """
-매일 07:00 실행 (Phase 2).
+batch_final_score.py — 최종 점수 합산 배치
 L1(50%) + L2(25%) + L3(25%) 가중합산 → 등급 산출
 → stock_final_scores, stock_rating_history, high_conviction_signals
 """
@@ -34,6 +34,8 @@ def run_final_score(calc_date: date = None):
     if calc_date is None:
         calc_date = datetime.now().date()
 
+    print(f"[FINAL] ▶ 시작 calc_date={calc_date}")
+
     stocks = []
     with get_cursor() as cur:
         cur.execute("""
@@ -53,14 +55,15 @@ def run_final_score(calc_date: date = None):
                 ORDER BY stock_id, calc_date DESC
             ) l2 ON s.stock_id = l2.stock_id
             LEFT JOIN (
-                SELECT DISTINCT ON (stock_id) stock_id,
-                       AVG(layer3_technical_score) AS layer3_total_score
+                SELECT DISTINCT ON (stock_id) stock_id, layer3_total_score
                 FROM technical_indicators
-                GROUP BY stock_id
+                ORDER BY stock_id, calc_date DESC
             ) l3 ON s.stock_id = l3.stock_id
             WHERE s.is_active = TRUE
         """)
         stocks = [dict(r) for r in cur.fetchall()]
+
+    print(f"[FINAL] 대상 종목: {len(stocks)}개")
 
     ok, fail = 0, 0
 
@@ -106,7 +109,7 @@ def run_final_score(calc_date: date = None):
                       weighted, grade, signal, opinion,
                       strong_buy, strong_sell))
 
-                # stock_rating_history
+                # stock_rating_history (rating_date 사용!)
                 cur.execute("""
                     INSERT INTO stock_rating_history (
                         stock_id, rating_date, grade, signal,
@@ -116,7 +119,7 @@ def run_final_score(calc_date: date = None):
                 """, (stock_id, calc_date, grade, signal,
                       weighted, l1, l2, l3))
 
-                # high_conviction_signals
+                # high_conviction_signals (signal_date 사용!)
                 if strong_buy or strong_sell:
                     sig_type = "STRONG_BUY" if strong_buy else "STRONG_SELL"
                     cur.execute("""
@@ -130,16 +133,21 @@ def run_final_score(calc_date: date = None):
                           l1 >= 65, l2 >= 60, l3 >= 50))
 
             ok += 1
-            print(f"[FINAL] {ticker}: {weighted} ({grade}/{signal}) ✓")
+            print(f"  {ticker}: L1={l1:.1f} L2={l2:.1f} L3={l3:.1f}"
+                  f" → {weighted:.1f} ({grade}/{signal})")
 
         except Exception as e:
             fail += 1
-            print(f"[FINAL] {ticker} 실패: {e}")
+            print(f"  {ticker} 실패: {e}")
 
-    print(f"[FINAL] 완료: {ok}성공 / {fail}실패")
+    print(f"[FINAL] ✅ 완료 성공={ok} 실패={fail}")
 
 
 if __name__ == "__main__":
-    from db_pool import init_pool
-    init_pool()
-    run_final_score()
+    import db_pool
+    db_pool.init_pool()
+    try:
+        run_final_score()
+    finally:
+        db_pool.close_pool()
+
