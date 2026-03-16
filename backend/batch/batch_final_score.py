@@ -1,7 +1,14 @@
 """
-batch_final_score.py — 최종 점수 합산 배치
-L1(50%) + L2(25%) + L3(25%) 가중합산 → 등급 산출
+batch_final_score.py — 최종 점수 합산 배치 v3.1
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+L1(50%) + L2(25%) + L3(25%) 동적 가중합산 → 등급 산출
 → stock_final_scores, stock_rating_history, high_conviction_signals
+
+v3.1 변경사항:
+  - 결측시 50 대체 제거 → 동적 가중치 재분배 + Shrinkage
+  - 스코어링 로직을 utils.final_score_engine으로 분리
+  - Strong Buy/Sell 조건 세분화 (데이터 완성도 조건 추가)
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,6 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime, date
 from db_pool import get_cursor
 from utils.grade_utils import score_to_grade, score_to_signal
+
+# ── v3.1: 최종 합산 엔진 ──
+from utils.final_score_engine import calc_final_weighted_score, calc_conviction_signal
 
 
 def _f(v):
@@ -72,18 +82,34 @@ def run_final_score(calc_date: date = None):
         ticker   = s["ticker"]
 
         try:
-            l1 = _f(s.get("layer1_score"))      or 0.0
-            l2 = _f(s.get("layer2_total_score")) or 50.0  # 없으면 중립
-            l3 = _f(s.get("layer3_total_score")) or 50.0  # 없으면 중립
+            l1 = _f(s.get("layer1_score"))
+            l2 = _f(s.get("layer2_total_score"))
+            l3 = _f(s.get("layer3_total_score"))
 
-            # L1 50% + L2 25% + L3 25%
-            weighted = round(l1 * 0.50 + l2 * 0.25 + l3 * 0.25, 2)
-            grade    = score_to_grade(weighted)
-            signal   = score_to_signal(weighted)
-            opinion  = _signal_to_opinion(signal)
+            # ★ v3.1: 동적 가중합산 (결측 → 50 대체 제거)
+            result = calc_final_weighted_score(
+                layer1_score=l1,
+                layer2_score=l2,
+                layer3_score=l3,
+            )
+            weighted = result["weighted_score"]
+            data_completeness = result["data_completeness"]
 
-            strong_buy  = (weighted >= 72 and l1 >= 65 and l2 >= 60)
-            strong_sell = (weighted <= 35 and l1 <= 40)
+            grade   = score_to_grade(weighted)
+            signal  = score_to_signal(weighted)
+            opinion = _signal_to_opinion(signal)
+
+            # ★ v3.1: 신호 판별 (데이터 완성도 고려)
+            conviction = calc_conviction_signal(
+                weighted_score=weighted,
+                layer1_score=l1,
+                layer2_score=l2,
+                layer3_score=l3,
+                data_completeness=data_completeness,
+            )
+            strong_buy  = conviction["strong_buy_signal"]
+            strong_sell = conviction["strong_sell_signal"]
+            confidence_level = result.get("confidence_level", "HIGH")
 
             with get_cursor() as cur:
                 # stock_final_scores
@@ -92,8 +118,9 @@ def run_final_score(calc_date: date = None):
                         stock_id, calc_date,
                         layer1_score, layer2_score, layer3_score,
                         weighted_score, grade, signal, investment_opinion,
-                        strong_buy_signal, strong_sell_signal
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        strong_buy_signal, strong_sell_signal,
+                        data_completeness, confidence_level
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (stock_id, calc_date) DO UPDATE SET
                         layer1_score       = EXCLUDED.layer1_score,
                         layer2_score       = EXCLUDED.layer2_score,
@@ -103,51 +130,55 @@ def run_final_score(calc_date: date = None):
                         signal             = EXCLUDED.signal,
                         investment_opinion = EXCLUDED.investment_opinion,
                         strong_buy_signal  = EXCLUDED.strong_buy_signal,
-                        strong_sell_signal = EXCLUDED.strong_sell_signal
+                        strong_sell_signal = EXCLUDED.strong_sell_signal,
+                        data_completeness  = EXCLUDED.data_completeness,
+                        confidence_level   = EXCLUDED.confidence_level
                 """, (stock_id, calc_date,
                       l1, l2, l3,
                       weighted, grade, signal, opinion,
-                      strong_buy, strong_sell))
+                      strong_buy, strong_sell,
+                      data_completeness, confidence_level))
 
-                # stock_rating_history (rating_date 사용!)
+                # stock_rating_history
                 cur.execute("""
                     INSERT INTO stock_rating_history (
-                        stock_id, rating_date, grade, signal,
-                        weighted_score, layer1_score, layer2_score, layer3_score
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (stock_id, rating_date) DO NOTHING
-                """, (stock_id, calc_date, grade, signal,
-                      weighted, l1, l2, l3))
+                        stock_id, rating_date, score, grade, signal
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (stock_id, rating_date) DO UPDATE SET
+                        score  = EXCLUDED.score,
+                        grade  = EXCLUDED.grade,
+                        signal = EXCLUDED.signal
+                """, (stock_id, calc_date, weighted, grade, signal))
 
-                # high_conviction_signals (signal_date 사용!)
+                # high_conviction_signals
                 if strong_buy or strong_sell:
                     sig_type = "STRONG_BUY" if strong_buy else "STRONG_SELL"
+                    reason = conviction.get("conviction_reason", "")
                     cur.execute("""
                         INSERT INTO high_conviction_signals (
                             stock_id, signal_date, signal_type,
-                            layer1_cond_met, layer2_cond_met, layer3_cond_met,
-                            market_cond_met, is_active
-                        ) VALUES (%s,%s,%s,%s,%s,%s,TRUE,TRUE)
+                            weighted_score, confidence_note
+                        ) VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT DO NOTHING
-                    """, (stock_id, calc_date, sig_type,
-                          l1 >= 65, l2 >= 60, l3 >= 50))
+                    """, (stock_id, calc_date, sig_type, weighted, reason))
 
             ok += 1
-            print(f"  {ticker}: L1={l1:.1f} L2={l2:.1f} L3={l3:.1f}"
-                  f" → {weighted:.1f} ({grade}/{signal})")
+            if ok % 20 == 0 or ok <= 5:
+                comp_str = f"{data_completeness:.0%}"
+                print(f"[FINAL] {ticker}: {weighted} ({grade}/{signal}) "
+                      f"[L1={l1} L2={l2} L3={l3}] data={comp_str} conf={confidence_level}")
 
         except Exception as e:
             fail += 1
-            print(f"  {ticker} 실패: {e}")
+            print(f"[FINAL] {ticker} 실패: {e}")
 
-    print(f"[FINAL] ✅ 완료 성공={ok} 실패={fail}")
+    print(f"[FINAL] ✅ 완료: {ok}성공 / {fail}실패")
+    print(f"[FINAL] v3.1 동적 가중 + Shrinkage 적용")
 
 
 if __name__ == "__main__":
-    import db_pool
-    db_pool.init_pool()
-    try:
-        run_final_score()
-    finally:
-        db_pool.close_pool()
-
+    from dotenv import load_dotenv
+    load_dotenv()
+    from db_pool import init_pool
+    init_pool()
+    run_final_score()

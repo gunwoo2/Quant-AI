@@ -1,13 +1,10 @@
 /**
- * MarketStatus.jsx — v3
+ * MarketStatus.jsx — v4 (API 응답 호환)
  *
  * GET /api/market/status → {
  *   isOpen, session, etStr, nextOpen,         ← US (NYSE)
  *   krIsOpen, krSession, kstStr, krNextOpen   ← KR (KRX)
  * }
- *
- * 🇺🇸 NYSE 미국 현지시간(ET) 기준 미국장 상태
- * 🇰🇷 KRX  한국 시간(KST) 기준 한국장 상태
  */
 
 import { useState, useEffect } from "react";
@@ -21,6 +18,39 @@ const SESSION_META = {
   AFTER_HOURS: { label: "시간외",  labelEn: "AFTER",  color: "#00F5FF", pulse: true  },
   CLOSED:      { label: "휴장",    labelEn: "CLOSED", color: "#555",    pulse: false },
 };
+
+/* ── 한글 세션명 → 영문 키 매핑 ── */
+const SESSION_MAP = {
+  "정규장":       "OPEN",
+  "프리마켓":     "PRE_MARKET",
+  "동시호가":     "PRE_MARKET",
+  "애프터마켓":   "AFTER_HOURS",
+  "시간외":       "AFTER_HOURS",
+  "장 마감":      "CLOSED",
+  "주말 휴장":    "CLOSED",
+  "공휴일 휴장":  "CLOSED",
+  // 영문 그대로 올 경우 대비
+  "OPEN":         "OPEN",
+  "PRE_MARKET":   "PRE_MARKET",
+  "AFTER_HOURS":  "AFTER_HOURS",
+  "CLOSED":       "CLOSED",
+};
+
+/* ── API etStr → 시간만 추출 ── */
+function extractTime(str) {
+  if (!str) return "--:--";
+  // "2026-03-16 09:04 ET" → "09:04"
+  // "2026-03-16 22:04 KST" → "22:04"
+  // "09:04" → "09:04"
+  const m = str.match(/(\d{2}:\d{2})/);
+  return m ? m[1] : str;
+}
+
+/* ── 한글 세션 → 영문 키 변환 ── */
+function normalizeSession(raw) {
+  if (!raw) return "CLOSED";
+  return SESSION_MAP[raw] ?? SESSION_MAP[raw.trim()] ?? "CLOSED";
+}
 
 /* ── 로컬 Fallback (API 실패 대비) ── */
 function isDST(now) {
@@ -54,9 +84,9 @@ function getLocalFallback() {
 
   let krSession = "CLOSED";
   if (isWd) {
-    if      (kstMin >= 510 && kstMin < 540)  krSession = "PRE_MARKET";   // 08:30~09:00
-    else if (kstMin >= 540 && kstMin < 930)  krSession = "OPEN";         // 09:00~15:30
-    else if (kstMin >= 930 && kstMin < 1080) krSession = "AFTER_HOURS";  // 15:30~18:00
+    if      (kstMin >= 510 && kstMin < 540)  krSession = "PRE_MARKET";
+    else if (kstMin >= 540 && kstMin < 930)  krSession = "OPEN";
+    else if (kstMin >= 930 && kstMin < 1080) krSession = "AFTER_HOURS";
   }
 
   const fmt = d =>
@@ -96,7 +126,7 @@ function StatusDot({ session }) {
   );
 }
 
-/* ── MarketChip (개선) ── */
+/* ── MarketChip ── */
 function MarketChip({ flag, exchange, timezone, timeStr, session }) {
   const meta = SESSION_META[session] ?? SESSION_META.CLOSED;
   const isOpen = session === "OPEN";
@@ -159,10 +189,10 @@ export default function MarketStatus() {
       .then(res => {
         const d = res.data;
         setS({
-          usSession:  d.session    ?? local.usSession,
-          krSession:  d.krSession  ?? local.krSession,
-          etStr:      d.etStr      ?? local.etStr,
-          kstStr:     d.kstStr     ?? local.kstStr,
+          usSession:  normalizeSession(d.session)    || local.usSession,
+          krSession:  normalizeSession(d.krSession)  || local.krSession,
+          etStr:      extractTime(d.etStr)           || local.etStr,
+          kstStr:     extractTime(d.kstStr)          || local.kstStr,
         });
       })
       .catch(() => setS(local));
@@ -197,3 +227,4 @@ export default function MarketStatus() {
     </div>
   );
 }
+

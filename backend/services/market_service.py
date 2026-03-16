@@ -1,8 +1,11 @@
 import FinanceDataReader as fdr
 from datetime import datetime, time, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytz
 import json
 import pandas_market_calendars as mcal
+import threading
+import traceback
 
 
 NY_TZ  = pytz.timezone("America/New_York")
@@ -17,8 +20,8 @@ US_AFTER_HOURS_CLOSE = time(20, 0)
 # ── 한국 시장 (KRX) ──
 KR_MARKET_OPEN       = time(9, 0)
 KR_MARKET_CLOSE      = time(15, 30)
-KR_PRE_MARKET_OPEN   = time(8, 30)    # 동시호가
-KR_AFTER_HOURS_CLOSE = time(18, 0)    # 시간외 단일가
+KR_PRE_MARKET_OPEN   = time(8, 30)
+KR_AFTER_HOURS_CLOSE = time(18, 0)
 
 
 # ──────────────────────────────────────────────────────────
@@ -62,6 +65,17 @@ MARQUEE_TARGETS = [
 ]
 
 
+# ──────────────────────────────────────────────────────────
+#  ★ 인메모리 캐시 (서버 블로킹 방지)
+# ──────────────────────────────────────────────────────────
+_indices_cache: list[dict] = []
+_cache_lock = threading.Lock()
+_cache_ts: datetime | None = None
+CACHE_TTL_SECONDS = 120          # 2분 캐시
+
+_is_fetching = threading.Event()  # 중복 fetch 방지
+
+
 def _fetch_one(symbol: str, label: str, category: str) -> dict:
     """단일 심볼 데이터 조회. 실패 시 기본값 반환."""
     try:
@@ -94,9 +108,77 @@ def _fetch_one(symbol: str, label: str, category: str) -> dict:
         }
 
 
+def _refresh_cache_background():
+    """백그라운드 스레드에서 28개 심볼을 병렬로 가져와 캐시 갱신"""
+    global _indices_cache, _cache_ts
+
+    if _is_fetching.is_set():
+        return                       # 이미 다른 스레드가 가져오는 중
+    _is_fetching.set()
+
+    try:
+        results = []
+        # ★ 핵심: ThreadPoolExecutor로 병렬 호출 (28개 → 약 10~15초)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(_fetch_one, sym, label, cat): (sym, label, cat)
+                for sym, label, cat in MARQUEE_TARGETS
+            }
+            for future in as_completed(futures, timeout=30):
+                try:
+                    results.append(future.result())
+                except Exception:
+                    sym, label, cat = futures[future]
+                    results.append({
+                        "symbol": sym, "label": label, "category": cat,
+                        "val": 0.0, "chg": 0.0, "up": False,
+                    })
+
+        # 원래 순서 유지
+        order = {sym: i for i, (sym, _, _) in enumerate(MARQUEE_TARGETS)}
+        results.sort(key=lambda x: order.get(x["symbol"], 999))
+
+        with _cache_lock:
+            _indices_cache = results
+            _cache_ts = datetime.now()
+            print(f"[MarketIndices] 캐시 갱신 완료 — {len(results)}개 심볼")
+
+    except Exception as e:
+        print(f"[MarketIndices] 캐시 갱신 실패: {e}")
+        traceback.print_exc()
+    finally:
+        _is_fetching.clear()
+
+
 def get_market_indices() -> list[dict]:
-    """MarketMarquee 전체 데이터 반환"""
-    return [_fetch_one(sym, label, cat) for sym, label, cat in MARQUEE_TARGETS]
+    """
+    ★ 즉시 응답: 캐시가 있으면 즉시 반환, 없거나 만료면 백그라운드 갱신 후 반환
+    - 첫 호출: 빈 배열 반환 + 백그라운드 갱신 시작 (프론트가 곧 재호출)
+    - 이후: 캐시 즉시 반환 (2분마다 백그라운드 갱신)
+    """
+    global _cache_ts
+
+    now = datetime.now()
+    cache_valid = (
+        _cache_ts is not None
+        and (now - _cache_ts).total_seconds() < CACHE_TTL_SECONDS
+        and len(_indices_cache) > 0
+    )
+
+    if cache_valid:
+        return _indices_cache
+
+    # 캐시 없거나 만료 → 백그라운드 갱신 트리거
+    thread = threading.Thread(target=_refresh_cache_background, daemon=True)
+    thread.start()
+
+    # 기존 캐시가 있으면 stale이라도 반환 (UX 우선)
+    if _indices_cache:
+        return _indices_cache
+
+    # 최초 호출 — 캐시 완전 비어있음 → 빈 배열 반환
+    # 프론트엔드가 곧 재호출하면 그때는 캐시 있음
+    return []
 
 
 def get_market_status() -> dict:
@@ -124,110 +206,111 @@ def get_market_status() -> dict:
 
 
 # ──────────────────────────────────────────────────────────
-#  미국 시장 상태 (NYSE)
+#  미국 시장 상태
 # ──────────────────────────────────────────────────────────
 def _get_us_status(now_utc: datetime) -> dict:
-    now_ny   = now_utc.astimezone(NY_TZ)
-    now_time = now_ny.time()
-    today    = now_ny.date()
+    now_et  = now_utc.astimezone(NY_TZ)
+    t       = now_et.time()
+    today   = now_et.date()
+    weekday = now_et.weekday()
 
-    res = {
-        "isOpen":   False,
-        "session":  "CLOSED",
-        "etStr":    now_ny.strftime("%H:%M"),
-        "nextOpen": None,
-    }
-
-    nyse     = mcal.get_calendar("NYSE")
-    schedule = nyse.schedule(start_date=str(today), end_date=str(today))
-
-    if schedule.empty:
-        res["nextOpen"] = _next_us_open(now_ny)
-    elif US_MARKET_OPEN <= now_time < US_MARKET_CLOSE:
-        res["isOpen"]  = True
-        res["session"] = "OPEN"
-    elif US_PRE_MARKET_OPEN <= now_time < US_MARKET_OPEN:
-        res["session"] = "PRE_MARKET"
-    elif US_MARKET_CLOSE <= now_time < US_AFTER_HOURS_CLOSE:
-        res["session"] = "AFTER_HOURS"
-    else:
-        res["nextOpen"] = _next_us_open(now_ny)
-
-    return res
-
-
-def _next_us_open(now_ny: datetime) -> str:
+    # NYSE 캘린더
     nyse = mcal.get_calendar("NYSE")
-    next_days = nyse.schedule(
-        start_date=str((now_ny + timedelta(days=1)).date()),
-        end_date=str((now_ny + timedelta(days=10)).date()),
+    sched = nyse.schedule(
+        start_date=(today - timedelta(days=7)).isoformat(),
+        end_date=(today + timedelta(days=14)).isoformat(),
     )
-    if next_days.empty:
-        return "미정"
-    return f"{next_days.index[0].date()} 09:30 ET"
+
+    is_trading_day = today.isoformat() in sched.index.strftime("%Y-%m-%d").tolist()
+
+    if is_trading_day:
+        if US_MARKET_OPEN <= t < US_MARKET_CLOSE:
+            session = "정규장"
+            is_open = True
+        elif US_PRE_MARKET_OPEN <= t < US_MARKET_OPEN:
+            session = "프리마켓"
+            is_open = True
+        elif US_MARKET_CLOSE <= t < US_AFTER_HOURS_CLOSE:
+            session = "애프터마켓"
+            is_open = True
+        else:
+            session = "장 마감"
+            is_open = False
+    else:
+        if weekday >= 5:
+            session = "주말 휴장"
+        else:
+            session = "공휴일 휴장"
+        is_open = False
+
+    # 다음 개장일
+    future_days = sched[sched.index > str(today)]
+    next_open = (
+        future_days.index[0].strftime("%Y-%m-%d")
+        if len(future_days) > 0
+        else "N/A"
+    )
+
+    return {
+        "isOpen":   is_open,
+        "session":  session,
+        "etStr":    now_et.strftime("%Y-%m-%d %H:%M ET"),
+        "nextOpen": next_open,
+    }
 
 
 # ──────────────────────────────────────────────────────────
-#  한국 시장 상태 (KRX)
+#  한국 시장 상태
 # ──────────────────────────────────────────────────────────
 def _get_kr_status(now_utc: datetime) -> dict:
-    now_kst  = now_utc.astimezone(KST_TZ)
-    now_time = now_kst.time()
-    today    = now_kst.date()
-    dow      = now_kst.weekday()   # 0=Mon … 6=Sun
+    now_kst = now_utc.astimezone(KST_TZ)
+    t       = now_kst.time()
+    today   = now_kst.date()
+    weekday = now_kst.weekday()
 
-    res = {
-        "isOpen":   False,
-        "session":  "CLOSED",
-        "kstStr":   now_kst.strftime("%H:%M"),
-        "nextOpen": None,
-    }
-
-    # 주말 체크
-    if dow >= 5:
-        res["nextOpen"] = _next_kr_open(now_kst)
-        return res
-
-    # 한국 공휴일 체크 (KRX 캘린더)
     try:
-        krx = mcal.get_calendar("XKRX")
-        schedule = krx.schedule(start_date=str(today), end_date=str(today))
-        if schedule.empty:
-            res["nextOpen"] = _next_kr_open(now_kst)
-            return res
-    except Exception:
-        # XKRX 캘린더 없으면 주말만 체크하고 넘어감
-        pass
-
-    # 시간대별 판별
-    if KR_MARKET_OPEN <= now_time < KR_MARKET_CLOSE:
-        res["isOpen"]  = True
-        res["session"] = "OPEN"
-    elif KR_PRE_MARKET_OPEN <= now_time < KR_MARKET_OPEN:
-        res["session"] = "PRE_MARKET"
-    elif KR_MARKET_CLOSE <= now_time < KR_AFTER_HOURS_CLOSE:
-        res["session"] = "AFTER_HOURS"
-    else:
-        res["nextOpen"] = _next_kr_open(now_kst)
-
-    return res
-
-
-def _next_kr_open(now_kst: datetime) -> str:
-    """다음 한국 개장일 계산"""
-    try:
-        krx = mcal.get_calendar("XKRX")
-        next_days = krx.schedule(
-            start_date=str((now_kst + timedelta(days=1)).date()),
-            end_date=str((now_kst + timedelta(days=10)).date()),
+        xkrx = mcal.get_calendar("XKRX")
+        sched = xkrx.schedule(
+            start_date=(today - timedelta(days=7)).isoformat(),
+            end_date=(today + timedelta(days=14)).isoformat(),
         )
-        if not next_days.empty:
-            return f"{next_days.index[0].date()} 09:00 KST"
+        is_trading_day = today.isoformat() in sched.index.strftime("%Y-%m-%d").tolist()
     except Exception:
-        # XKRX 없으면 단순 주말 스킵
-        d = now_kst + timedelta(days=1)
-        while d.weekday() >= 5:
-            d += timedelta(days=1)
-        return f"{d.date()} 09:00 KST"
-    return "미정"
+        is_trading_day = weekday < 5
 
+    if is_trading_day:
+        if KR_MARKET_OPEN <= t < KR_MARKET_CLOSE:
+            session = "정규장"
+            is_open = True
+        elif KR_PRE_MARKET_OPEN <= t < KR_MARKET_OPEN:
+            session = "동시호가"
+            is_open = True
+        elif KR_MARKET_CLOSE <= t < KR_AFTER_HOURS_CLOSE:
+            session = "시간외"
+            is_open = True
+        else:
+            session = "장 마감"
+            is_open = False
+    else:
+        if weekday >= 5:
+            session = "주말 휴장"
+        else:
+            session = "공휴일 휴장"
+        is_open = False
+
+    try:
+        future_days = sched[sched.index > str(today)]
+        next_open = (
+            future_days.index[0].strftime("%Y-%m-%d")
+            if len(future_days) > 0
+            else "N/A"
+        )
+    except Exception:
+        next_open = "N/A"
+
+    return {
+        "isOpen":   is_open,
+        "session":  session,
+        "kstStr":   now_kst.strftime("%Y-%m-%d %H:%M KST"),
+        "nextOpen": next_open,
+    }
