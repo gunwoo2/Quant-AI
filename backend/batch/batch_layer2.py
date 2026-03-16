@@ -330,139 +330,157 @@ def run_news_daily_aggregate():
 #  4. 애널리스트 레이팅 수집 + 스코어링
 # ═══════════════════════════════════════════════════════════════
 def run_analyst_ratings():
-    """Finnhub 애널리스트 레이팅 수집 → analyst_rating_aggregates
-    
-    API 2개 사용:
-      1. /stock/recommendation — 현재 컨센서스 (Buy/Hold/Sell 분포)
-      2. /stock/upgrade-downgrade — 90일 내 업/다운그레이드
+    """yfinance 애널리스트 레이팅 수집 → analyst_rating_aggregates
+
+    ★ v3: yfinance 최신 API (.recommendations = summary형) 대응
+         + 429 rate limit 방지 (sleep + retry)
     """
-    if not FINNHUB_API_KEY:
-        print("[ANALYST] ⚠️  FINNHUB_API_KEY 없음 - 스킵")
-        return
+    import time as _time
 
     with get_cursor() as cur:
-        cur.execute("SELECT stock_id, ticker FROM stocks WHERE is_active = TRUE")
+        cur.execute("SELECT stock_id, ticker FROM stocks WHERE is_active = TRUE ORDER BY ticker")
         stocks = [dict(r) for r in cur.fetchall()]
 
-    ok, fail = 0, 0
+    total_stocks = len(stocks)
+    ok, fail, skip = 0, 0, 0
+    consecutive_429 = 0
 
-    for s in stocks:
+    for idx, s in enumerate(stocks, 1):
         stock_id, ticker = s["stock_id"], s["ticker"]
-        try:
-            # ── 1. Recommendation Trends (컨센서스) ──
-            resp = requests.get(
-                "https://finnhub.io/api/v1/stock/recommendation",
-                params={"symbol": ticker, "token": FINNHUB_API_KEY},
-                timeout=10
-            )
-            if resp.status_code != 200:
-                print(f"[ANALYST] {ticker} recommendation API {resp.status_code}")
-                fail += 1
-                continue
 
-            recs = resp.json()  # list of monthly snapshots
-            if not recs:
-                print(f"[ANALYST] {ticker} 데이터 없음 (ETF/신규 종목)")
-                continue
+        if consecutive_429 >= 5:
+            print(f"  ⏸️  연속 429 {consecutive_429}회 → 60초 대기...")
+            _time.sleep(60)
+            consecutive_429 = 0
 
-            # 최신 월 데이터 사용
-            latest = recs[0]
-            strong_buy = latest.get("strongBuy", 0)
-            buy_count  = latest.get("buy", 0) + strong_buy
-            hold_count = latest.get("hold", 0)
-            sell_count = latest.get("sell", 0) + latest.get("strongSell", 0)
-            total = buy_count + hold_count + sell_count
+        success = False
+        for attempt in range(3):
+            try:
+                yf_ticker = yf.Ticker(ticker)
+                recs = yf_ticker.recommendations
+                buy_count, hold_count, sell_count = 0, 0, 0
 
-            if total == 0:
-                continue
+                if recs is not None and not recs.empty:
+                    if "strongBuy" in recs.columns:
+                        row0 = recs.iloc[0]
+                        buy_count  = int(row0.get("strongBuy", 0) or 0) + int(row0.get("buy", 0) or 0)
+                        hold_count = int(row0.get("hold", 0) or 0)
+                        sell_count = int(row0.get("sell", 0) or 0) + int(row0.get("strongSell", 0) or 0)
+                    elif "toGrade" in recs.columns or "To Grade" in recs.columns:
+                        for _, row in recs.iterrows():
+                            grade = str(row.get("toGrade", row.get("To Grade", ""))).upper()
+                            if any(g in grade for g in ["BUY","OUTPERFORM","OVERWEIGHT","STRONG BUY"]):
+                                buy_count += 1
+                            elif any(g in grade for g in ["HOLD","NEUTRAL","MARKET PERFORM","EQUAL"]):
+                                hold_count += 1
+                            elif any(g in grade for g in ["SELL","UNDERPERFORM","UNDERWEIGHT"]):
+                                sell_count += 1
 
-            buy_pct  = round(buy_count / total * 100, 2)
-            sell_pct = round(sell_count / total * 100, 2)
+                total_analysts = buy_count + hold_count + sell_count
+                if total_analysts == 0:
+                    skip += 1
+                    consecutive_429 = 0
+                    success = True
+                    break
 
-            # ── 2. Upgrade/Downgrade (90일) ──
-            cutoff_str = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
-            resp2 = requests.get(
-                "https://finnhub.io/api/v1/stock/upgrade-downgrade",
-                params={"symbol": ticker, "from": cutoff_str, "token": FINNHUB_API_KEY},
-                timeout=10
-            )
-            upgrade_count, downgrade_count = 0, 0
-            if resp2.status_code == 200:
-                changes = resp2.json()
-                for ch in changes:
-                    action = (ch.get("action") or "").lower()
-                    if action in ("upgrade", "up"):
-                        upgrade_count += 1
-                    elif action in ("downgrade", "down"):
-                        downgrade_count += 1
+                buy_pct  = round(buy_count / total_analysts * 100, 2)
+                sell_pct = round(sell_count / total_analysts * 100, 2)
 
-            net_upgrade = upgrade_count - downgrade_count
+                upgrade_count, downgrade_count = 0, 0
+                try:
+                    ud = yf_ticker.upgrades_downgrades
+                    if ud is not None and not ud.empty:
+                        cutoff_dt = datetime.now() - timedelta(days=90)
+                        try:
+                            ud.index = ud.index.tz_localize(None)
+                        except:
+                            pass
+                        try:
+                            recent_ud = ud[ud.index >= cutoff_dt]
+                        except:
+                            recent_ud = ud
+                        for _, urow in recent_ud.iterrows():
+                            action = str(urow.get("action", urow.get("Action", ""))).upper()
+                            if "UP" in action:
+                                upgrade_count += 1
+                            elif "DOWN" in action:
+                                downgrade_count += 1
+                except:
+                    pass
 
-            # ── 3. 스코어링 (0~100) ──
-            # Component 1: Buy 비율 기반 (40%)
-            buy_score = buy_pct   # 0~100
+                buy_score = buy_pct
+                net_upgrade = upgrade_count - downgrade_count
+                upgrade_momentum = 50 + (net_upgrade / max(total_analysts, 1)) * 100
+                upgrade_momentum = max(0, min(100, upgrade_momentum))
+                coverage_bonus = min(total_analysts / 20, 1.0) * 100
 
-            # Component 2: Upgrade 모멘텀 (30%)
-            upgrade_momentum = 50 + (net_upgrade / max(total, 1)) * 100
-            upgrade_momentum = max(0, min(100, upgrade_momentum))
+                analyst_score = round(
+                    buy_score * 0.40 + upgrade_momentum * 0.30 + coverage_bonus * 0.30, 2)
+                analyst_score = max(0, min(100, analyst_score))
 
-            # Component 3: 커버리지 강도 (30%)
-            coverage_bonus = min(total / 20, 1.0) * 100
+                with get_cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO analyst_rating_aggregates (
+                            stock_id, calc_date,
+                            total_analysts, buy_count, hold_count, sell_count,
+                            buy_pct, sell_pct,
+                            upgrade_count_90d, downgrade_count_90d,
+                            net_upgrade_90d, layer2_analyst_score
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (stock_id, calc_date) DO UPDATE SET
+                            total_analysts       = EXCLUDED.total_analysts,
+                            buy_count            = EXCLUDED.buy_count,
+                            hold_count           = EXCLUDED.hold_count,
+                            sell_count           = EXCLUDED.sell_count,
+                            buy_pct              = EXCLUDED.buy_pct,
+                            sell_pct             = EXCLUDED.sell_pct,
+                            upgrade_count_90d    = EXCLUDED.upgrade_count_90d,
+                            downgrade_count_90d  = EXCLUDED.downgrade_count_90d,
+                            net_upgrade_90d      = EXCLUDED.net_upgrade_90d,
+                            layer2_analyst_score = EXCLUDED.layer2_analyst_score
+                    """, (stock_id, datetime.now().date(),
+                          total_analysts, buy_count, hold_count, sell_count,
+                          buy_pct, sell_pct,
+                          upgrade_count, downgrade_count,
+                          net_upgrade, analyst_score))
 
-            analyst_score = round(
-                buy_score * 0.40 +
-                upgrade_momentum * 0.30 +
-                coverage_bonus * 0.30,
-                2
-            )
-            analyst_score = max(0, min(100, analyst_score))
+                signal = "BULLISH" if analyst_score >= 70 else ("BEARISH" if analyst_score <= 30 else "NEUTRAL")
+                if idx % 50 == 0 or idx <= 5:
+                    print(f"  {ticker:<6} Buy={buy_count} Hold={hold_count} Sell={sell_count} "
+                          f"Up={upgrade_count} Down={downgrade_count} → {analyst_score:.0f}점 [{signal}]")
+                ok += 1
+                consecutive_429 = 0
+                success = True
+                break
 
-            # ── 4. DB 저장 ──
-            with get_cursor() as cur:
-                cur.execute("""
-                    INSERT INTO analyst_rating_aggregates (
-                        stock_id, calc_date,
-                        total_analysts, buy_count, hold_count, sell_count,
-                        buy_pct, sell_pct,
-                        upgrade_count_90d, downgrade_count_90d,
-                        net_upgrade_90d, layer2_analyst_score
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (stock_id, calc_date) DO UPDATE SET
-                        total_analysts       = EXCLUDED.total_analysts,
-                        buy_count            = EXCLUDED.buy_count,
-                        hold_count           = EXCLUDED.hold_count,
-                        sell_count           = EXCLUDED.sell_count,
-                        buy_pct              = EXCLUDED.buy_pct,
-                        sell_pct             = EXCLUDED.sell_pct,
-                        upgrade_count_90d    = EXCLUDED.upgrade_count_90d,
-                        downgrade_count_90d  = EXCLUDED.downgrade_count_90d,
-                        net_upgrade_90d      = EXCLUDED.net_upgrade_90d,
-                        layer2_analyst_score = EXCLUDED.layer2_analyst_score
-                """, (stock_id, date.today(),
-                      total, buy_count, hold_count, sell_count,
-                      buy_pct, sell_pct,
-                      upgrade_count, downgrade_count,
-                      net_upgrade, analyst_score))
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "Too Many Requests" in err_str:
+                    consecutive_429 += 1
+                    wait = 30 * (attempt + 1)
+                    print(f"  [429] {ticker} → {wait}초 대기 (attempt {attempt+1}/3)")
+                    _time.sleep(wait)
+                    continue
+                elif "404" in err_str:
+                    skip += 1
+                    success = True
+                    break
+                else:
+                    fail += 1
+                    success = True
+                    break
 
-            # 시그널 판별
-            sig = "BULLISH" if analyst_score >= 70 else "BEARISH" if analyst_score <= 30 else "NEUTRAL"
-            print(f"  {ticker:6s} Buy={buy_count} Hold={hold_count} Sell={sell_count} "
-                  f"Up={upgrade_count} Down={downgrade_count} "
-                  f"→ {analyst_score:.0f}점 [{sig}]")
-            ok += 1
-
-        except Exception as e:
+        if not success:
             fail += 1
-            if fail <= 5:
-                print(f"[ANALYST] {ticker} 실패: {e}")
 
-    print(f"[ANALYST] ✅ 완료: {ok}성공 / {fail}실패")
+        _time.sleep(0.8)
+
+        if idx % 100 == 0:
+            print(f"  [{idx}/{total_stocks}] ✅{ok} ❌{fail} ⏭️{skip}")
+
+    print(f"[ANALYST] ✅ 완료: {ok}성공 / {fail}실패 / {skip}스킵 (총 {total_stocks}종목)")
 
 
-
-# ═══════════════════════════════════════════════════════════════
-#  5. 내부자 거래 수집 + 스코어링 (Finnhub)
-# ═══════════════════════════════════════════════════════════════
 C_LEVEL_TITLES = {"ceo", "cfo", "coo", "cto", "president", "chief"}
 
 def _is_c_level(title: str) -> bool:
