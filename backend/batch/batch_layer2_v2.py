@@ -331,8 +331,11 @@ def run_news_daily_aggregate():
 #  4. 애널리스트 레이팅 수집 + 스코어링
 # ═══════════════════════════════════════════════════════════════
 def run_analyst_ratings():
-    """yfinance 애널리스트 레이팅 수집 → analyst_rating_aggregates"""
-
+    """yfinance 애널리스트 레이팅 수집 → analyst_rating_aggregates
+    
+    ★ v2: recommendations_summary (집계) 우선 사용
+           recommendations (개별) fallback
+    """
     with get_cursor() as cur:
         cur.execute("SELECT stock_id, ticker FROM stocks WHERE is_active = TRUE")
         stocks = [dict(r) for r in cur.fetchall()]
@@ -343,29 +346,99 @@ def run_analyst_ratings():
         stock_id, ticker = s["stock_id"], s["ticker"]
         try:
             yf_ticker = yf.Ticker(ticker)
-            recs = yf_ticker.recommendations
+
+            # ── 방법 1: recommendations_summary (최신 yfinance) ──
+            recs_summary = None
+            try:
+                recs_summary = yf_ticker.recommendations_summary
+            except Exception:
+                pass
+
+            if recs_summary is not None and not recs_summary.empty:
+                latest = recs_summary.iloc[0]
+                strong_buy = int(latest.get("strongBuy", 0))
+                buy_count  = int(latest.get("buy", 0)) + strong_buy
+                hold_count = int(latest.get("hold", 0))
+                sell_count = int(latest.get("sell", 0)) + int(latest.get("strongSell", 0))
+
+                total = buy_count + hold_count + sell_count
+                if total > 0:
+                    buy_pct  = round(buy_count / total * 100, 2)
+                    sell_pct = round(sell_count / total * 100, 2)
+
+                    buy_score = buy_pct
+                    upgrade_momentum = 50  # summary에는 upgrade/downgrade 없으므로 중립
+                    coverage_bonus = min(total / 20, 1.0) * 100
+
+                    analyst_score = round(
+                        buy_score * 0.40 +
+                        upgrade_momentum * 0.30 +
+                        coverage_bonus * 0.30,
+                        2
+                    )
+                    analyst_score = max(0, min(100, analyst_score))
+
+                    with get_cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO analyst_rating_aggregates (
+                                stock_id, calc_date,
+                                total_analysts, buy_count, hold_count, sell_count,
+                                buy_pct, sell_pct,
+                                upgrade_count_90d, downgrade_count_90d,
+                                net_upgrade_90d, layer2_analyst_score
+                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (stock_id, calc_date) DO UPDATE SET
+                                total_analysts       = EXCLUDED.total_analysts,
+                                buy_count            = EXCLUDED.buy_count,
+                                hold_count           = EXCLUDED.hold_count,
+                                sell_count           = EXCLUDED.sell_count,
+                                buy_pct              = EXCLUDED.buy_pct,
+                                sell_pct             = EXCLUDED.sell_pct,
+                                upgrade_count_90d    = EXCLUDED.upgrade_count_90d,
+                                downgrade_count_90d  = EXCLUDED.downgrade_count_90d,
+                                net_upgrade_90d      = EXCLUDED.net_upgrade_90d,
+                                layer2_analyst_score = EXCLUDED.layer2_analyst_score
+                        """, (stock_id, date.today(),
+                              total, buy_count, hold_count, sell_count,
+                              buy_pct, sell_pct,
+                              0, 0, 0, analyst_score))
+                    ok += 1
+                    continue
+
+            # ── 방법 2: recommendations (개별 레이팅) fallback ──
+            recs = None
+            try:
+                recs = yf_ticker.recommendations
+            except Exception:
+                pass
+
             if recs is None or recs.empty:
                 continue
 
-            # 90일 내 레이팅만
-            cutoff = datetime.now() - timedelta(days=90)
             buy_count, hold_count, sell_count = 0, 0, 0
             upgrade_count, downgrade_count = 0, 0
 
             for _, row in recs.iterrows():
-                grade = str(row.get("toGrade", row.get("To Grade", ""))).upper()
-                action = str(row.get("action", row.get("Action", ""))).upper()
+                grade = str(
+                    row.get("toGrade",
+                    row.get("To Grade",
+                    row.get("to_grade", "")))
+                ).upper()
+                action = str(
+                    row.get("action",
+                    row.get("Action", ""))
+                ).upper()
 
                 if any(g in grade for g in ["BUY", "OUTPERFORM", "OVERWEIGHT", "STRONG BUY"]):
                     buy_count += 1
-                elif any(g in grade for g in ["HOLD", "NEUTRAL", "MARKET PERFORM", "EQUAL"]):
+                elif any(g in grade for g in ["HOLD", "NEUTRAL", "MARKET PERFORM", "EQUAL", "PEER PERFORM"]):
                     hold_count += 1
                 elif any(g in grade for g in ["SELL", "UNDERPERFORM", "UNDERWEIGHT"]):
                     sell_count += 1
 
-                if "UPGRADE" in action or "UP" in action:
+                if "UP" in action:
                     upgrade_count += 1
-                elif "DOWNGRADE" in action or "DOWN" in action:
+                elif "DOWN" in action:
                     downgrade_count += 1
 
             total = buy_count + hold_count + sell_count
@@ -375,16 +448,10 @@ def run_analyst_ratings():
             buy_pct  = round(buy_count / total * 100, 2)
             sell_pct = round(sell_count / total * 100, 2)
 
-            # ── 애널리스트 스코어링 (0~100) ──
-            # Component 1: Buy 비율 (40%)
-            buy_score = buy_pct
-
-            # Component 2: Upgrade 모멘텀 (30%)
             net_upgrade = upgrade_count - downgrade_count
+            buy_score = buy_pct
             upgrade_momentum = 50 + (net_upgrade / max(total, 1)) * 100
             upgrade_momentum = max(0, min(100, upgrade_momentum))
-
-            # Component 3: 커버리지 강도 (30%) — 많은 애널리스트가 관심 = 긍정
             coverage_bonus = min(total / 20, 1.0) * 100
 
             analyst_score = round(
@@ -420,8 +487,8 @@ def run_analyst_ratings():
                       buy_pct, sell_pct,
                       upgrade_count, downgrade_count,
                       net_upgrade, analyst_score))
-
             ok += 1
+
         except Exception as e:
             fail += 1
             if fail <= 5:
