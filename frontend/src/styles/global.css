@@ -49,6 +49,12 @@
   --text-sec:    #b0b0b0;
   --text-gray:   #a0a0a0;
   --text-muted:  #555555;
+
+  /* ── 인풋 / 컨트롤 */
+  --input-bg:      #0a0a0a;
+  --input-border:  #333333;
+  --label-color:   #666666;
+  --white:         #FFFFFF;
 }
 
 /* ── Reset ───────────────────────────────── */
@@ -95,3 +101,130 @@ input, select { font-family: inherit; }
 .text-primary { color: var(--primary); }
 .text-golden  { color: var(--golden); }
 .text-yolk    { color: var(--yolk); }
+
+/* ── 커스텀 캘린더 팝업 (HistoricalTab) ────── */
+.cal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+}
+.cal-popup {
+  position: absolute;
+  z-index: 8001;
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+  min-width: 300px;
+  user-select: none;
+}
+.cal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.cal-header button {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-sec);
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.cal-header button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.cal-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-pri);
+  letter-spacing: 0.5px;
+}
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 4px;
+}
+.cal-weekdays span {
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  padding: 4px 0;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-day {
+  text-align: center;
+  padding: 7px 4px;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  color: var(--text-sec);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 0.12s;
+  border: 1px solid transparent;
+}
+.cal-day:hover {
+  background: var(--surface-hi);
+  color: var(--text-pri);
+  border-color: var(--border-hi);
+}
+.cal-day.today {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+.cal-day.selected {
+  background: var(--primary);
+  color: var(--white);
+  font-weight: 800;
+}
+.cal-day.other-month {
+  color: var(--border);
+}
+.cal-day.in-range {
+  background: rgba(216, 86, 4, 0.12);
+}
+.cal-quick {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.cal-quick button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.cal-quick button:hover {
+  border-color: var(--golden);
+  color: var(--golden);
+}

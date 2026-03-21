@@ -4,6 +4,9 @@ import { useOutletContext } from "react-router-dom";
 import ReactECharts from "echarts-for-react";
 import api from "../api";
 
+/* ═══════════════════════════════════════════
+   차트 가이드 정보 (8개)
+   ═══════════════════════════════════════════ */
 const CHART_INFO = {
   revenueProfits: {
     title: "Revenue & Profit (매출과 이익)",
@@ -12,11 +15,25 @@ const CHART_INFO = {
     criteria: "매출과 영업이익이 함께 우상향하는 구조가 이상적입니다. 매출은 증가하지만 이익이 정체되거나 감소한다면 비용 구조 악화나 경쟁 심화를 의심해야 합니다."
   },
 
+  marginTrend: {
+    title: "Margin Trend (마진 추세)",
+    meaning: "매출 대비 각 이익 단계가 몇 %씩 남는지를 추적합니다. Gross(매출총이익률) → Operating(영업이익률) → Net(순이익률) → FCF(잉여현금흐름 마진).",
+    importance: "마진의 방향이 기업의 '수익 체질'을 결정합니다. 매출이 성장해도 마진이 줄면 경쟁력이 약해지고 있다는 신호입니다.",
+    criteria: "Gross Margin이 안정적이면서 Operating/Net Margin이 개선되는 추세가 이상적입니다. FCF Margin이 Net Margin보다 높으면 현금 창출력이 우수한 기업입니다."
+  },
+
+  earningsQuality: {
+    title: "Earnings Quality (이익의 질)",
+    meaning: "회계장부상 이익(Net Income)과 실제 현금(Operating Cash Flow)의 차이를 비교합니다. 이 차이(Accruals Gap)가 크면 '장부상 이익은 있지만 현금은 없는' 상태입니다.",
+    importance: "Accruals Gap이 지속적으로 양수(NI > OCF)이면 매출채권·재고가 쌓이고 있거나, 공격적 회계 처리 가능성이 있습니다. 이익 조작의 첫 번째 경고 신호입니다.",
+    criteria: "OCF(영업현금흐름)가 Net Income보다 높은 것이 건강합니다. Accruals Gap 라인이 0 아래에 있을수록 현금 기반의 탄탄한 이익입니다."
+  },
+
   fcfYield: {
     title: "FCF Margin / Cash Flow (수익의 질 - 현금흐름)",
     meaning: "회계상 이익이 아니라 실제 회사 통장에 남는 '진짜 현금(Free Cash Flow, FCF)'을 확인합니다.",
-    importance: "회계 이익은 조정될 수 있지만 현금 흐름은 조작이 어렵습니다. 장기적으로 FCF가 순이익과 비슷하거나 더 높다면 매우 건강한 기업으로 흑자 도산을 막고 배당이나 투자를 할 수 있는 실질적인 체력을 갖고있다는 뜻입니다.",
-    criteria: "장기적으로 FCF(녹색)가 순이익(노랑)과 비슷하거나 더 높게 유지되는 것이 이상적입니다. 이익은 나는데 현금이 마이너스라면 '가짜 수익'일 가능성이 큽니다."
+    importance: "회계 이익은 조정될 수 있지만 현금 흐름은 조작이 어렵습니다. 장기적으로 FCF가 순이익과 비슷하거나 더 높다면 매우 건강한 기업입니다.",
+    criteria: "FCF(녹색)가 순이익(노랑)과 비슷하거나 더 높게 유지되는 것이 이상적입니다. 이익은 나는데 현금이 마이너스라면 '가짜 수익'일 가능성이 큽니다."
   },
 
   roic: {
@@ -30,255 +47,42 @@ const CHART_INFO = {
     title: "Operating Leverage (이익의 가속도)",
     meaning: "매출이 조금만 늘어도 이익이 폭발적으로 늘어나는 '대박 구간'에 진입했는지 확인합니다.",
     importance: "고정비 구조가 큰 산업에서는 매출이 증가할수록 이익이 더 빠르게 증가하는 '영업 레버리지'가 발생합니다.",
-    criteria: "영업이익 성장률이 매출 성장률보다 빠르게 증가한다면 긍정적인 영업 레버리지가 발생하고 있는 것입니다. 이때 주가가 가장 탄력적으로 상승하는 경우가 많습니다."
+    criteria: "영업이익 성장률이 매출 성장률보다 빠르게 증가한다면 긍정적인 영업 레버리지가 발생하고 있는 것입니다."
   },
 
   solvency: {
     title: "Debt Solvency (부채 안정성)",
     meaning: "기업이 벌어들이는 현금으로 부채를 충분히 감당할 수 있는지 평가합니다.",
     importance: "금리 상승기나 경기 침체에서 기업이 생존할 수 있는 재무 안정성을 판단하는 핵심 요소입니다.",
-    criteria: "순부채 막대가 아래쪽(녹색)으로 뻗어 있다면 빚보다 현금이 많은 '초우량' 상태입니다. 반대로 위쪽(빨강)이 너무 길면 이자 갚느라 성장이 더딜 수 있습니다. 추가적으로 Net Debt / EBITDA가 2 이하이면 재무 안정성이 높은 기업으로 평가됩니다."
+    criteria: "순부채 막대가 아래쪽(녹색)으로 뻗어 있다면 빚보다 현금이 많은 '초우량' 상태입니다. Net Debt / EBITDA가 2 이하이면 재무 안정성이 높습니다."
   },
 
   ruleOf40: {
     title: "Rule of 40 (성장과 수익의 균형)",
     meaning: "매출 성장률과 FCF 마진을 합산해 기업의 성장성과 수익성을 동시에 평가하는 SaaS 산업의 핵심 지표입니다.",
     importance: "성장만 하고 돈은 못 버는지, 돈만 벌고 성장은 멈췄는지 체크하여 '균형 잡힌 우량 기업'을 골라냅니다.",
-    criteria: "매출 성장률 + FCF 마진(초록바)이 주황색 가이드라인(Target 40%)을 뚫고 올라와 있다면 우수한 SaaS 기업으로 평가됩니다."
-  }
+    criteria: "매출 성장률 + FCF 마진 합계가 40% 이상이면 우수합니다. 빨간 막대가 점선(40%) 위에 있을수록 좋습니다."
+  },
 };
 
-const SORT_ORDER = {
-    incomeStatement: [
-    // 1. 매출 및 매출 원가
-    { key: "Total Revenue", kor: "총 매출" },
-    { key: "Operating Revenue", kor: "영업 수익" },
-    { key: "Cost Of Revenue", kor: "매출 원가" },
-    { key: "Reconciled Cost Of Revenue", kor: "조정 매출원가" },
-    { key: "Gross Profit", kor: "매출 총이익" },
+/* ═══════════════════════════════════════════
+   차트 드롭다운 옵션 (순서 고정)
+   ═══════════════════════════════════════════ */
+const CHART_OPTIONS = [
+  { value: "revenueProfits", label: "① Revenue & Profit" },
+  { value: "marginTrend",    label: "② Margin Trend" },
+  { value: "earningsQuality",label: "③ Earnings Quality" },
+  { value: "fcfYield",       label: "④ FCF / Cash Flow" },
+  { value: "roic",           label: "⑤ Efficiency (ROIC)" },
+  { value: "opLeverage",     label: "⑥ Operating Leverage" },
+  { value: "solvency",       label: "⑦ Solvency (Debt)" },
+  { value: "ruleOf40",       label: "⑧ Rule of 40" },
+];
 
-    // 2. 영업 비용 (상세 상각비 포함)
-    { key: "Operating Expense", kor: "영업 비용" },
-    { key: "Research And Development", kor: "연구 개발비" },
-    { key: "Selling General And Administration", kor: "판매관리비" },
-    { key: "Depreciation Amortization Depletion Income Statement", kor: "감가상각 및 소모비(IS)" },
-    { key: "Depreciation And Amortization In Income Statement", kor: "감가상각비(IS)" },
-    { key: "Amortization", kor: "무형자산 상각비(일반)" },
-    { key: "Amortization Of Intangibles Income Statement", kor: "무형자산 상각비(IS)" },
-    { key: "Reconciled Depreciation", kor: "조정 감가상각비" },
-    { key: "Total Expenses", kor: "총 비용" },
-    { key: "Operating Income", kor: "영업 이익" },
-    { key: "Total Operating Income As Reported", kor: "보고된 영업이익" },
 
-    // 3. 영업외 손익 및 이자 (수익/비용 상세)
-    { key: "Net Interest Income", kor: "순이자 손익" },
-    { key: "Net Non Operating Interest Income Expense", kor: "순영업외 이자손익" },
-    { key: "Interest Expense", kor: "이자 비용" },
-    { key: "Interest Expense Non Operating", kor: "영업외 이자비용" },
-    { key: "Interest Income", kor: "이자 수익" },
-    { key: "Interest Income Non Operating", kor: "영업외 이자수익" },
-    { key: "Other Income Expense", kor: "기타 영업외 손익" },
-    { key: "Other Non Operating Income Expenses", kor: "기타 비영업 수익/비용" },
-    { key: "Gain On Sale Of Security", kor: "유가증권 처분이익" },
-    { key: "Special Income Charges", kor: "특별 비용" },
-    { key: "Restructuring And Mergern Acquisition", kor: "구조조정 및 M&A 비용" },
-    { key: "Total Unusual Items", kor: "총 일회성 항목" },
-    { key: "Total Unusual Items Excluding Goodwill", kor: "영업권 제외 일회성 항목" },
-
-    // 4. 세전/세후 이익 및 조정 지표
-    { key: "EBITDA", kor: "EBITDA" },
-    { key: "Normalized EBITDA", kor: "조정 EBITDA" },
-    { key: "EBIT", kor: "EBIT" },
-    { key: "Pretax Income", kor: "세전 이익" },
-    { key: "Tax Provision", kor: "법인세 비용" },
-    { key: "Tax Effect Of Unusual Items", kor: "일회성 항목 세금 효과" },
-    { key: "Tax Rate For Calcs", kor: "계산용 실효세율" },
-    { key: "Net Income", kor: "당기 순이익" },
-    { key: "Net Income Including Noncontrolling Interests", kor: "비지배지분 포함 순이익" },
-    { key: "Net Income Continuous Operations", kor: "계속영업 순이익" },
-    { key: "Net Income From Continuing Operation Net Minority Interest", kor: "지분 해당 계속영업이익" },
-    { key: "Net Income From Continuing And Discontinued Operation", kor: "계속 및 중단영업 순이익" },
-    { key: "Net Income Discontinuous Operations", kor: "중단영업 순이익" },
-    { key: "Normalized Income", kor: "조정 순이익" },
-    { key: "Net Income Common Stockholders", kor: "보통주 귀속 순이익" },
-    { key: "Diluted NI Availto Com Stockholders", kor: "희석 보통주 귀속 순이익" },
-    { key: "Preferred Stock Dividends", kor: "우선주 배당금" },
-
-    // 5. 주당 지표 및 주식 수
-    { key: "Basic EPS", kor: "기본 EPS" },
-    { key: "Diluted EPS", kor: "희석 EPS" },
-    { key: "Basic Average Shares", kor: "기본 평균 주식수" },
-    { key: "Diluted Average Shares", kor: "희석 평균 주식수" }
-    ],
-
-    balanceSheet: [
-    // 1. 자산 (Assets)
-    { key: "Total Assets", kor: "총 자산" },
-
-    // 1-1. 유동 자산
-    { key: "Current Assets", kor: "유동 자산" },
-    { key: "Cash Cash Equivalents And Short Term Investments", kor: "현금 및 단기투자자산" },
-    { key: "Cash And Cash Equivalents", kor: "현금 및 현금성자산" },
-    { key: "Receivables", kor: "매출채권 및 미수금" },
-    { key: "Gross Accounts Receivable", kor: "총 매출채권(액면)" },
-    { key: "Accounts Receivable", kor: "매출채권(순액)" },
-    { key: "Allowance For Doubtful Accounts Receivable", kor: "대손충당금" },
-    { key: "Other Receivables", kor: "기타 미수금" },
-    { key: "Inventory", kor: "재고 자산" },
-    { key: "Finished Goods", kor: "제품(완제품)" },
-    { key: "Work In Process", kor: "재공품(생산중)" },
-    { key: "Raw Materials", kor: "원재료" },
-    { key: "Prepaid Assets", kor: "선급 비용" },
-    { key: "Other Current Assets", kor: "기타 유동자산" },
-
-    // 1-2. 비유동 자산 (유형자산 상세 포함)
-    { key: "Total Non Current Assets", kor: "비유동 자산" },
-    { key: "Net PPE", kor: "순 유형자산" },
-    { key: "Gross PPE", kor: "총 유형자산" },
-    { key: "Accumulated Depreciation", kor: "감가상각 누계액" },
-    { key: "Properties", kor: "부동산" },
-    { key: "Land And Improvements", kor: "토지 및 개량" },
-    { key: "Buildings And Improvements", kor: "건물 및 개량" },
-    { key: "Machinery Furniture Equipment", kor: "기계 및 비품" },
-    { key: "Construction In Progress", kor: "건설중인 자산" },
-    { key: "Goodwill And Other Intangible Assets", kor: "영업권 및 무형자산" },
-    { key: "Goodwill", kor: "영업권" },
-    { key: "Other Intangible Assets", kor: "기타 무형자산" },
-    { key: "Other Non Current Assets", kor: "기타 비유동자산" },
-
-    // 2. 부채 (Liabilities)
-    { key: "Total Liabilities Net Minority Interest", kor: "총 부채" },
-
-    // 2-1. 유동 부채
-    { key: "Current Liabilities", kor: "유동 부채" },
-    { key: "Current Debt And Capital Lease Obligation", kor: "단기 차입금 및 리스 부채" },
-    { key: "Current Debt", kor: "단기 차입금" },
-    { key: "Other Current Borrowings", kor: "기타 단기 차입" },
-    { key: "Current Capital Lease Obligation", kor: "유동 자본리스 부채" },
-    { key: "Payables And Accrued Expenses", kor: "매입채무 및 미지급비용" },
-    { key: "Accounts Payable", kor: "매입채무" },
-    { key: "Payables", kor: "미지급금" },
-    { key: "Current Accrued Expenses", kor: "유동 미지급 비용" },
-    { key: "Interest Payable", kor: "미지급 이자" },
-    { key: "Total Tax Payable", kor: "미지급 법인세" },
-    { key: "Pensionand Other Post Retirement Benefit Plans Current", kor: "당기 퇴직연금 및 급여부채" },
-    { key: "Current Deferred Liabilities", kor: "유동 이연 부채" },
-    { key: "Current Deferred Revenue", kor: "유동 이연 수익" },
-    { key: "Other Current Liabilities", kor: "기타 유동부채" },
-
-    // 2-2. 비유동 부채
-    { key: "Total Non Current Liabilities Net Minority Interest", kor: "비유동 부채" },
-    { key: "Long Term Debt And Capital Lease Obligation", kor: "장기 차입금 및 리스 부채" },
-    { key: "Long Term Debt", kor: "장기 차입금" },
-    { key: "Long Term Capital Lease Obligation", kor: "장기 자본리스 부채" },
-    { key: "Capital Lease Obligations", kor: "자본리스 합계" },
-    { key: "Non Current Deferred Liabilities", kor: "비유동 이연 부채" },
-    { key: "Non Current Deferred Revenue", kor: "비유동 이연 수익" },
-    { key: "Non Current Deferred Taxes Liabilities", kor: "비유동 이연 법인세 부채" },
-    { key: "Tradeand Other Payables Non Current", kor: "비유동 매입채무" },
-    { key: "Other Non Current Liabilities", kor: "기타 비유동부채" },
-
-    // 3. 자본 (Equity)
-    { key: "Total Equity Gross Minority Interest", kor: "총 자본" },
-    { key: "Stockholders Equity", kor: "주주 지분" },
-    { key: "Common Stock Equity", kor: "보통주 자본" },
-    { key: "Capital Stock", kor: "자본금(Capital Stock)" },
-    { key: "Common Stock", kor: "보통주(Common Stock)" },
-    { key: "Preferred Stock", kor: "우선주" },
-    { key: "Preferred Stock Equity", kor: "우선주 자본" },
-    { key: "Additional Paid In Capital", kor: "자본 잉여금" },
-    { key: "Retained Earnings", kor: "이익 잉여금" },
-    { key: "Other Equity Adjustments", kor: "기타 자본 조정" },
-    { key: "Gains Losses Not Affecting Retained Earnings", kor: "기타 포괄손익 누계액" },
-
-    // 4. 주요 분석 지표 및 주식 수
-    { key: "Total Debt", kor: "총 부채(차입금)" },
-    { key: "Net Debt", kor: "순 부채" },
-    { key: "Working Capital", kor: "운전 자본" },
-    { key: "Invested Capital", kor: "투하 자본" },
-    { key: "Total Capitalization", kor: "총 자본화 금액" },
-    { key: "Net Tangible Assets", kor: "순 유형 자산" },
-    { key: "Tangible Book Value", kor: "유형 자산 장부가치" },
-    { key: "Ordinary Shares Number", kor: "보통주 주식수" },
-    { key: "Preferred Shares Number", kor: "우선주 주식수" },
-    { key: "Treasury Shares Number", kor: "자기주식(자사주) 수" },
-    { key: "Share Issued", kor: "발행 주식수" }
-    ],
-
-    cashFlow: [
-    // 1. 영업활동 현금흐름 (비즈니스 성적표)
-    { key: "Operating Cash Flow", kor: "영업활동 현금흐름" },
-    { key: "Cash Flow From Continuing Operating Activities", kor: "계속영업 영업현금흐름" },
-    { key: "Net Income From Continuing Operations", kor: "계속영업 순이익" },
-    
-    // 현금 유출입이 없는 비용 가산 (Non-cash items)
-    { key: "Depreciation Amortization Depletion", kor: "감가상각 및 소모비(CF)" },
-    { key: "Depreciation And Amortization", kor: "감가상각비(CF)" },
-    { key: "Depreciation", kor: "유형자산 감가상각비" },
-    { key: "Amortization Cash Flow", kor: "무형자산 상각비(CF)" },
-    { key: "Amortization Of Intangibles", kor: "무형자산 상각비" },
-    { key: "Stock Based Compensation", kor: "주식 기반 보상(SBC)" },
-    { key: "Deferred Tax", kor: "이연 법인세 변동" },
-    { key: "Deferred Income Tax", kor: "이연 법인세 변동(상세)" },
-    { key: "Operating Gains Losses", kor: "영업 자산/부채 관련 손익" },
-    { key: "Other Non Cash Items", kor: "기타 비현금성 항목" },
-    
-    // 운전 자본 변동 (Working Capital)
-    { key: "Change In Working Capital", kor: "운전 자본의 변동" },
-    { key: "Changes In Account Receivables", kor: "매출채권의 변동(상세)" },
-    { key: "Change In Receivables", kor: "매출채권의 변동" },
-    { key: "Change In Inventory", kor: "재고 자산의 변동" },
-    { key: "Change In Account Payable", kor: "매입채무의 변동(상세)" },
-    { key: "Change In Payable", kor: "매입채무의 변동" },
-    { key: "Change In Payables And Accrued Expense", kor: "매입채무 및 비용의 변동" },
-    { key: "Change In Other Working Capital", kor: "기타 운전 자본의 변동" },
-
-    // 2. 투자활동 현금흐름 (미래 투자 및 자산 매각)
-    { key: "Investing Cash Flow", kor: "투자활동 현금흐름" },
-    { key: "Cash Flow From Continuing Investing Activities", kor: "계속영업 투자현금흐름" },
-    { key: "Net PPE Purchase And Sale", kor: "유형자산 취득 및 처분액" },
-    { key: "Capital Expenditure", kor: "자본적 지출(CAPEX)" },
-    { key: "Purchase Of PPE", kor: "유형자산 취득" },
-    { key: "Sale Of PPE", kor: "유형자산 처분" },
-    { key: "Net Business Purchase And Sale", kor: "사업 인수 및 매각" },
-    { key: "Purchase Of Business", kor: "사업 인수(M&A)" },
-    { key: "Sale Of Business", kor: "사업 매각" },
-    { key: "Net Investment Purchase And Sale", kor: "투자자산 매수 및 매각" },
-    { key: "Purchase Of Investment", kor: "투자자산 취득" },
-    { key: "Sale Of Investment", kor: "투자자산 처분" },
-    { key: "Net Other Investing Changes", kor: "기타 투자활동 변동" },
-
-    // 3. 재무활동 현금흐름 (자금 조달 및 주주 환원)
-    { key: "Financing Cash Flow", kor: "재무활동 현금흐름" },
-    { key: "Cash Flow From Continuing Financing Activities", kor: "계속영업 재무현금흐름" },
-    { key: "Net Issuance Payments Of Debt", kor: "부채 발행 및 상환액" },
-    { key: "Net Long Term Debt Issuance", kor: "순 장기부채 발행액" },
-    { key: "Long Term Debt Issuance", kor: "장기부채 발행" },
-    { key: "Long Term Debt Payments", kor: "장기부채 상환" },
-    { key: "Issuance Of Debt", kor: "부채 발행(총)" },
-    { key: "Repayment Of Debt", kor: "부채 상환(총)" },
-    { key: "Net Common Stock Issuance", kor: "보통주 발행 및 취득액" },
-    { key: "Common Stock Issuance", kor: "보통주 발행" },
-    { key: "Issuance Of Capital Stock", kor: "자본금 발행" },
-    { key: "Common Stock Payments", kor: "보통주 취득(자사주 매입)" },
-    { key: "Repurchase Of Capital Stock", kor: "자기주식 매입" },
-    { key: "Net Preferred Stock Issuance", kor: "우선주 순발행액" },
-    { key: "Preferred Stock Issuance", kor: "우선주 발행" },
-    { key: "Cash Dividends Paid", kor: "배당금 지급" },
-    { key: "Net Other Financing Charges", kor: "기타 재무활동 비용" },
-
-    // 4. 현금 잔액 및 잉여현금흐름
-    { key: "Free Cash Flow", kor: "잉여현금흐름(FCF)" },
-    { key: "Changes In Cash", kor: "현금의 순증감" },
-    { key: "Beginning Cash Position", kor: "기초 현금 잔액" },
-    { key: "End Cash Position", kor: "기말 현금 잔액" },
-
-    // 5. 추가 정보
-    { key: "Interest Paid Supplemental Data", kor: "이자 지급액(실제)" },
-    { key: "Income Tax Paid Supplemental Data", kor: "법인세 납부액(실제)" }
-    ]
-};
-
+/* ═══════════════════════════════════════════
+   메인 컴포넌트
+   ═══════════════════════════════════════════ */
 const FinancialsTab = () => {
   const { ticker } = useOutletContext();
   const [activeSubTab, setActiveSubTab] = useState("incomeStatement");
@@ -306,262 +110,336 @@ const FinancialsTab = () => {
     if (ticker) fetchFinancials();
   }, [ticker, period]);
 
-  // ── 새 응답 구조 파싱
-  // API: { annual:[{fiscalYear, incomeStatement{}, balanceSheet{}, cashFlow{}, keyRatios{}}], financialCharts:{} }
-  // 또는 HistoricalTab용: { ohlcv:[], financialCharts:{} }
+  // ── 데이터 파싱
   const rows = useMemo(() => {
-    const src = period === 'annual' ? financialData?.annual : financialData?.quarterly;
-    return Array.isArray(src) ? [...src].sort((a, b) => a.fiscalYear - b.fiscalYear) : [];
+    const src = period === "annual" ? financialData?.annual : financialData?.quarterly;
+    return Array.isArray(src)
+      ? [...src].sort((a, b) => {
+          // 연도 먼저 비교 → 같으면 분기 비교
+          if (a.fiscalYear !== b.fiscalYear) return a.fiscalYear - b.fiscalYear;
+          return (a.fiscalQuarter || 0) - (b.fiscalQuarter || 0);
+        })
+      : [];
   }, [financialData, period]);
 
-  // 연도 레이블 (차트 x축, 테이블 헤더)
-  const periods = useMemo(() => rows.map(r => String(r.fiscalYear)), [rows]);
+  // ── ★ 기간 레이블: 분기별이면 "2024 Q1" 형태
+  const periods = useMemo(() => {
+    return rows.map(r => {
+      if (period === "quarterly" && r.fiscalQuarter) {
+        return `${r.fiscalYear} Q${r.fiscalQuarter}`;
+      }
+      return String(r.fiscalYear);
+    });
+  }, [rows, period]);
 
-  // 테이블용: 현재 서브탭 데이터를 [{label, kor, [year]: value}] 형태로 변환
+  // ── 테이블용 데이터
   const tableData = useMemo(() => {
     if (!rows.length) return [];
     const subMap = {
       incomeStatement: (r) => ({
-        'Total Revenue':    r.incomeStatement?.revenue,
-        'Gross Profit':     r.incomeStatement?.grossProfit,
-        'EBIT':             r.incomeStatement?.ebit,
-        'Net Income':       r.incomeStatement?.netIncome,
-        'EPS (Actual)':     r.incomeStatement?.epsActual,
-        'EPS (Estimated)':  r.incomeStatement?.epsEstimated,
+        "Total Revenue":   r.incomeStatement?.revenue,
+        "Gross Profit":    r.incomeStatement?.grossProfit,
+        "EBIT":            r.incomeStatement?.ebit,
+        "Net Income":      r.incomeStatement?.netIncome,
+        "EPS (Actual)":    r.incomeStatement?.epsActual,
+        "EPS (Estimated)": r.incomeStatement?.epsEstimated,
       }),
       balanceSheet: (r) => ({
-        'Total Assets':     r.balanceSheet?.totalAssets,
-        'Total Equity':     r.balanceSheet?.totalEquity,
-        'Total Debt':       r.balanceSheet?.totalDebt,
-        'Cash':             r.balanceSheet?.cash,
-        'BVPS':             r.balanceSheet?.bvps,
+        "Total Assets":  r.balanceSheet?.totalAssets,
+        "Total Equity":  r.balanceSheet?.totalEquity,
+        "Total Debt":    r.balanceSheet?.totalDebt,
+        "Cash":          r.balanceSheet?.cash,
+        "BVPS":          r.balanceSheet?.bvps,
       }),
       cashFlow: (r) => ({
-        'Operating Cash Flow': r.cashFlow?.ocf,
-        'Free Cash Flow':      r.cashFlow?.fcf,
-        'CapEx':               r.cashFlow?.capex,
-        'Dividends Paid':      r.cashFlow?.dividendsPaid,
+        "Operating Cash Flow": r.cashFlow?.ocf,
+        "Free Cash Flow":      r.cashFlow?.fcf,
+        "CapEx":               r.cashFlow?.capex,
+        "Dividends Paid":      r.cashFlow?.dividendsPaid,
       }),
     };
     const getter = subMap[activeSubTab];
     if (!getter) return [];
-
-    // 모든 label 수집
     const labels = Object.keys(getter(rows[0]));
     return labels.map(label => {
       const row = { label };
-      rows.forEach(r => { row[String(r.fiscalYear)] = getter(r)[label]; });
+      rows.forEach((r, idx) => { row[periods[idx]] = getter(r)[label]; });
       return row;
     });
-  }, [rows, activeSubTab]);
+  }, [rows, activeSubTab, periods]);
 
-  // keyRatios 테이블용
+  // ── keyRatios 테이블용
   const ratioData = useMemo(() => {
     if (!rows.length) return [];
     const RATIO_KEYS = [
-      { key: 'roic',           label: 'ROIC',              pct: true  },
-      { key: 'gpa',            label: 'GPA',               pct: false },
-      { key: 'fcfMargin',      label: 'FCF Margin',        pct: true  },
-      { key: 'accrualsQuality',label: 'Accruals Quality',  pct: true  },
-      { key: 'evEbit',         label: 'EV/EBIT',           pct: false },
-      { key: 'evFcf',          label: 'EV/FCF',            pct: false },
-      { key: 'pbRatio',        label: 'P/B Ratio',         pct: false },
-      { key: 'pegRatio',       label: 'PEG Ratio',         pct: false },
-      { key: 'opLeverage',     label: 'Op Leverage',       pct: false },
-      { key: 'netDebtEbitda',  label: 'Net Debt/EBITDA',   pct: false },
-      { key: 'assetTurnover',  label: 'Asset Turnover',    pct: false },
+      { key: "roic",           label: "ROIC",            pct: true  },
+      { key: "gpa",            label: "GPA",             pct: false },
+      { key: "fcfMargin",      label: "FCF Margin",      pct: true  },
+      { key: "accrualsQuality",label: "Accruals Quality", pct: true },
+      { key: "evEbit",         label: "EV/EBIT",         pct: false },
+      { key: "evFcf",          label: "EV/FCF",          pct: false },
+      { key: "pbRatio",        label: "P/B Ratio",       pct: false },
+      { key: "pegRatio",       label: "PEG Ratio",       pct: false },
+      { key: "opLeverage",     label: "Op Leverage",     pct: false },
+      { key: "netDebtEbitda",  label: "Net Debt/EBITDA",  pct: false },
+      { key: "assetTurnover",  label: "Asset Turnover",  pct: false },
     ];
     return RATIO_KEYS.map(({ key, label, pct }) => {
       const row = { label, pct };
-      rows.forEach(r => { row[String(r.fiscalYear)] = r.keyRatios?.[key]; });
+      rows.forEach((r, idx) => { row[periods[idx]] = r.keyRatios?.[key]; });
       return row;
     });
-  }, [rows]);
+  }, [rows, periods]);
 
-const chartOption = useMemo(() => {
-  if (!rows || rows.length === 0) return {};
 
-  // ── 데이터 추출 도우미 함수 (rows에서 직접 추출)
-  const getVal = (pathStr) => {
-    return rows.map(r => {
-      // r.incomeStatement.revenue 형태의 문자열 경로 탐색
-      const parts = pathStr.split('.');
-      let current = r;
-      for (const part of parts) {
-        if (current == null) break;
-        current = current[part];
-      }
-      return current ?? 0;
-    });
-  };
+  /* ═══════════════════════════════════════════
+     ★ 차트 옵션 빌더 (8개 차트)
+     ═══════════════════════════════════════════ */
+  const chartOption = useMemo(() => {
+    if (!rows || rows.length === 0) return {};
 
-  const chartYears = periods; // 테이블 헤더와 동일한 연도 사용
+    // 데이터 추출 헬퍼
+    const getVal = (pathStr) => {
+      return rows.map(r => {
+        const parts = pathStr.split(".");
+        let cur = r;
+        for (const p of parts) { if (cur == null) break; cur = cur[p]; }
+        return cur ?? 0;
+      });
+    };
 
-  // 차트 타입별 시리즈 구성
-  const getSeries = () => {
-    switch (chartType) {
-      case "revenueProfits":
-        return [
-          { name: "Revenue (매출)", type: "bar", data: getVal('incomeStatement.revenue'), itemStyle: { color: '#3b82f6' } },
-          { name: "Gross Profit (총이익)", type: "bar", data: getVal('incomeStatement.grossProfit'), itemStyle: { color: C.up } },
-          { name: "Net Income (순이익)", type: "line", data: getVal('incomeStatement.netIncome'), itemStyle: { color: C.yolk }, symbolSize: 8 }
-        ];
+    // 마진 계산 헬퍼 (소수 → %)
+    const pctArr = (nums, denoms) =>
+      nums.map((n, i) => (denoms[i] && denoms[i] !== 0 ? Number(((n / denoms[i]) * 100).toFixed(2)) : 0));
 
-      case "fcfYield":
-        return [
-          { name: "OCF (영업현금흐름)", type: "bar", data: getVal('cashFlow.ocf'), itemStyle: { color: C.yolk, opacity: 0.4 } },
-          { name: "Free Cash Flow (FCF)", type: "line", data: getVal('cashFlow.fcf'), itemStyle: { color: C.up }, symbolSize: 10 }
-        ];
+    const chartYears = periods;
 
-      case "roic":
-        return [
-          { name: "Net Income (순이익)", type: "bar", data: getVal('incomeStatement.netIncome'), itemStyle: { color: C.yolk, opacity: 0.2 } },
-          { name: "ROIC (%)", type: "line", yAxisIndex: 1, smooth: true, data: getVal('keyRatios.roic').map(v => Number((v * 100).toFixed(2))), itemStyle: { color: C.pink }, lineStyle: { width: 3 } }
-        ];
+    // ── 차트별 시리즈 ──
+    const getSeries = () => {
+      switch (chartType) {
 
-      case "opLeverage":
-        return [
-          { name: "Net Income (순이익)", type: "bar", data: getVal('incomeStatement.netIncome'), itemStyle: { color: C.yolk, opacity: 0.2 } },
-          { name: "Op Leverage", type: "line", yAxisIndex: 1, data: getVal('keyRatios.opLeverage').map(v => Number(v.toFixed(2))), itemStyle: { color: C.up }, lineStyle: { width: 3 } }
-        ];
+        /* ① Revenue & Profit */
+        case "revenueProfits":
+          return [
+            { name: "Revenue (매출)",        type: "bar",  data: getVal("incomeStatement.revenue"),     itemStyle: { color: C.down } },
+            { name: "Gross Profit (총이익)", type: "bar",  data: getVal("incomeStatement.grossProfit"), itemStyle: { color: C.up } },
+            { name: "Net Income (순이익)",   type: "line", data: getVal("incomeStatement.netIncome"),   itemStyle: { color: C.yolk }, symbolSize: 8 },
+          ];
 
-      case "solvency":
-        const totalDebt = getVal('balanceSheet.totalDebt');
-        const cash = getVal('balanceSheet.cash');
-        const netDebt = totalDebt.map((d, i) => d - cash[i]);
-        return [
-          { name: "Net Debt (순부채)", type: "bar", data: netDebt, itemStyle: { color: (p) => p.value > 0 ? C.down : C.up } },
-          { name: "Net Debt/EBITDA", type: "line", yAxisIndex: 1, data: getVal('keyRatios.netDebtEbitda'), itemStyle: { color: '#ffffff' }, lineStyle: { width: 2, type: 'dashed' }, symbolSize: 8 }
-        ];
-
-      case "ruleOf40":
-        const revs = getVal('incomeStatement.revenue');
-        const fcfs = getVal('cashFlow.fcf');
-        const r40 = revs.map((rev, i) => {
-          const growth = i > 0 && revs[i-1] > 0 ? ((rev - revs[i-1]) / revs[i-1]) * 100 : 0;
-          const fcfMargin = rev > 0 ? (fcfs[i] / rev) * 100 : 0;
-          return Number((growth + fcfMargin).toFixed(2));
-        });
-        return [{
-          name: "Rule of 40 (%)", type: "bar", yAxisIndex: 1,
-          data: r40, itemStyle: { color: C.up, borderRadius: [4, 4, 0, 0] },
-          markLine: { silent: true, symbol: "none", data: [{ yAxis: 40 }], lineStyle: { color: "#D85604", type: "dashed", width: 2 }, label: { formatter: "Target 40%", position: "end" } }
-        }];
-
-      default: return [];
-    }
-  };
-
-  return {
-    backgroundColor: 'transparent',
-    tooltip: { trigger: "axis", backgroundColor: 'rgba(20, 20, 20, 0.9)', borderColor: '#333', textStyle: { color: '#fff', fontSize: 12 } },
-    legend: { textStyle: { color: "#aaa", fontSize: 11 }, top: 0 },
-    grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
-    xAxis: { type: "category", data: chartYears, axisLabel: { color: "#666", fontSize: 11 } },
-    yAxis: [
-      {
-        type: "value",
-        splitLine: { lineStyle: { color: C.surfaceAlt } },
-        axisLabel: { 
-          color: "#666", fontSize: 10,
-          formatter: (value) => {
-            if (Math.abs(value) >= 1e12) return (value / 1e12).toFixed(1) + 'T';
-            if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(1) + 'B';
-            if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(1) + 'M';
-            return value.toLocaleString();
-          }
+        /* ② Margin Trend ★ */
+        case "marginTrend": {
+          const rev  = getVal("incomeStatement.revenue");
+          const gp   = getVal("incomeStatement.grossProfit");
+          const ebit = getVal("incomeStatement.ebit");
+          const ni   = getVal("incomeStatement.netIncome");
+          const fcfM = getVal("keyRatios.fcfMargin").map(v => Number(((v || 0) * 100).toFixed(2)));
+          return [
+            { name: "Gross Margin",  type: "line", data: pctArr(gp, rev),   itemStyle: { color: C.up },      lineStyle: { width: 2.5 }, symbolSize: 7, smooth: true },
+            { name: "Op Margin",     type: "line", data: pctArr(ebit, rev), itemStyle: { color: C.golden },   lineStyle: { width: 2.5 }, symbolSize: 7, smooth: true },
+            { name: "Net Margin",    type: "line", data: pctArr(ni, rev),   itemStyle: { color: C.yolk },     lineStyle: { width: 2.5 }, symbolSize: 7, smooth: true },
+            { name: "FCF Margin",    type: "line", data: fcfM,              itemStyle: { color: C.cyan },     lineStyle: { width: 2.5, type: "dashed" }, symbolSize: 7, smooth: true },
+          ];
         }
-      },
-      {
-        type: "value",
-        position: 'right',
-        show: ["roic", "ruleOf40", "opLeverage", "solvency"].includes(chartType),
-        splitLine: { show: false },
-        axisLabel: { color: C.yolk, fontSize: 10, formatter: (value) => value.toFixed(0) + '%' }
-      }
-    ],
-    series: getSeries().map(s => ({ ...s, markLine: s.markLine || null }))
-  };
-}, [chartType, rows, periods]); // 의존성을 financialData 대신 rows로 변경
 
+        /* ③ Earnings Quality ★ */
+        case "earningsQuality": {
+          const ni  = getVal("incomeStatement.netIncome");
+          const ocf = getVal("cashFlow.ocf");
+          const gap = ni.map((n, i) => Number((n - (ocf[i] || 0)).toFixed(0)));
+          return [
+            { name: "Net Income",    type: "bar",  data: ni,  itemStyle: { color: C.yolk, opacity: 0.7 } },
+            { name: "OCF",           type: "bar",  data: ocf, itemStyle: { color: C.up, opacity: 0.7 } },
+            { name: "Accruals Gap (NI−OCF)", type: "line", yAxisIndex: 1, data: gap, itemStyle: { color: C.pink }, lineStyle: { width: 3 }, symbolSize: 8,
+              markLine: { silent: true, symbol: "none", data: [{ yAxis: 0 }], lineStyle: { color: C.textMuted, type: "dashed", width: 1 }, label: { show: false } }
+            },
+          ];
+        }
+
+        /* ④ FCF / Cash Flow */
+        case "fcfYield":
+          return [
+            { name: "OCF (영업현금흐름)",    type: "bar",  data: getVal("cashFlow.ocf"), itemStyle: { color: C.yolk, opacity: 0.4 } },
+            { name: "CapEx (설비투자)",       type: "bar",  data: getVal("cashFlow.capex").map(v => Math.abs(v || 0)), itemStyle: { color: C.down, opacity: 0.4 } },
+            { name: "Free Cash Flow (FCF)", type: "line", data: getVal("cashFlow.fcf"), itemStyle: { color: C.up }, symbolSize: 10, lineStyle: { width: 3 } },
+          ];
+
+        /* ⑤ ROIC */
+        case "roic":
+          return [
+            { name: "Net Income (순이익)", type: "bar", data: getVal("incomeStatement.netIncome"), itemStyle: { color: C.yolk, opacity: 0.2 } },
+            { name: "ROIC (%)", type: "line", yAxisIndex: 1, smooth: true, data: getVal("keyRatios.roic").map(v => Number(((v || 0) * 100).toFixed(2))), itemStyle: { color: C.pink }, lineStyle: { width: 3 }, symbolSize: 8,
+              markLine: { silent: true, symbol: "none", data: [{ yAxis: 10 }], lineStyle: { color: C.golden, type: "dashed", width: 1 }, label: { formatter: "WACC ~10%", position: "end", color: C.golden, fontSize: 10 } }
+            },
+            { name: "GPA", type: "line", yAxisIndex: 1, smooth: true, data: getVal("keyRatios.gpa").map(v => Number(((v || 0) * 100).toFixed(2))), itemStyle: { color: C.cyan }, lineStyle: { width: 2, type: "dotted" }, symbolSize: 6 },
+          ];
+
+        /* ⑥ Operating Leverage */
+        case "opLeverage":
+          return [
+            { name: "Net Income (순이익)", type: "bar", data: getVal("incomeStatement.netIncome"), itemStyle: { color: C.yolk, opacity: 0.2 } },
+            { name: "Op Leverage", type: "line", yAxisIndex: 1, data: getVal("keyRatios.opLeverage").map(v => Number((v || 0).toFixed(2))), itemStyle: { color: C.up }, lineStyle: { width: 3 }, symbolSize: 8 },
+          ];
+
+        /* ⑦ Solvency */
+        case "solvency": {
+          const totalDebt = getVal("balanceSheet.totalDebt");
+          const cash = getVal("balanceSheet.cash");
+          const netDebt = totalDebt.map((d, i) => d - (cash[i] || 0));
+          return [
+            { name: "Net Debt (순부채)", type: "bar", data: netDebt, itemStyle: { color: (p) => p.value > 0 ? C.down : C.up } },
+            { name: "Net Debt/EBITDA", type: "line", yAxisIndex: 1, data: getVal("keyRatios.netDebtEbitda"), itemStyle: { color: C.white }, lineStyle: { width: 2, type: "dashed" }, symbolSize: 8 },
+          ];
+        }
+
+        /* ⑧ Rule of 40 */
+        case "ruleOf40": {
+          const revs = getVal("incomeStatement.revenue");
+          const fcfs = getVal("cashFlow.fcf");
+          const r40 = revs.map((rev, i) => {
+            const growth = i > 0 && revs[i - 1] > 0 ? ((rev - revs[i - 1]) / revs[i - 1]) * 100 : 0;
+            const fcfMargin = rev > 0 ? (fcfs[i] / rev) * 100 : 0;
+            return Number((growth + fcfMargin).toFixed(2));
+          });
+          return [{
+            name: "Rule of 40 (%)", type: "bar", yAxisIndex: 1,
+            data: r40, itemStyle: { color: (p) => p.value >= 40 ? C.up : C.golden, borderRadius: [4, 4, 0, 0] },
+            markLine: { silent: true, symbol: "none", data: [{ yAxis: 40 }], lineStyle: { color: C.primary, type: "dashed", width: 2 }, label: { formatter: "Target 40%", position: "end", color: C.primary, fontSize: 10 } },
+          }];
+        }
+
+        default: return [];
+      }
+    };
+
+    // ── 우측 Y축 퍼센트 표시 차트 목록
+    const pctCharts = ["roic", "ruleOf40", "opLeverage", "solvency", "marginTrend", "earningsQuality"];
+
+    return {
+      backgroundColor: "transparent",
+      tooltip: { trigger: "axis", backgroundColor: "rgba(20,20,20,0.92)", borderColor: C.border, textStyle: { color: C.textPri, fontSize: 12, fontFamily: FONT.sans } },
+      legend: { textStyle: { color: C.textGray, fontSize: 11, fontFamily: FONT.sans }, top: 0 },
+      grid: { left: "3%", right: "4%", bottom: "10%", containLabel: true },
+      xAxis: {
+        type: "category",
+        data: chartYears,
+        axisLabel: {
+          color: C.labelColor,
+          fontSize: 11,
+          fontFamily: FONT.sans,
+          rotate: period === "quarterly" ? 35 : 0,
+        },
+      },
+      yAxis: [
+        {
+          type: "value",
+          splitLine: { lineStyle: { color: C.surfaceAlt } },
+          axisLabel: {
+            color: C.labelColor, fontSize: 10, fontFamily: FONT.sans,
+            formatter: (v) => {
+              // marginTrend는 좌축도 % 표시
+              if (chartType === "marginTrend") return v.toFixed(0) + "%";
+              if (Math.abs(v) >= 1e12) return (v / 1e12).toFixed(1) + "T";
+              if (Math.abs(v) >= 1e9)  return (v / 1e9).toFixed(1)  + "B";
+              if (Math.abs(v) >= 1e6)  return (v / 1e6).toFixed(1)  + "M";
+              return v.toLocaleString();
+            },
+          },
+        },
+        {
+          type: "value",
+          position: "right",
+          show: pctCharts.includes(chartType),
+          splitLine: { show: false },
+          axisLabel: { color: C.yolk, fontSize: 10, fontFamily: FONT.sans, formatter: (v) => v.toFixed(0) + "%" },
+        },
+      ],
+      series: getSeries().map(s => ({ ...s, markLine: s.markLine || null })),
+    };
+  }, [chartType, rows, periods, period]);
+
+
+  /* ═══════════════════════════════════════════
+     스타일 헬퍼 (토큰 기반)
+     ═══════════════════════════════════════════ */
   const btnStyle = (active) => ({
     padding: "8px 16px",
-    backgroundColor: active ? "#D85604" : "#1a1a1a",
-    color: active ? "#fff" : "#888",
+    backgroundColor: active ? C.primary : C.cardBg,
+    color: active ? C.white : C.neutral,
     border: "1px solid",
-    borderColor: active ? "#D85604" : "#333",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontSize: "12px",
-    fontWeight: "600",
-    fontFamily: "inherit",
-    marginLeft: "5px"
+    borderColor: active ? C.primary : C.inputBorder,
+    borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontWeight: 600, fontFamily: FONT.sans,
+    marginLeft: 5,
   });
 
   const subTabStyle = (active) => ({
-    padding: "12px 20px",
-    cursor: "pointer",
-    fontWeight: "700",
-    fontSize: "14px",
-    color: active ? "#D85604" : "#888",
-    borderBottom: active ? "2px solid #D85604" : "2px solid transparent",
-    transition: "0.2s"
+    padding: "12px 20px", cursor: "pointer",
+    fontWeight: 700, fontSize: 14, fontFamily: FONT.sans,
+    color: active ? C.primary : C.neutral,
+    borderBottom: active ? `2px solid ${C.primary}` : "2px solid transparent",
+    transition: "0.2s",
   });
 
-  if (loading) return <div style={{ padding: 100, textAlign: "center", color: "#888" }}>LOADING...</div>;
+
+  /* ═══════════════════════════════════════════
+     렌더링
+     ═══════════════════════════════════════════ */
+  if (loading) return <div style={{ padding: 100, textAlign: "center", color: C.neutral, fontFamily: FONT.sans }}>LOADING...</div>;
   if (!financialData || financialData.error) return (
-    <div style={{ padding: '40px 20px' }}>
-      <div style={{ background: C.bgDeeper, border: `1px solid ${C.primary}40`, borderLeft: `3px solid ${C.primary}`, borderRadius: 6, padding: "12px 18px", fontSize: 12, color: C.up, fontFamily: "monospace" }}>
-        ⚠ 재무 데이터를 불러오지 못했습니다.{financialData?.error ? ` (${financialData.error})` : ""}<br />
-        <span style={{ color: "#555", fontSize: 11 }}>백엔드 연결 또는 ticker를 확인해주세요.</span>
+    <div style={{ padding: "40px 20px" }}>
+      <div style={{ background: C.bgDeeper, border: `1px solid ${C.primary}40`, borderLeft: `3px solid ${C.primary}`, borderRadius: 6, padding: "12px 18px", fontSize: 12, color: C.up, fontFamily: FONT.sans }}>
+        ⚠ 재무 데이터를 불러오지 못했습니다.{financialData?.error ? ` (${financialData.error})` : ""}
+        <br /><span style={{ color: C.textMuted, fontSize: 11 }}>백엔드 연결 또는 ticker를 확인해주세요.</span>
       </div>
     </div>
   );
 
   return (
-    <div style={{ padding: "20px", color: "#fff", fontFamily: "-apple-system, sans-serif" }}>
+    <div style={{ padding: 20, color: C.textPri, fontFamily: FONT.sans }}>
+
       {/* 1. 차트 영역 */}
-      <div style={{ backgroundColor: C.bgDeeper, padding: '25px', borderRadius: '16px', border: '1px solid #1a1a1a', marginBottom: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
-          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>Financial Analysis Charts</h3>
-          <select 
-            value={chartType} 
-            onChange={e => setChartType(e.target.value)} 
-            style={{ backgroundColor: '#111', color: '#fff', border: '1px solid #333', padding: '8px 12px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}
+      <div style={{ backgroundColor: C.bgDeeper, padding: 25, borderRadius: 16, border: `1px solid ${C.cardBg}`, marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 25 }}>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, fontFamily: FONT.sans }}>Financial Analysis Charts</h3>
+          <select
+            value={chartType}
+            onChange={e => setChartType(e.target.value)}
+            style={{
+              backgroundColor: C.surface, color: C.textPri,
+              border: `1px solid ${C.inputBorder}`, padding: "8px 12px",
+              borderRadius: 8, fontSize: 13, cursor: "pointer", fontFamily: FONT.sans,
+            }}
           >
-            <option value="revenueProfits">Revenue & Profit</option>
-            <option value="fcfYield">EFCF Margin / Cash Flow (FCF)</option>
-            <option value="roic">Efficiency (ROIC)</option>
-            <option value="opLeverage">Operating Leverage</option>
-            <option value="solvency">Solvency (Debt)</option>
-            <option value="ruleOf40">Rule of 40</option>
+            {CHART_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
           </select>
         </div>
-        <ReactECharts 
-          option={chartOption} 
-          style={{ height: "400px" }} 
-          notMerge={true}  // ✅ 이전 차트 설정을 완전히 지우고 새로 그림
-          lazyUpdate={true} 
+        <ReactECharts
+          option={chartOption}
+          style={{ height: "400px" }}
+          notMerge={true}
+          lazyUpdate={true}
         />
       </div>
 
       {/* 2. 가이드 박스 */}
-      <div style={{ backgroundColor: '#111', padding: '24px', borderRadius: '12px', border: '1px solid #222', borderLeft: '4px solid #D85604', marginBottom: '30px' }}>
-        <h4 style={{ color: '#D85604', marginTop: 0, marginBottom: '15px', fontSize: '16px' }}>
+      <div style={{ backgroundColor: C.surface, padding: 24, borderRadius: 12, border: `1px solid ${C.border}`, borderLeft: `4px solid ${C.primary}`, marginBottom: 30 }}>
+        <h4 style={{ color: C.primary, marginTop: 0, marginBottom: 15, fontSize: 16, fontFamily: FONT.sans }}>
           💡 {CHART_INFO[chartType].title} 분석 가이드
         </h4>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', fontSize: '13px', color: '#ccc' }}>
-          <div><strong style={{ color: '#666', display: 'block', marginBottom: '5px' }}>의미</strong> {CHART_INFO[chartType].meaning}</div>
-          <div><strong style={{ color: '#666', display: 'block', marginBottom: '5px' }}>중요성</strong> {CHART_INFO[chartType].importance}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 20, fontSize: 13, color: C.textSec }}>
+          <div><strong style={{ color: C.labelColor, display: "block", marginBottom: 5 }}>의미</strong> {CHART_INFO[chartType].meaning}</div>
+          <div><strong style={{ color: C.labelColor, display: "block", marginBottom: 5 }}>중요성</strong> {CHART_INFO[chartType].importance}</div>
         </div>
-        <div style={{ marginTop: '15px', padding: '12px', backgroundColor: '#1a1a1a', borderRadius: '6px', fontSize: '13px', border: '1px solid #222' }}>
-          <span style={{ color: C.yolk, fontWeight: 'bold' }}>판단 기준:</span> {CHART_INFO[chartType].criteria}
+        <div style={{ marginTop: 15, padding: 12, backgroundColor: C.cardBg, borderRadius: 6, fontSize: 13, border: `1px solid ${C.border}` }}>
+          <span style={{ color: C.yolk, fontWeight: "bold" }}>판단 기준:</span>{" "}{CHART_INFO[chartType].criteria}
         </div>
       </div>
 
       {/* 3. 탭 컨트롤 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #222', marginBottom: '20px' }}>
-        <div style={{ display: 'flex' }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", borderBottom: `1px solid ${C.border}`, marginBottom: 20 }}>
+        <div style={{ display: "flex" }}>
           {[
             { id: "incomeStatement", label: "Income(P&L)" },
             { id: "balanceSheet",    label: "Balance(B/S)" },
@@ -573,7 +451,7 @@ const chartOption = useMemo(() => {
             </div>
           ))}
         </div>
-        <div style={{ marginBottom: '10px' }}>
+        <div style={{ marginBottom: 10 }}>
           <button onClick={() => setPeriod("annual")} style={btnStyle(period === "annual")}>Annual(연간)</button>
           <button onClick={() => setPeriod("quarterly")} style={btnStyle(period === "quarterly")}>Quarterly(분기)</button>
         </div>
@@ -589,36 +467,44 @@ const chartOption = useMemo(() => {
   );
 };
 
-// ── 테이블 서브 컴포넌트
-const HIGHLIGHT_LABELS = new Set(["Total Revenue", "Gross Profit", "Net Income", "Total Assets", "Free Cash Flow", "Operating Cash Flow", "ROIC", "EV/EBIT"]);
+
+/* ═══════════════════════════════════════════
+   테이블 서브 컴포넌트
+   ═══════════════════════════════════════════ */
+const HIGHLIGHT_LABELS = new Set([
+  "Total Revenue", "Gross Profit", "Net Income", "Total Assets",
+  "Free Cash Flow", "Operating Cash Flow", "ROIC", "EV/EBIT",
+]);
 
 function fmtVal(val, isRatio, pct) {
   if (val == null || val === undefined) return "-";
   const n = Number(val);
   if (isNaN(n)) return "-";
   if (isRatio) {
-    // pct=true인 경우 소수 비율 → % 변환
     if (pct) return (n * 100).toFixed(2) + "%";
     return n.toFixed(2);
   }
-  // 일반 금액: 백만 단위
   return Math.round(n / 1e6).toLocaleString();
 }
 
 function FinTable({ periods, rows, isRatio }) {
   if (!rows || rows.length === 0)
-    return <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>데이터가 없습니다.</div>;
+    return <div style={{ padding: 40, textAlign: "center", color: C.borderHi, fontSize: 13, fontFamily: FONT.sans }}>데이터가 없습니다.</div>;
 
   return (
-    <div style={{ overflowX: "auto", borderRadius: "12px", border: "1px solid #1a1a1a", backgroundColor: C.bgDeeper }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+    <div style={{ overflowX: "auto", borderRadius: 12, border: `1px solid ${C.cardBg}`, backgroundColor: C.bgDeeper }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT.sans }}>
         <thead>
-          <tr style={{ backgroundColor: "#111", borderBottom: '1px solid #222' }}>
-            <th style={{ textAlign: "left", padding: "15px", position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 10, minWidth: '220px', color: '#666' }}>
+          <tr style={{ backgroundColor: C.surface, borderBottom: `1px solid ${C.border}` }}>
+            <th style={{
+              textAlign: "left", padding: 15, position: "sticky", left: 0,
+              backgroundColor: C.surface, zIndex: 10, minWidth: 220,
+              color: C.labelColor, fontFamily: FONT.sans,
+            }}>
               {isRatio ? "Key Ratios" : "Millions USD"}
             </th>
-            {periods.map(p => (
-              <th key={p} style={{ padding: "15px", textAlign: "right", color: "#fff", minWidth: 100 }}>{p}</th>
+            {periods.map((p, idx) => (
+              <th key={`${p}-${idx}`} style={{ padding: 15, textAlign: "right", color: C.textPri, minWidth: 100, fontFamily: FONT.sans }}>{p}</th>
             ))}
           </tr>
         </thead>
@@ -627,22 +513,22 @@ function FinTable({ periods, rows, isRatio }) {
             const hi = HIGHLIGHT_LABELS.has(row.label);
             return (
               <tr key={i}
-                style={{ borderBottom: "1px solid #111", backgroundColor: hi ? "rgba(216,86,4,0.05)" : "transparent" }}
+                style={{ borderBottom: `1px solid ${C.surface}`, backgroundColor: hi ? `${C.primary}0d` : "transparent" }}
                 onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surfaceAlt}
-                onMouseLeave={e => e.currentTarget.style.backgroundColor = hi ? "rgba(216,86,4,0.05)" : "transparent"}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = hi ? `${C.primary}0d` : "transparent"}
               >
                 <td style={{
-                  padding: "10px 15px", color: hi ? "#D85604" : "#aaa",
-                  fontWeight: hi ? "700" : "400",
-                  position: 'sticky', left: 0, backgroundColor: C.bgDeeper,
-                  borderRight: '1px solid #1a1a1a', whiteSpace: 'nowrap'
+                  padding: "10px 15px", color: hi ? C.primary : C.textGray,
+                  fontWeight: hi ? 700 : 400, fontFamily: FONT.sans,
+                  position: "sticky", left: 0, backgroundColor: C.bgDeeper,
+                  borderRight: `1px solid ${C.cardBg}`, whiteSpace: "nowrap",
                 }}>
                   {row.label}
                 </td>
-                {periods.map(p => {
+                {periods.map((p, idx) => {
                   const val = row[p];
                   return (
-                    <td key={p} style={{ padding: "10px 15px", textAlign: "right", color: hi ? "#fff" : "#eee", fontFamily: 'monospace' }}>
+                    <td key={`${p}-${idx}`} style={{ padding: "10px 15px", textAlign: "right", color: hi ? C.textPri : C.textSec, fontFamily: FONT.sans }}>
                       {fmtVal(val, isRatio, row.pct)}
                     </td>
                   );
@@ -657,1301 +543,3 @@ function FinTable({ periods, rows, isRatio }) {
 }
 
 export default FinancialsTab;
-
-// // import React, { useState, useEffect, useMemo } from "react";
-// // import { useOutletContext } from "react-router-dom";
-// // import ReactECharts from "echarts-for-react";
-// // import api from "../api";
-
-// // const CHART_INFO = {
-// //   revenueProfits: {
-// //     title: "Revenue & Profit (매출과 이익)",
-// //     meaning: "회사가 얼마나 많이 팔았는지(매출)와 본업에서 실제로 얼마를 벌었는지(영업이익 또는 순이익)를 함께 보여줍니다.",
-// //     importance: "매출 성장만으로는 기업의 질을 판단하기 어렵습니다. 매출과 함께 이익이 동반 성장하는지 확인해야 '성장의 질'을 평가할 수 있습니다.",
-// //     criteria: "매출과 영업이익이 함께 우상향하는 구조가 이상적입니다. 매출은 증가하지만 이익이 정체되거나 감소한다면 비용 구조 악화나 경쟁 심화를 의심해야 합니다."
-// //   },
-
-// //   fcfYield: {
-// //     title: "FCF Margin / Cash Flow (수익의 질 - 현금흐름)",
-// //     meaning: "회계상 이익이 아니라 실제 회사 통장에 남는 '진짜 현금(Free Cash Flow, FCF)'을 확인합니다.",
-// //     importance: "회계 이익은 조정될 수 있지만 현금 흐름은 조작이 어렵습니다. 장기적으로 FCF가 순이익과 비슷하거나 더 높다면 매우 건강한 기업으로 흑자 도산을 막고 배당이나 투자를 할 수 있는 실질적인 체력을 갖고있다는 뜻입니다.",
-// //     criteria: "장기적으로 FCF(녹색)가 순이익(노랑)과 비슷하거나 더 높게 유지되는 것이 이상적입니다. 이익은 나는데 현금이 마이너스라면 '가짜 수익'일 가능성이 큽니다."
-// //   },
-
-// //   roic: {
-// //     title: "Capital Efficiency (자본 효율성 - ROIC)",
-// //     meaning: "사업을 위해 끌어다 쓴 모든 돈(내 자본 + 빌린 부채) 100원당, 1년에 실제로 얼마의 순영업이익을 남겼는지 측정하는 지표입니다.",
-// //     importance: "ROIC는 기업의 경쟁력과 자본 효율성을 보여주는 핵심 지표입니다. 자본 비용(WACC)보다 높은 ROIC를 지속하면 기업 가치는 장기적으로 증가합니다.",
-// //     criteria: "일반적으로 10% 이상이면 양호, 15% 이상이면 우수, 20% 이상이면 매우 경쟁력 있는 기업으로 평가됩니다."
-// //   },
-
-// //   opLeverage: {
-// //     title: "Operating Leverage (이익의 가속도)",
-// //     meaning: "매출이 조금만 늘어도 이익이 폭발적으로 늘어나는 '대박 구간'에 진입했는지 확인합니다.",
-// //     importance: "고정비 구조가 큰 산업에서는 매출이 증가할수록 이익이 더 빠르게 증가하는 '영업 레버리지'가 발생합니다.",
-// //     criteria: "영업이익 성장률이 매출 성장률보다 빠르게 증가한다면 긍정적인 영업 레버리지가 발생하고 있는 것입니다. 이때 주가가 가장 탄력적으로 상승하는 경우가 많습니다."
-// //   },
-
-// //   solvency: {
-// //     title: "Debt Solvency (부채 안정성)",
-// //     meaning: "기업이 벌어들이는 현금으로 부채를 충분히 감당할 수 있는지 평가합니다.",
-// //     importance: "금리 상승기나 경기 침체에서 기업이 생존할 수 있는 재무 안정성을 판단하는 핵심 요소입니다.",
-// //     criteria: "순부채 막대가 아래쪽(녹색)으로 뻗어 있다면 빚보다 현금이 많은 '초우량' 상태입니다. 반대로 위쪽(빨강)이 너무 길면 이자 갚느라 성장이 더딜 수 있습니다. 추가적으로 Net Debt / EBITDA가 2 이하이면 재무 안정성이 높은 기업으로 평가됩니다."
-// //   },
-
-// //   ruleOf40: {
-// //     title: "Rule of 40 (성장과 수익의 균형)",
-// //     meaning: "매출 성장률과 FCF 마진을 합산해 기업의 성장성과 수익성을 동시에 평가하는 SaaS 산업의 핵심 지표입니다.",
-// //     importance: "성장만 하고 돈은 못 버는지, 돈만 벌고 성장은 멈췄는지 체크하여 '균형 잡힌 우량 기업'을 골라냅니다.",
-// //     criteria: "매출 성장률 + FCF 마진(초록바)이 주황색 가이드라인(Target 40%)을 뚫고 올라와 있다면 우수한 SaaS 기업으로 평가됩니다."
-// //   }
-// // };
-
-// // const SORT_ORDER = {
-// //     incomeStatement: [
-// //     // 1. 매출 및 매출 원가
-// //     { key: "Total Revenue", kor: "총 매출" },
-// //     { key: "Operating Revenue", kor: "영업 수익" },
-// //     { key: "Cost Of Revenue", kor: "매출 원가" },
-// //     { key: "Reconciled Cost Of Revenue", kor: "조정 매출원가" },
-// //     { key: "Gross Profit", kor: "매출 총이익" },
-
-// //     // 2. 영업 비용 (상세 상각비 포함)
-// //     { key: "Operating Expense", kor: "영업 비용" },
-// //     { key: "Research And Development", kor: "연구 개발비" },
-// //     { key: "Selling General And Administration", kor: "판매관리비" },
-// //     { key: "Depreciation Amortization Depletion Income Statement", kor: "감가상각 및 소모비(IS)" },
-// //     { key: "Depreciation And Amortization In Income Statement", kor: "감가상각비(IS)" },
-// //     { key: "Amortization", kor: "무형자산 상각비(일반)" },
-// //     { key: "Amortization Of Intangibles Income Statement", kor: "무형자산 상각비(IS)" },
-// //     { key: "Reconciled Depreciation", kor: "조정 감가상각비" },
-// //     { key: "Total Expenses", kor: "총 비용" },
-// //     { key: "Operating Income", kor: "영업 이익" },
-// //     { key: "Total Operating Income As Reported", kor: "보고된 영업이익" },
-
-// //     // 3. 영업외 손익 및 이자 (수익/비용 상세)
-// //     { key: "Net Interest Income", kor: "순이자 손익" },
-// //     { key: "Net Non Operating Interest Income Expense", kor: "순영업외 이자손익" },
-// //     { key: "Interest Expense", kor: "이자 비용" },
-// //     { key: "Interest Expense Non Operating", kor: "영업외 이자비용" },
-// //     { key: "Interest Income", kor: "이자 수익" },
-// //     { key: "Interest Income Non Operating", kor: "영업외 이자수익" },
-// //     { key: "Other Income Expense", kor: "기타 영업외 손익" },
-// //     { key: "Other Non Operating Income Expenses", kor: "기타 비영업 수익/비용" },
-// //     { key: "Gain On Sale Of Security", kor: "유가증권 처분이익" },
-// //     { key: "Special Income Charges", kor: "특별 비용" },
-// //     { key: "Restructuring And Mergern Acquisition", kor: "구조조정 및 M&A 비용" },
-// //     { key: "Total Unusual Items", kor: "총 일회성 항목" },
-// //     { key: "Total Unusual Items Excluding Goodwill", kor: "영업권 제외 일회성 항목" },
-
-// //     // 4. 세전/세후 이익 및 조정 지표
-// //     { key: "EBITDA", kor: "EBITDA" },
-// //     { key: "Normalized EBITDA", kor: "조정 EBITDA" },
-// //     { key: "EBIT", kor: "EBIT" },
-// //     { key: "Pretax Income", kor: "세전 이익" },
-// //     { key: "Tax Provision", kor: "법인세 비용" },
-// //     { key: "Tax Effect Of Unusual Items", kor: "일회성 항목 세금 효과" },
-// //     { key: "Tax Rate For Calcs", kor: "계산용 실효세율" },
-// //     { key: "Net Income", kor: "당기 순이익" },
-// //     { key: "Net Income Including Noncontrolling Interests", kor: "비지배지분 포함 순이익" },
-// //     { key: "Net Income Continuous Operations", kor: "계속영업 순이익" },
-// //     { key: "Net Income From Continuing Operation Net Minority Interest", kor: "지분 해당 계속영업이익" },
-// //     { key: "Net Income From Continuing And Discontinued Operation", kor: "계속 및 중단영업 순이익" },
-// //     { key: "Net Income Discontinuous Operations", kor: "중단영업 순이익" },
-// //     { key: "Normalized Income", kor: "조정 순이익" },
-// //     { key: "Net Income Common Stockholders", kor: "보통주 귀속 순이익" },
-// //     { key: "Diluted NI Availto Com Stockholders", kor: "희석 보통주 귀속 순이익" },
-// //     { key: "Preferred Stock Dividends", kor: "우선주 배당금" },
-
-// //     // 5. 주당 지표 및 주식 수
-// //     { key: "Basic EPS", kor: "기본 EPS" },
-// //     { key: "Diluted EPS", kor: "희석 EPS" },
-// //     { key: "Basic Average Shares", kor: "기본 평균 주식수" },
-// //     { key: "Diluted Average Shares", kor: "희석 평균 주식수" }
-// //     ],
-
-// //     balanceSheet: [
-// //     // 1. 자산 (Assets)
-// //     { key: "Total Assets", kor: "총 자산" },
-
-// //     // 1-1. 유동 자산
-// //     { key: "Current Assets", kor: "유동 자산" },
-// //     { key: "Cash Cash Equivalents And Short Term Investments", kor: "현금 및 단기투자자산" },
-// //     { key: "Cash And Cash Equivalents", kor: "현금 및 현금성자산" },
-// //     { key: "Receivables", kor: "매출채권 및 미수금" },
-// //     { key: "Gross Accounts Receivable", kor: "총 매출채권(액면)" },
-// //     { key: "Accounts Receivable", kor: "매출채권(순액)" },
-// //     { key: "Allowance For Doubtful Accounts Receivable", kor: "대손충당금" },
-// //     { key: "Other Receivables", kor: "기타 미수금" },
-// //     { key: "Inventory", kor: "재고 자산" },
-// //     { key: "Finished Goods", kor: "제품(완제품)" },
-// //     { key: "Work In Process", kor: "재공품(생산중)" },
-// //     { key: "Raw Materials", kor: "원재료" },
-// //     { key: "Prepaid Assets", kor: "선급 비용" },
-// //     { key: "Other Current Assets", kor: "기타 유동자산" },
-
-// //     // 1-2. 비유동 자산 (유형자산 상세 포함)
-// //     { key: "Total Non Current Assets", kor: "비유동 자산" },
-// //     { key: "Net PPE", kor: "순 유형자산" },
-// //     { key: "Gross PPE", kor: "총 유형자산" },
-// //     { key: "Accumulated Depreciation", kor: "감가상각 누계액" },
-// //     { key: "Properties", kor: "부동산" },
-// //     { key: "Land And Improvements", kor: "토지 및 개량" },
-// //     { key: "Buildings And Improvements", kor: "건물 및 개량" },
-// //     { key: "Machinery Furniture Equipment", kor: "기계 및 비품" },
-// //     { key: "Construction In Progress", kor: "건설중인 자산" },
-// //     { key: "Goodwill And Other Intangible Assets", kor: "영업권 및 무형자산" },
-// //     { key: "Goodwill", kor: "영업권" },
-// //     { key: "Other Intangible Assets", kor: "기타 무형자산" },
-// //     { key: "Other Non Current Assets", kor: "기타 비유동자산" },
-
-// //     // 2. 부채 (Liabilities)
-// //     { key: "Total Liabilities Net Minority Interest", kor: "총 부채" },
-
-// //     // 2-1. 유동 부채
-// //     { key: "Current Liabilities", kor: "유동 부채" },
-// //     { key: "Current Debt And Capital Lease Obligation", kor: "단기 차입금 및 리스 부채" },
-// //     { key: "Current Debt", kor: "단기 차입금" },
-// //     { key: "Other Current Borrowings", kor: "기타 단기 차입" },
-// //     { key: "Current Capital Lease Obligation", kor: "유동 자본리스 부채" },
-// //     { key: "Payables And Accrued Expenses", kor: "매입채무 및 미지급비용" },
-// //     { key: "Accounts Payable", kor: "매입채무" },
-// //     { key: "Payables", kor: "미지급금" },
-// //     { key: "Current Accrued Expenses", kor: "유동 미지급 비용" },
-// //     { key: "Interest Payable", kor: "미지급 이자" },
-// //     { key: "Total Tax Payable", kor: "미지급 법인세" },
-// //     { key: "Pensionand Other Post Retirement Benefit Plans Current", kor: "당기 퇴직연금 및 급여부채" },
-// //     { key: "Current Deferred Liabilities", kor: "유동 이연 부채" },
-// //     { key: "Current Deferred Revenue", kor: "유동 이연 수익" },
-// //     { key: "Other Current Liabilities", kor: "기타 유동부채" },
-
-// //     // 2-2. 비유동 부채
-// //     { key: "Total Non Current Liabilities Net Minority Interest", kor: "비유동 부채" },
-// //     { key: "Long Term Debt And Capital Lease Obligation", kor: "장기 차입금 및 리스 부채" },
-// //     { key: "Long Term Debt", kor: "장기 차입금" },
-// //     { key: "Long Term Capital Lease Obligation", kor: "장기 자본리스 부채" },
-// //     { key: "Capital Lease Obligations", kor: "자본리스 합계" },
-// //     { key: "Non Current Deferred Liabilities", kor: "비유동 이연 부채" },
-// //     { key: "Non Current Deferred Revenue", kor: "비유동 이연 수익" },
-// //     { key: "Non Current Deferred Taxes Liabilities", kor: "비유동 이연 법인세 부채" },
-// //     { key: "Tradeand Other Payables Non Current", kor: "비유동 매입채무" },
-// //     { key: "Other Non Current Liabilities", kor: "기타 비유동부채" },
-
-// //     // 3. 자본 (Equity)
-// //     { key: "Total Equity Gross Minority Interest", kor: "총 자본" },
-// //     { key: "Stockholders Equity", kor: "주주 지분" },
-// //     { key: "Common Stock Equity", kor: "보통주 자본" },
-// //     { key: "Capital Stock", kor: "자본금(Capital Stock)" },
-// //     { key: "Common Stock", kor: "보통주(Common Stock)" },
-// //     { key: "Preferred Stock", kor: "우선주" },
-// //     { key: "Preferred Stock Equity", kor: "우선주 자본" },
-// //     { key: "Additional Paid In Capital", kor: "자본 잉여금" },
-// //     { key: "Retained Earnings", kor: "이익 잉여금" },
-// //     { key: "Other Equity Adjustments", kor: "기타 자본 조정" },
-// //     { key: "Gains Losses Not Affecting Retained Earnings", kor: "기타 포괄손익 누계액" },
-
-// //     // 4. 주요 분석 지표 및 주식 수
-// //     { key: "Total Debt", kor: "총 부채(차입금)" },
-// //     { key: "Net Debt", kor: "순 부채" },
-// //     { key: "Working Capital", kor: "운전 자본" },
-// //     { key: "Invested Capital", kor: "투하 자본" },
-// //     { key: "Total Capitalization", kor: "총 자본화 금액" },
-// //     { key: "Net Tangible Assets", kor: "순 유형 자산" },
-// //     { key: "Tangible Book Value", kor: "유형 자산 장부가치" },
-// //     { key: "Ordinary Shares Number", kor: "보통주 주식수" },
-// //     { key: "Preferred Shares Number", kor: "우선주 주식수" },
-// //     { key: "Treasury Shares Number", kor: "자기주식(자사주) 수" },
-// //     { key: "Share Issued", kor: "발행 주식수" }
-// //     ],
-
-// //     cashFlow: [
-// //     // 1. 영업활동 현금흐름 (비즈니스 성적표)
-// //     { key: "Operating Cash Flow", kor: "영업활동 현금흐름" },
-// //     { key: "Cash Flow From Continuing Operating Activities", kor: "계속영업 영업현금흐름" },
-// //     { key: "Net Income From Continuing Operations", kor: "계속영업 순이익" },
-    
-// //     // 현금 유출입이 없는 비용 가산 (Non-cash items)
-// //     { key: "Depreciation Amortization Depletion", kor: "감가상각 및 소모비(CF)" },
-// //     { key: "Depreciation And Amortization", kor: "감가상각비(CF)" },
-// //     { key: "Depreciation", kor: "유형자산 감가상각비" },
-// //     { key: "Amortization Cash Flow", kor: "무형자산 상각비(CF)" },
-// //     { key: "Amortization Of Intangibles", kor: "무형자산 상각비" },
-// //     { key: "Stock Based Compensation", kor: "주식 기반 보상(SBC)" },
-// //     { key: "Deferred Tax", kor: "이연 법인세 변동" },
-// //     { key: "Deferred Income Tax", kor: "이연 법인세 변동(상세)" },
-// //     { key: "Operating Gains Losses", kor: "영업 자산/부채 관련 손익" },
-// //     { key: "Other Non Cash Items", kor: "기타 비현금성 항목" },
-    
-// //     // 운전 자본 변동 (Working Capital)
-// //     { key: "Change In Working Capital", kor: "운전 자본의 변동" },
-// //     { key: "Changes In Account Receivables", kor: "매출채권의 변동(상세)" },
-// //     { key: "Change In Receivables", kor: "매출채권의 변동" },
-// //     { key: "Change In Inventory", kor: "재고 자산의 변동" },
-// //     { key: "Change In Account Payable", kor: "매입채무의 변동(상세)" },
-// //     { key: "Change In Payable", kor: "매입채무의 변동" },
-// //     { key: "Change In Payables And Accrued Expense", kor: "매입채무 및 비용의 변동" },
-// //     { key: "Change In Other Working Capital", kor: "기타 운전 자본의 변동" },
-
-// //     // 2. 투자활동 현금흐름 (미래 투자 및 자산 매각)
-// //     { key: "Investing Cash Flow", kor: "투자활동 현금흐름" },
-// //     { key: "Cash Flow From Continuing Investing Activities", kor: "계속영업 투자현금흐름" },
-// //     { key: "Net PPE Purchase And Sale", kor: "유형자산 취득 및 처분액" },
-// //     { key: "Capital Expenditure", kor: "자본적 지출(CAPEX)" },
-// //     { key: "Purchase Of PPE", kor: "유형자산 취득" },
-// //     { key: "Sale Of PPE", kor: "유형자산 처분" },
-// //     { key: "Net Business Purchase And Sale", kor: "사업 인수 및 매각" },
-// //     { key: "Purchase Of Business", kor: "사업 인수(M&A)" },
-// //     { key: "Sale Of Business", kor: "사업 매각" },
-// //     { key: "Net Investment Purchase And Sale", kor: "투자자산 매수 및 매각" },
-// //     { key: "Purchase Of Investment", kor: "투자자산 취득" },
-// //     { key: "Sale Of Investment", kor: "투자자산 처분" },
-// //     { key: "Net Other Investing Changes", kor: "기타 투자활동 변동" },
-
-// //     // 3. 재무활동 현금흐름 (자금 조달 및 주주 환원)
-// //     { key: "Financing Cash Flow", kor: "재무활동 현금흐름" },
-// //     { key: "Cash Flow From Continuing Financing Activities", kor: "계속영업 재무현금흐름" },
-// //     { key: "Net Issuance Payments Of Debt", kor: "부채 발행 및 상환액" },
-// //     { key: "Net Long Term Debt Issuance", kor: "순 장기부채 발행액" },
-// //     { key: "Long Term Debt Issuance", kor: "장기부채 발행" },
-// //     { key: "Long Term Debt Payments", kor: "장기부채 상환" },
-// //     { key: "Issuance Of Debt", kor: "부채 발행(총)" },
-// //     { key: "Repayment Of Debt", kor: "부채 상환(총)" },
-// //     { key: "Net Common Stock Issuance", kor: "보통주 발행 및 취득액" },
-// //     { key: "Common Stock Issuance", kor: "보통주 발행" },
-// //     { key: "Issuance Of Capital Stock", kor: "자본금 발행" },
-// //     { key: "Common Stock Payments", kor: "보통주 취득(자사주 매입)" },
-// //     { key: "Repurchase Of Capital Stock", kor: "자기주식 매입" },
-// //     { key: "Net Preferred Stock Issuance", kor: "우선주 순발행액" },
-// //     { key: "Preferred Stock Issuance", kor: "우선주 발행" },
-// //     { key: "Cash Dividends Paid", kor: "배당금 지급" },
-// //     { key: "Net Other Financing Charges", kor: "기타 재무활동 비용" },
-
-// //     // 4. 현금 잔액 및 잉여현금흐름
-// //     { key: "Free Cash Flow", kor: "잉여현금흐름(FCF)" },
-// //     { key: "Changes In Cash", kor: "현금의 순증감" },
-// //     { key: "Beginning Cash Position", kor: "기초 현금 잔액" },
-// //     { key: "End Cash Position", kor: "기말 현금 잔액" },
-
-// //     // 5. 추가 정보
-// //     { key: "Interest Paid Supplemental Data", kor: "이자 지급액(실제)" },
-// //     { key: "Income Tax Paid Supplemental Data", kor: "법인세 납부액(실제)" }
-// //     ]
-// // };
-
-// // const FinancialsTab = () => {
-// //   const { ticker } = useOutletContext();
-// //   const [activeSubTab, setActiveSubTab] = useState("incomeStatement");
-// //   const [period, setPeriod] = useState("annual");
-// //   const [chartType, setChartType] = useState("revenueProfits");
-// //   const [financialData, setFinancialData] = useState(null);
-// //   const [loading, setLoading] = useState(true);
-// //   const [fetchError, setFetchError] = useState(false);
-
-// //   useEffect(() => {
-// //     const fetchFinancials = async () => {
-// //       setFetchError(false);
-// //       setLoading(true);
-// //       try {
-// //         const res = await api.get(`/api/stock/financials/${ticker}`, { params: { period } });
-// //         setFinancialData(res.data);
-// //       } catch (e) {
-// //         console.error("Financial Data Fetch Error:", e);
-// //         setFetchError(true);
-// //         setFinancialData(null);
-// //       } finally {
-// //         setLoading(false);
-// //       }
-// //     };
-// //     if (ticker) fetchFinancials();
-// //   }, [ticker, period]);
-
-// //   // ── 새 응답 구조 파싱
-// //   // API: { annual:[{fiscalYear, incomeStatement{}, balanceSheet{}, cashFlow{}, keyRatios{}}], financialCharts:{} }
-// //   // 또는 HistoricalTab용: { ohlcv:[], financialCharts:{} }
-// //   const rows = useMemo(() => {
-// //     const src = period === 'annual' ? financialData?.annual : financialData?.quarterly;
-// //     return Array.isArray(src) ? [...src].sort((a, b) => a.fiscalYear - b.fiscalYear) : [];
-// //   }, [financialData, period]);
-
-// //   // 연도 레이블 (차트 x축, 테이블 헤더)
-// //   const periods = useMemo(() => rows.map(r => String(r.fiscalYear)), [rows]);
-
-// //   // 차트용 financialCharts 데이터
-// //   const fc = financialData?.financialCharts || {};
-
-// //   // 차트 시리즈 헬퍼: financialCharts 배열 → 값 배열
-// //   const fcVals = (key) => (fc[key] || []).map(d => d.value ?? 0);
-// //   const fcYears = (key) => (fc[key] || []).map(d => String(d.year));
-
-// //   // 테이블용: 현재 서브탭 데이터를 [{label, kor, [year]: value}] 형태로 변환
-// //   const tableData = useMemo(() => {
-// //     if (!rows.length) return [];
-// //     const subMap = {
-// //       incomeStatement: (r) => ({
-// //         'Total Revenue':    r.incomeStatement?.revenue,
-// //         'Gross Profit':     r.incomeStatement?.grossProfit,
-// //         'EBIT':             r.incomeStatement?.ebit,
-// //         'Net Income':       r.incomeStatement?.netIncome,
-// //         'EPS (Actual)':     r.incomeStatement?.epsActual,
-// //         'EPS (Estimated)':  r.incomeStatement?.epsEstimated,
-// //       }),
-// //       balanceSheet: (r) => ({
-// //         'Total Assets':     r.balanceSheet?.totalAssets,
-// //         'Total Equity':     r.balanceSheet?.totalEquity,
-// //         'Total Debt':       r.balanceSheet?.totalDebt,
-// //         'Cash':             r.balanceSheet?.cash,
-// //         'BVPS':             r.balanceSheet?.bvps,
-// //       }),
-// //       cashFlow: (r) => ({
-// //         'Operating Cash Flow': r.cashFlow?.ocf,
-// //         'Free Cash Flow':      r.cashFlow?.fcf,
-// //         'CapEx':               r.cashFlow?.capex,
-// //         'Dividends Paid':      r.cashFlow?.dividendsPaid,
-// //       }),
-// //     };
-// //     const getter = subMap[activeSubTab];
-// //     if (!getter) return [];
-
-// //     // 모든 label 수집
-// //     const labels = Object.keys(getter(rows[0]));
-// //     return labels.map(label => {
-// //       const row = { label };
-// //       rows.forEach(r => { row[String(r.fiscalYear)] = getter(r)[label]; });
-// //       return row;
-// //     });
-// //   }, [rows, activeSubTab]);
-
-// //   // keyRatios 테이블용
-// //   const ratioData = useMemo(() => {
-// //     if (!rows.length) return [];
-// //     const RATIO_KEYS = [
-// //       { key: 'roic',           label: 'ROIC',              pct: true  },
-// //       { key: 'gpa',            label: 'GPA',               pct: false },
-// //       { key: 'fcfMargin',      label: 'FCF Margin',        pct: true  },
-// //       { key: 'accrualsQuality',label: 'Accruals Quality',  pct: true  },
-// //       { key: 'evEbit',         label: 'EV/EBIT',           pct: false },
-// //       { key: 'evFcf',          label: 'EV/FCF',            pct: false },
-// //       { key: 'pbRatio',        label: 'P/B Ratio',         pct: false },
-// //       { key: 'pegRatio',       label: 'PEG Ratio',         pct: false },
-// //       { key: 'opLeverage',     label: 'Op Leverage',       pct: false },
-// //       { key: 'netDebtEbitda',  label: 'Net Debt/EBITDA',   pct: false },
-// //       { key: 'assetTurnover',  label: 'Asset Turnover',    pct: false },
-// //     ];
-// //     return RATIO_KEYS.map(({ key, label, pct }) => {
-// //       const row = { label, pct };
-// //       rows.forEach(r => { row[String(r.fiscalYear)] = r.keyRatios?.[key]; });
-// //       return row;
-// //     });
-// //   }, [rows]);
-
-// //   const chartOption = useMemo(() => {
-// //   if (!financialData) return {};
-// //   const chartYears = fcYears('revenue').length ? fcYears('revenue') : periods;
-
-// //   return {
-// //     backgroundColor: 'transparent',
-// //     tooltip: { 
-// //       trigger: "axis", 
-// //       backgroundColor: 'rgba(20, 20, 20, 0.9)', 
-// //       borderColor: '#333', 
-// //       textStyle: { color: '#fff', fontSize: 12 } 
-// //     },
-// //     legend: { 
-// //       textStyle: { color: "#aaa", fontSize: 11 }, 
-// //       top: 0 
-// //     },
-// //     grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
-// //     xAxis: { 
-// //       type: "category", 
-// //       data: chartYears, 
-// //       axisLabel: { color: "#666", fontSize: 11 } 
-// //     },
-// //     yAxis: [
-// //       {
-// //         type: "value",
-// //         name: "Amount",
-// //         splitLine: { lineStyle: { color: C.surfaceAlt } },
-// //         axisLabel: { 
-// //           color: "#666", fontSize: 10,
-// //           formatter: (value) => {
-// //             if (Math.abs(value) >= 1e12) return (value / 1e12).toFixed(1) + 'T';
-// //             if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(1) + 'B';
-// //             return value.toLocaleString();
-// //           }
-// //         }
-// //       },
-// //       {
-// //         type: "value",
-// //         name: "Ratio (%)",
-// //         position: 'right',
-// //         // solvency 포함, 퍼센트 지표를 쓰는 차트에서만 우측 축 표시
-// //         show: ["roic", "ruleOf40", "opLeverage", "solvency"].includes(chartType),
-// //         splitLine: { show: false },
-// //         axisLabel: { 
-// //           color: C.yolk, fontSize: 10,
-// //           formatter: (value) => value.toFixed(0) + '%'
-// //         }
-// //       }
-// //     ],
-// //     series: (function() {
-// //       // 모든 케이스에서 markLine: null을 기본으로 설정하여 Rule of 40의 잔상을 제거합니다.
-// //       switch (chartType) {
-// //         case "revenueProfits":
-// //           return [
-// //             { name: "Revenue (매출)",       type: "bar",  data: fcVals('revenue'),   itemStyle: { color: '#3b82f6' } },
-// //             { name: "Gross Profit (총이익)", type: "bar",  data: fcVals('grossProfit'), itemStyle: { color: C.up } },
-// //             { name: "Net Income (순이익)",   type: "line", data: fcVals('netIncome'),  itemStyle: { color: C.yolk }, symbolSize: 8, markLine: null }
-// //           ];
-
-// //         case "fcfYield":
-// //           return [
-// //             { name: "OCF (영업현금흐름)",     type: "bar",  data: fcVals('ocf'), itemStyle: { color: C.yolk, opacity: 0.4 } },
-// //             { name: "Free Cash Flow (FCF)",   type: "line", data: fcVals('fcf'), itemStyle: { color: C.up }, symbolSize: 10, markLine: null }
-// //           ];
-
-// //         case "roic": {
-// //           const roicPct = fcVals('roic').map(v => Number((v * 100).toFixed(2)));
-// //           return [
-// //             { name: "Net Income (순이익)", type: "bar", data: fcVals('netIncome'), itemStyle: { color: C.yolk, opacity: 0.2 } },
-// //             { name: "ROIC (%)", type: "line", yAxisIndex: 1, smooth: true, data: roicPct, itemStyle: { color: C.pink }, lineStyle: { width: 3 }, markLine: null }
-// //           ];
-// //         }
-
-// //         case "opLeverage":
-// //           return [
-// //             { name: "Net Income (순이익)", type: "bar", data: fcVals('netIncome'), itemStyle: { color: C.yolk, opacity: 0.2 } },
-// //             { name: "Op Leverage", type: "line", yAxisIndex: 1, data: fcVals('opLeverage').map(v => Number(v.toFixed(2))), itemStyle: { color: C.up }, lineStyle: { width: 3 }, markLine: null }
-// //           ];
-
-// //         case "solvency": {
-// //           const debtData = (fc.debtSolvency || []).map(d => d.totalDebt - d.cash);
-// //           const netDebtEbitda = (fc.debtSolvency || []).map(d => d.netDebtEbitda ?? 0);
-// //           return [
-// //             { name: "Net Debt (순부채)", type: "bar", data: debtData, itemStyle: { color: (p) => p.value > 0 ? C.down : C.up } },
-// //             { name: "Net Debt/EBITDA", type: "line", yAxisIndex: 1, data: netDebtEbitda, itemStyle: { color: '#ffffff' }, lineStyle: { width: 2, type: 'dashed' }, symbolSize: 8, connectNulls: true, markLine: null }
-// //           ];
-// //         }
-
-// //         case "ruleOf40": {
-// //           // Rule of 40 = 매출성장률% + FCF마진%
-// //           const revArr = fcVals('revenue');
-// //           const fcfArr = fcVals('fcf');
-// //           const r40 = revArr.map((rev, i) => {
-// //             const growth = i > 0 && revArr[i-1] > 0 ? ((rev - revArr[i-1]) / revArr[i-1]) * 100 : 0;
-// //             const fcfMargin = rev > 0 ? (fcfArr[i] / rev) * 100 : 0;
-// //             return Number((growth + fcfMargin).toFixed(2));
-// //           });
-// //           return [{
-// //             name: "Rule of 40 (%)", type: "bar", yAxisIndex: 1,
-// //             data: r40, itemStyle: { color: C.up, borderRadius: [4, 4, 0, 0] },
-// //             markLine: { silent: true, symbol: "none", data: [{ yAxis: 40 }], lineStyle: { color: "#D85604", type: "dashed", width: 2 }, label: { formatter: "Target 40%", position: "end" } }
-// //           }];
-// //         }
-
-// //         default: return [];
-// //       }
-// //     })()
-// //   };
-// // }, [chartType, fc, periods, financialData, fcVals, fcYears]);
-
-// //   const btnStyle = (active) => ({
-// //     padding: "8px 16px",
-// //     backgroundColor: active ? "#D85604" : "#1a1a1a",
-// //     color: active ? "#fff" : "#888",
-// //     border: "1px solid",
-// //     borderColor: active ? "#D85604" : "#333",
-// //     borderRadius: "6px",
-// //     cursor: "pointer",
-// //     fontSize: "12px",
-// //     fontWeight: "600",
-// //     fontFamily: "inherit",
-// //     marginLeft: "5px"
-// //   });
-
-// //   const subTabStyle = (active) => ({
-// //     padding: "12px 20px",
-// //     cursor: "pointer",
-// //     fontWeight: "700",
-// //     fontSize: "14px",
-// //     color: active ? "#D85604" : "#888",
-// //     borderBottom: active ? "2px solid #D85604" : "2px solid transparent",
-// //     transition: "0.2s"
-// //   });
-
-// //   if (loading) return <div style={{ padding: 100, textAlign: "center", color: "#888" }}>LOADING...</div>;
-// //   if (!financialData || financialData.error) return (
-// //     <div style={{ padding: '40px 20px' }}>
-// //       <div style={{ background: C.bgDeeper, border: `1px solid ${C.primary}40`, borderLeft: `3px solid ${C.primary}`, borderRadius: 6, padding: "12px 18px", fontSize: 12, color: C.up, fontFamily: "monospace" }}>
-// //         ⚠ 재무 데이터를 불러오지 못했습니다.{financialData?.error ? ` (${financialData.error})` : ""}<br />
-// //         <span style={{ color: "#555", fontSize: 11 }}>백엔드 연결 또는 ticker를 확인해주세요.</span>
-// //       </div>
-// //     </div>
-// //   );
-
-// //   return (
-// //     <div style={{ padding: "20px", color: "#fff", fontFamily: "-apple-system, sans-serif" }}>
-// //       {/* 1. 차트 영역 */}
-// //       <div style={{ backgroundColor: C.bgDeeper, padding: '25px', borderRadius: '16px', border: '1px solid #1a1a1a', marginBottom: '20px' }}>
-// //         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
-// //           <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>Financial Analysis Charts</h3>
-// //           <select 
-// //             value={chartType} 
-// //             onChange={e => setChartType(e.target.value)} 
-// //             style={{ backgroundColor: '#111', color: '#fff', border: '1px solid #333', padding: '8px 12px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}
-// //           >
-// //             <option value="revenueProfits">Revenue & Profit</option>
-// //             <option value="fcfYield">EFCF Margin / Cash Flow (FCF)</option>
-// //             <option value="roic">Efficiency (ROIC)</option>
-// //             <option value="opLeverage">Operating Leverage</option>
-// //             <option value="solvency">Solvency (Debt)</option>
-// //             <option value="ruleOf40">Rule of 40</option>
-// //           </select>
-// //         </div>
-// //         <ReactECharts 
-// //           option={chartOption} 
-// //           style={{ height: "400px" }} 
-// //           notMerge={true}  // ✅ 이전 차트 설정을 완전히 지우고 새로 그림
-// //           lazyUpdate={true} 
-// //         />
-// //       </div>
-
-// //       {/* 2. 가이드 박스 */}
-// //       <div style={{ backgroundColor: '#111', padding: '24px', borderRadius: '12px', border: '1px solid #222', borderLeft: '4px solid #D85604', marginBottom: '30px' }}>
-// //         <h4 style={{ color: '#D85604', marginTop: 0, marginBottom: '15px', fontSize: '16px' }}>
-// //           💡 {CHART_INFO[chartType].title} 분석 가이드
-// //         </h4>
-// //         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', fontSize: '13px', color: '#ccc' }}>
-// //           <div><strong style={{ color: '#666', display: 'block', marginBottom: '5px' }}>의미</strong> {CHART_INFO[chartType].meaning}</div>
-// //           <div><strong style={{ color: '#666', display: 'block', marginBottom: '5px' }}>중요성</strong> {CHART_INFO[chartType].importance}</div>
-// //         </div>
-// //         <div style={{ marginTop: '15px', padding: '12px', backgroundColor: '#1a1a1a', borderRadius: '6px', fontSize: '13px', border: '1px solid #222' }}>
-// //           <span style={{ color: C.yolk, fontWeight: 'bold' }}>판단 기준:</span> {CHART_INFO[chartType].criteria}
-// //         </div>
-// //       </div>
-
-// //       {/* 3. 탭 컨트롤 */}
-// //       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #222', marginBottom: '20px' }}>
-// //         <div style={{ display: 'flex' }}>
-// //           {[
-// //             { id: "incomeStatement", label: "Income(P&L)" },
-// //             { id: "balanceSheet",    label: "Balance(B/S)" },
-// //             { id: "cashFlow",        label: "Cash Flow(CFS)" },
-// //             { id: "keyRatios",       label: "Key Ratios" },
-// //           ].map(tab => (
-// //             <div key={tab.id} onClick={() => setActiveSubTab(tab.id)} style={subTabStyle(activeSubTab === tab.id)}>
-// //               {tab.label}
-// //             </div>
-// //           ))}
-// //         </div>
-// //         <div style={{ marginBottom: '10px' }}>
-// //           <button onClick={() => setPeriod("annual")} style={btnStyle(period === "annual")}>Annual(연간)</button>
-// //           <button onClick={() => setPeriod("quarterly")} style={btnStyle(period === "quarterly")}>Quarterly(분기)</button>
-// //         </div>
-// //       </div>
-
-// //       {/* 4. 테이블 */}
-// //       <FinTable
-// //         periods={periods}
-// //         rows={activeSubTab === "keyRatios" ? ratioData : tableData}
-// //         isRatio={activeSubTab === "keyRatios"}
-// //       />
-// //     </div>
-// //   );
-// // };
-
-// // // ── 테이블 서브 컴포넌트
-// // const HIGHLIGHT_LABELS = new Set(["Total Revenue", "Gross Profit", "Net Income", "Total Assets", "Free Cash Flow", "Operating Cash Flow", "ROIC", "EV/EBIT"]);
-
-// // function fmtVal(val, isRatio, pct) {
-// //   if (val == null || val === undefined) return "-";
-// //   const n = Number(val);
-// //   if (isNaN(n)) return "-";
-// //   if (isRatio) {
-// //     // pct=true인 경우 소수 비율 → % 변환
-// //     if (pct) return (n * 100).toFixed(2) + "%";
-// //     return n.toFixed(2);
-// //   }
-// //   // 일반 금액: 백만 단위
-// //   return Math.round(n / 1e6).toLocaleString();
-// // }
-
-// // function FinTable({ periods, rows, isRatio }) {
-// //   if (!rows || rows.length === 0)
-// //     return <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>데이터가 없습니다.</div>;
-
-// //   return (
-// //     <div style={{ overflowX: "auto", borderRadius: "12px", border: "1px solid #1a1a1a", backgroundColor: C.bgDeeper }}>
-// //       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-// //         <thead>
-// //           <tr style={{ backgroundColor: "#111", borderBottom: '1px solid #222' }}>
-// //             <th style={{ textAlign: "left", padding: "15px", position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 10, minWidth: '220px', color: '#666' }}>
-// //               {isRatio ? "Key Ratios" : "Millions USD"}
-// //             </th>
-// //             {periods.map(p => (
-// //               <th key={p} style={{ padding: "15px", textAlign: "right", color: "#fff", minWidth: 100 }}>{p}</th>
-// //             ))}
-// //           </tr>
-// //         </thead>
-// //         <tbody>
-// //           {rows.map((row, i) => {
-// //             const hi = HIGHLIGHT_LABELS.has(row.label);
-// //             return (
-// //               <tr key={i}
-// //                 style={{ borderBottom: "1px solid #111", backgroundColor: hi ? "rgba(216,86,4,0.05)" : "transparent" }}
-// //                 onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surfaceAlt}
-// //                 onMouseLeave={e => e.currentTarget.style.backgroundColor = hi ? "rgba(216,86,4,0.05)" : "transparent"}
-// //               >
-// //                 <td style={{
-// //                   padding: "10px 15px", color: hi ? "#D85604" : "#aaa",
-// //                   fontWeight: hi ? "700" : "400",
-// //                   position: 'sticky', left: 0, backgroundColor: C.bgDeeper,
-// //                   borderRight: '1px solid #1a1a1a', whiteSpace: 'nowrap'
-// //                 }}>
-// //                   {row.label}
-// //                 </td>
-// //                 {periods.map(p => {
-// //                   const val = row[p];
-// //                   return (
-// //                     <td key={p} style={{ padding: "10px 15px", textAlign: "right", color: hi ? "#fff" : "#eee", fontFamily: 'monospace' }}>
-// //                       {fmtVal(val, isRatio, row.pct)}
-// //                     </td>
-// //                   );
-// //                 })}
-// //               </tr>
-// //             );
-// //           })}
-// //         </tbody>
-// //       </table>
-// //     </div>
-// //   );
-// // }
-
-// // export default FinancialsTab;
-
-// import React, { useState, useEffect, useMemo } from "react";
-// import { useOutletContext } from "react-router-dom";
-// import ReactECharts from "echarts-for-react";
-
-// const CHART_INFO = {
-//   revenueProfits: {
-//     title: "Revenue & Profit (매출과 이익)",
-//     meaning: "회사가 얼마나 많이 팔았는지(매출)와 본업에서 실제로 얼마를 벌었는지(영업이익 또는 순이익)를 함께 보여줍니다.",
-//     importance: "매출 성장만으로는 기업의 질을 판단하기 어렵습니다. 매출과 함께 이익이 동반 성장하는지 확인해야 '성장의 질'을 평가할 수 있습니다.",
-//     criteria: "매출과 영업이익이 함께 우상향하는 구조가 이상적입니다. 매출은 증가하지만 이익이 정체되거나 감소한다면 비용 구조 악화나 경쟁 심화를 의심해야 합니다."
-//   },
-
-//   fcfYield: {
-//     title: "FCF Margin / Cash Flow (수익의 질 - 현금흐름)",
-//     meaning: "회계상 이익이 아니라 실제 회사 통장에 남는 '진짜 현금(Free Cash Flow, FCF)'을 확인합니다.",
-//     importance: "회계 이익은 조정될 수 있지만 현금 흐름은 조작이 어렵습니다. 장기적으로 FCF가 순이익과 비슷하거나 더 높다면 매우 건강한 기업으로 흑자 도산을 막고 배당이나 투자를 할 수 있는 실질적인 체력을 갖고있다는 뜻입니다.",
-//     criteria: "장기적으로 FCF(녹색)가 순이익(노랑)과 비슷하거나 더 높게 유지되는 것이 이상적입니다. 이익은 나는데 현금이 마이너스라면 '가짜 수익'일 가능성이 큽니다."
-//   },
-
-//   roic: {
-//     title: "Capital Efficiency (자본 효율성 - ROIC)",
-//     meaning: "사업을 위해 끌어다 쓴 모든 돈(내 자본 + 빌린 부채) 100원당, 1년에 실제로 얼마의 순영업이익을 남겼는지 측정하는 지표입니다.",
-//     importance: "ROIC는 기업의 경쟁력과 자본 효율성을 보여주는 핵심 지표입니다. 자본 비용(WACC)보다 높은 ROIC를 지속하면 기업 가치는 장기적으로 증가합니다.",
-//     criteria: "일반적으로 10% 이상이면 양호, 15% 이상이면 우수, 20% 이상이면 매우 경쟁력 있는 기업으로 평가됩니다."
-//   },
-
-//   opLeverage: {
-//     title: "Operating Leverage (이익의 가속도)",
-//     meaning: "매출이 조금만 늘어도 이익이 폭발적으로 늘어나는 '대박 구간'에 진입했는지 확인합니다.",
-//     importance: "고정비 구조가 큰 산업에서는 매출이 증가할수록 이익이 더 빠르게 증가하는 '영업 레버리지'가 발생합니다.",
-//     criteria: "영업이익 성장률이 매출 성장률보다 빠르게 증가한다면 긍정적인 영업 레버리지가 발생하고 있는 것입니다. 이때 주가가 가장 탄력적으로 상승하는 경우가 많습니다."
-//   },
-
-//   solvency: {
-//     title: "Debt Solvency (부채 안정성)",
-//     meaning: "기업이 벌어들이는 현금으로 부채를 충분히 감당할 수 있는지 평가합니다.",
-//     importance: "금리 상승기나 경기 침체에서 기업이 생존할 수 있는 재무 안정성을 판단하는 핵심 요소입니다.",
-//     criteria: "순부채 막대가 아래쪽(녹색)으로 뻗어 있다면 빚보다 현금이 많은 '초우량' 상태입니다. 반대로 위쪽(빨강)이 너무 길면 이자 갚느라 성장이 더딜 수 있습니다. 추가적으로 Net Debt / EBITDA가 2 이하이면 재무 안정성이 높은 기업으로 평가됩니다."
-//   },
-
-//   ruleOf40: {
-//     title: "Rule of 40 (성장과 수익의 균형)",
-//     meaning: "매출 성장률과 FCF 마진을 합산해 기업의 성장성과 수익성을 동시에 평가하는 SaaS 산업의 핵심 지표입니다.",
-//     importance: "성장만 하고 돈은 못 버는지, 돈만 벌고 성장은 멈췄는지 체크하여 '균형 잡힌 우량 기업'을 골라냅니다.",
-//     criteria: "매출 성장률 + FCF 마진(초록바)이 주황색 가이드라인(Target 40%)을 뚫고 올라와 있다면 우수한 SaaS 기업으로 평가됩니다."
-//   }
-// };
-
-// const SORT_ORDER = {
-//     incomeStatement: [
-//     // 1. 매출 및 매출 원가
-//     { key: "Total Revenue", kor: "총 매출" },
-//     { key: "Operating Revenue", kor: "영업 수익" },
-//     { key: "Cost Of Revenue", kor: "매출 원가" },
-//     { key: "Reconciled Cost Of Revenue", kor: "조정 매출원가" },
-//     { key: "Gross Profit", kor: "매출 총이익" },
-
-//     // 2. 영업 비용 (상세 상각비 포함)
-//     { key: "Operating Expense", kor: "영업 비용" },
-//     { key: "Research And Development", kor: "연구 개발비" },
-//     { key: "Selling General And Administration", kor: "판매관리비" },
-//     { key: "Depreciation Amortization Depletion Income Statement", kor: "감가상각 및 소모비(IS)" },
-//     { key: "Depreciation And Amortization In Income Statement", kor: "감가상각비(IS)" },
-//     { key: "Amortization", kor: "무형자산 상각비(일반)" },
-//     { key: "Amortization Of Intangibles Income Statement", kor: "무형자산 상각비(IS)" },
-//     { key: "Reconciled Depreciation", kor: "조정 감가상각비" },
-//     { key: "Total Expenses", kor: "총 비용" },
-//     { key: "Operating Income", kor: "영업 이익" },
-//     { key: "Total Operating Income As Reported", kor: "보고된 영업이익" },
-
-//     // 3. 영업외 손익 및 이자 (수익/비용 상세)
-//     { key: "Net Interest Income", kor: "순이자 손익" },
-//     { key: "Net Non Operating Interest Income Expense", kor: "순영업외 이자손익" },
-//     { key: "Interest Expense", kor: "이자 비용" },
-//     { key: "Interest Expense Non Operating", kor: "영업외 이자비용" },
-//     { key: "Interest Income", kor: "이자 수익" },
-//     { key: "Interest Income Non Operating", kor: "영업외 이자수익" },
-//     { key: "Other Income Expense", kor: "기타 영업외 손익" },
-//     { key: "Other Non Operating Income Expenses", kor: "기타 비영업 수익/비용" },
-//     { key: "Gain On Sale Of Security", kor: "유가증권 처분이익" },
-//     { key: "Special Income Charges", kor: "특별 비용" },
-//     { key: "Restructuring And Mergern Acquisition", kor: "구조조정 및 M&A 비용" },
-//     { key: "Total Unusual Items", kor: "총 일회성 항목" },
-//     { key: "Total Unusual Items Excluding Goodwill", kor: "영업권 제외 일회성 항목" },
-
-//     // 4. 세전/세후 이익 및 조정 지표
-//     { key: "EBITDA", kor: "EBITDA" },
-//     { key: "Normalized EBITDA", kor: "조정 EBITDA" },
-//     { key: "EBIT", kor: "EBIT" },
-//     { key: "Pretax Income", kor: "세전 이익" },
-//     { key: "Tax Provision", kor: "법인세 비용" },
-//     { key: "Tax Effect Of Unusual Items", kor: "일회성 항목 세금 효과" },
-//     { key: "Tax Rate For Calcs", kor: "계산용 실효세율" },
-//     { key: "Net Income", kor: "당기 순이익" },
-//     { key: "Net Income Including Noncontrolling Interests", kor: "비지배지분 포함 순이익" },
-//     { key: "Net Income Continuous Operations", kor: "계속영업 순이익" },
-//     { key: "Net Income From Continuing Operation Net Minority Interest", kor: "지분 해당 계속영업이익" },
-//     { key: "Net Income From Continuing And Discontinued Operation", kor: "계속 및 중단영업 순이익" },
-//     { key: "Net Income Discontinuous Operations", kor: "중단영업 순이익" },
-//     { key: "Normalized Income", kor: "조정 순이익" },
-//     { key: "Net Income Common Stockholders", kor: "보통주 귀속 순이익" },
-//     { key: "Diluted NI Availto Com Stockholders", kor: "희석 보통주 귀속 순이익" },
-//     { key: "Preferred Stock Dividends", kor: "우선주 배당금" },
-
-//     // 5. 주당 지표 및 주식 수
-//     { key: "Basic EPS", kor: "기본 EPS" },
-//     { key: "Diluted EPS", kor: "희석 EPS" },
-//     { key: "Basic Average Shares", kor: "기본 평균 주식수" },
-//     { key: "Diluted Average Shares", kor: "희석 평균 주식수" }
-//     ],
-
-//     balanceSheet: [
-//     // 1. 자산 (Assets)
-//     { key: "Total Assets", kor: "총 자산" },
-
-//     // 1-1. 유동 자산
-//     { key: "Current Assets", kor: "유동 자산" },
-//     { key: "Cash Cash Equivalents And Short Term Investments", kor: "현금 및 단기투자자산" },
-//     { key: "Cash And Cash Equivalents", kor: "현금 및 현금성자산" },
-//     { key: "Receivables", kor: "매출채권 및 미수금" },
-//     { key: "Gross Accounts Receivable", kor: "총 매출채권(액면)" },
-//     { key: "Accounts Receivable", kor: "매출채권(순액)" },
-//     { key: "Allowance For Doubtful Accounts Receivable", kor: "대손충당금" },
-//     { key: "Other Receivables", kor: "기타 미수금" },
-//     { key: "Inventory", kor: "재고 자산" },
-//     { key: "Finished Goods", kor: "제품(완제품)" },
-//     { key: "Work In Process", kor: "재공품(생산중)" },
-//     { key: "Raw Materials", kor: "원재료" },
-//     { key: "Prepaid Assets", kor: "선급 비용" },
-//     { key: "Other Current Assets", kor: "기타 유동자산" },
-
-//     // 1-2. 비유동 자산 (유형자산 상세 포함)
-//     { key: "Total Non Current Assets", kor: "비유동 자산" },
-//     { key: "Net PPE", kor: "순 유형자산" },
-//     { key: "Gross PPE", kor: "총 유형자산" },
-//     { key: "Accumulated Depreciation", kor: "감가상각 누계액" },
-//     { key: "Properties", kor: "부동산" },
-//     { key: "Land And Improvements", kor: "토지 및 개량" },
-//     { key: "Buildings And Improvements", kor: "건물 및 개량" },
-//     { key: "Machinery Furniture Equipment", kor: "기계 및 비품" },
-//     { key: "Construction In Progress", kor: "건설중인 자산" },
-//     { key: "Goodwill And Other Intangible Assets", kor: "영업권 및 무형자산" },
-//     { key: "Goodwill", kor: "영업권" },
-//     { key: "Other Intangible Assets", kor: "기타 무형자산" },
-//     { key: "Other Non Current Assets", kor: "기타 비유동자산" },
-
-//     // 2. 부채 (Liabilities)
-//     { key: "Total Liabilities Net Minority Interest", kor: "총 부채" },
-
-//     // 2-1. 유동 부채
-//     { key: "Current Liabilities", kor: "유동 부채" },
-//     { key: "Current Debt And Capital Lease Obligation", kor: "단기 차입금 및 리스 부채" },
-//     { key: "Current Debt", kor: "단기 차입금" },
-//     { key: "Other Current Borrowings", kor: "기타 단기 차입" },
-//     { key: "Current Capital Lease Obligation", kor: "유동 자본리스 부채" },
-//     { key: "Payables And Accrued Expenses", kor: "매입채무 및 미지급비용" },
-//     { key: "Accounts Payable", kor: "매입채무" },
-//     { key: "Payables", kor: "미지급금" },
-//     { key: "Current Accrued Expenses", kor: "유동 미지급 비용" },
-//     { key: "Interest Payable", kor: "미지급 이자" },
-//     { key: "Total Tax Payable", kor: "미지급 법인세" },
-//     { key: "Pensionand Other Post Retirement Benefit Plans Current", kor: "당기 퇴직연금 및 급여부채" },
-//     { key: "Current Deferred Liabilities", kor: "유동 이연 부채" },
-//     { key: "Current Deferred Revenue", kor: "유동 이연 수익" },
-//     { key: "Other Current Liabilities", kor: "기타 유동부채" },
-
-//     // 2-2. 비유동 부채
-//     { key: "Total Non Current Liabilities Net Minority Interest", kor: "비유동 부채" },
-//     { key: "Long Term Debt And Capital Lease Obligation", kor: "장기 차입금 및 리스 부채" },
-//     { key: "Long Term Debt", kor: "장기 차입금" },
-//     { key: "Long Term Capital Lease Obligation", kor: "장기 자본리스 부채" },
-//     { key: "Capital Lease Obligations", kor: "자본리스 합계" },
-//     { key: "Non Current Deferred Liabilities", kor: "비유동 이연 부채" },
-//     { key: "Non Current Deferred Revenue", kor: "비유동 이연 수익" },
-//     { key: "Non Current Deferred Taxes Liabilities", kor: "비유동 이연 법인세 부채" },
-//     { key: "Tradeand Other Payables Non Current", kor: "비유동 매입채무" },
-//     { key: "Other Non Current Liabilities", kor: "기타 비유동부채" },
-
-//     // 3. 자본 (Equity)
-//     { key: "Total Equity Gross Minority Interest", kor: "총 자본" },
-//     { key: "Stockholders Equity", kor: "주주 지분" },
-//     { key: "Common Stock Equity", kor: "보통주 자본" },
-//     { key: "Capital Stock", kor: "자본금(Capital Stock)" },
-//     { key: "Common Stock", kor: "보통주(Common Stock)" },
-//     { key: "Preferred Stock", kor: "우선주" },
-//     { key: "Preferred Stock Equity", kor: "우선주 자본" },
-//     { key: "Additional Paid In Capital", kor: "자본 잉여금" },
-//     { key: "Retained Earnings", kor: "이익 잉여금" },
-//     { key: "Other Equity Adjustments", kor: "기타 자본 조정" },
-//     { key: "Gains Losses Not Affecting Retained Earnings", kor: "기타 포괄손익 누계액" },
-
-//     // 4. 주요 분석 지표 및 주식 수
-//     { key: "Total Debt", kor: "총 부채(차입금)" },
-//     { key: "Net Debt", kor: "순 부채" },
-//     { key: "Working Capital", kor: "운전 자본" },
-//     { key: "Invested Capital", kor: "투하 자본" },
-//     { key: "Total Capitalization", kor: "총 자본화 금액" },
-//     { key: "Net Tangible Assets", kor: "순 유형 자산" },
-//     { key: "Tangible Book Value", kor: "유형 자산 장부가치" },
-//     { key: "Ordinary Shares Number", kor: "보통주 주식수" },
-//     { key: "Preferred Shares Number", kor: "우선주 주식수" },
-//     { key: "Treasury Shares Number", kor: "자기주식(자사주) 수" },
-//     { key: "Share Issued", kor: "발행 주식수" }
-//     ],
-
-//     cashFlow: [
-//     // 1. 영업활동 현금흐름 (비즈니스 성적표)
-//     { key: "Operating Cash Flow", kor: "영업활동 현금흐름" },
-//     { key: "Cash Flow From Continuing Operating Activities", kor: "계속영업 영업현금흐름" },
-//     { key: "Net Income From Continuing Operations", kor: "계속영업 순이익" },
-    
-//     // 현금 유출입이 없는 비용 가산 (Non-cash items)
-//     { key: "Depreciation Amortization Depletion", kor: "감가상각 및 소모비(CF)" },
-//     { key: "Depreciation And Amortization", kor: "감가상각비(CF)" },
-//     { key: "Depreciation", kor: "유형자산 감가상각비" },
-//     { key: "Amortization Cash Flow", kor: "무형자산 상각비(CF)" },
-//     { key: "Amortization Of Intangibles", kor: "무형자산 상각비" },
-//     { key: "Stock Based Compensation", kor: "주식 기반 보상(SBC)" },
-//     { key: "Deferred Tax", kor: "이연 법인세 변동" },
-//     { key: "Deferred Income Tax", kor: "이연 법인세 변동(상세)" },
-//     { key: "Operating Gains Losses", kor: "영업 자산/부채 관련 손익" },
-//     { key: "Other Non Cash Items", kor: "기타 비현금성 항목" },
-    
-//     // 운전 자본 변동 (Working Capital)
-//     { key: "Change In Working Capital", kor: "운전 자본의 변동" },
-//     { key: "Changes In Account Receivables", kor: "매출채권의 변동(상세)" },
-//     { key: "Change In Receivables", kor: "매출채권의 변동" },
-//     { key: "Change In Inventory", kor: "재고 자산의 변동" },
-//     { key: "Change In Account Payable", kor: "매입채무의 변동(상세)" },
-//     { key: "Change In Payable", kor: "매입채무의 변동" },
-//     { key: "Change In Payables And Accrued Expense", kor: "매입채무 및 비용의 변동" },
-//     { key: "Change In Other Working Capital", kor: "기타 운전 자본의 변동" },
-
-//     // 2. 투자활동 현금흐름 (미래 투자 및 자산 매각)
-//     { key: "Investing Cash Flow", kor: "투자활동 현금흐름" },
-//     { key: "Cash Flow From Continuing Investing Activities", kor: "계속영업 투자현금흐름" },
-//     { key: "Net PPE Purchase And Sale", kor: "유형자산 취득 및 처분액" },
-//     { key: "Capital Expenditure", kor: "자본적 지출(CAPEX)" },
-//     { key: "Purchase Of PPE", kor: "유형자산 취득" },
-//     { key: "Sale Of PPE", kor: "유형자산 처분" },
-//     { key: "Net Business Purchase And Sale", kor: "사업 인수 및 매각" },
-//     { key: "Purchase Of Business", kor: "사업 인수(M&A)" },
-//     { key: "Sale Of Business", kor: "사업 매각" },
-//     { key: "Net Investment Purchase And Sale", kor: "투자자산 매수 및 매각" },
-//     { key: "Purchase Of Investment", kor: "투자자산 취득" },
-//     { key: "Sale Of Investment", kor: "투자자산 처분" },
-//     { key: "Net Other Investing Changes", kor: "기타 투자활동 변동" },
-
-//     // 3. 재무활동 현금흐름 (자금 조달 및 주주 환원)
-//     { key: "Financing Cash Flow", kor: "재무활동 현금흐름" },
-//     { key: "Cash Flow From Continuing Financing Activities", kor: "계속영업 재무현금흐름" },
-//     { key: "Net Issuance Payments Of Debt", kor: "부채 발행 및 상환액" },
-//     { key: "Net Long Term Debt Issuance", kor: "순 장기부채 발행액" },
-//     { key: "Long Term Debt Issuance", kor: "장기부채 발행" },
-//     { key: "Long Term Debt Payments", kor: "장기부채 상환" },
-//     { key: "Issuance Of Debt", kor: "부채 발행(총)" },
-//     { key: "Repayment Of Debt", kor: "부채 상환(총)" },
-//     { key: "Net Common Stock Issuance", kor: "보통주 발행 및 취득액" },
-//     { key: "Common Stock Issuance", kor: "보통주 발행" },
-//     { key: "Issuance Of Capital Stock", kor: "자본금 발행" },
-//     { key: "Common Stock Payments", kor: "보통주 취득(자사주 매입)" },
-//     { key: "Repurchase Of Capital Stock", kor: "자기주식 매입" },
-//     { key: "Net Preferred Stock Issuance", kor: "우선주 순발행액" },
-//     { key: "Preferred Stock Issuance", kor: "우선주 발행" },
-//     { key: "Cash Dividends Paid", kor: "배당금 지급" },
-//     { key: "Net Other Financing Charges", kor: "기타 재무활동 비용" },
-
-//     // 4. 현금 잔액 및 잉여현금흐름
-//     { key: "Free Cash Flow", kor: "잉여현금흐름(FCF)" },
-//     { key: "Changes In Cash", kor: "현금의 순증감" },
-//     { key: "Beginning Cash Position", kor: "기초 현금 잔액" },
-//     { key: "End Cash Position", kor: "기말 현금 잔액" },
-
-//     // 5. 추가 정보
-//     { key: "Interest Paid Supplemental Data", kor: "이자 지급액(실제)" },
-//     { key: "Income Tax Paid Supplemental Data", kor: "법인세 납부액(실제)" }
-//     ]
-// };
-
-// const FinancialsTab = () => {
-//   const { ticker } = useOutletContext();
-//   const [activeSubTab, setActiveSubTab] = useState("incomeStatement");
-//   const [period, setPeriod] = useState("annual");
-//   const [chartType, setChartType] = useState("revenueProfits");
-//   const [financialData, setFinancialData] = useState(null);
-//   const [loading, setLoading] = useState(true);
-
-//   useEffect(() => {
-//     const fetchFinancials = async () => {
-//       setLoading(true);
-//       try {
-//         const res = await fetch(`/api/stock/detail/${ticker}/financials?period=${period}`);
-//         if (!res.ok) throw new Error("Fetch failed");
-//         const data = await res.json();
-//         setFinancialData(data);
-//       } catch (e) {
-//         console.error("Financial Data Fetch Error:", e);
-//       } finally {
-//         setLoading(false);
-//       }
-//     };
-//     if (ticker) fetchFinancials();
-//   }, [ticker, period]);
-
-//   // 데이터 안전 추출을 위한 useMemo
-//   const { periods, metrics, raw, tableData } = useMemo(() => {
-//     return {
-//       periods: financialData?.years || [],
-//       metrics: financialData?.metrics || {},
-//       raw: financialData?.raw || {},
-//       tableData: financialData?.[activeSubTab]?.data || []
-//     };
-//   }, [financialData, activeSubTab]);
-
-//   const chartOption = useMemo(() => {
-//   if (!financialData || !raw || !metrics) return {};
-
-//   return {
-//     backgroundColor: 'transparent',
-//     tooltip: { 
-//       trigger: "axis", 
-//       backgroundColor: 'rgba(20, 20, 20, 0.9)', 
-//       borderColor: '#333', 
-//       textStyle: { color: '#fff', fontSize: 12 } 
-//     },
-//     legend: { 
-//       textStyle: { color: "#aaa", fontSize: 11 }, 
-//       top: 0 
-//     },
-//     grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
-//     xAxis: { 
-//       type: "category", 
-//       data: periods, 
-//       axisLabel: { color: "#666", fontSize: 11 } 
-//     },
-//     yAxis: [
-//       {
-//         type: "value",
-//         name: "Amount",
-//         splitLine: { lineStyle: { color: C.surfaceAlt } },
-//         axisLabel: { 
-//           color: "#666", fontSize: 10,
-//           formatter: (value) => {
-//             if (Math.abs(value) >= 1e12) return (value / 1e12).toFixed(1) + 'T';
-//             if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(1) + 'B';
-//             return value.toLocaleString();
-//           }
-//         }
-//       },
-//       {
-//         type: "value",
-//         name: "Ratio (%)",
-//         position: 'right',
-//         // solvency 포함, 퍼센트 지표를 쓰는 차트에서만 우측 축 표시
-//         show: ["roic", "ruleOf40", "opLeverage", "solvency"].includes(chartType),
-//         splitLine: { show: false },
-//         axisLabel: { 
-//           color: C.yolk, fontSize: 10,
-//           formatter: (value) => value.toFixed(0) + '%'
-//         }
-//       }
-//     ],
-//     series: (function() {
-//       // 모든 케이스에서 markLine: null을 기본으로 설정하여 Rule of 40의 잔상을 제거합니다.
-//       switch (chartType) {
-//         case "revenueProfits": 
-//           return [
-//             { name: "Revenue (매출)", type: "bar", data: raw.revenue, itemStyle: { color: '#3b82f6' } },
-//             { name: "Op. Income (영업이익)", type: "bar", data: raw.opIncome || raw.op_income, itemStyle: { color: C.up } },
-//             { name: "Net Income (순이익)", type: "line", data: raw.netIncome, itemStyle: { color: C.yolk }, symbolSize: 8, markLine: null }
-//           ];
-
-//         case "fcfYield": 
-//           return [
-//             { name: "Net Income (순이익)", type: "bar", data: raw.netIncome, itemStyle: { color: C.yolk, opacity: 0.3 } },
-//             { name: "Free Cash Flow (FCF)", type: "line", data: raw.fcf, itemStyle: { color: C.up }, symbolSize: 10, markLine: null }
-//           ];
-
-//         case "roic": 
-//           return [
-//             { name: "Net Income (순이익)", type: "bar", data: raw.netIncome, itemStyle: { color: C.yolk, opacity: 0.2 } },
-//             { name: "ROIC (%)", type: "line", yAxisIndex: 1, smooth: true, data: metrics.roic, itemStyle: { color: C.pink }, lineStyle: { width: 3 }, markLine: null }
-//           ];
-
-//         case "opLeverage": 
-//         // 매출 대비 영업이익률 계산 (임시)
-//         const opMargin = raw.revenue?.map((rev, i) => 
-//           rev > 0 ? (raw.opIncome[i] / rev) * 100 : 0
-//         ) || [];
-
-//         return [
-//           { name: "Net Income (순이익)", type: "bar", data: raw.netIncome, itemStyle: { color: C.yolk, opacity: 0.2 } },
-//           { 
-//             name: "Op Margin (영업이익률 %)", // 명칭 변경
-//             type: "line", 
-//             yAxisIndex: 1, // metrics 데이터가 있다면 그것도 소수점 처리
-//             data: (metrics.opLeverage || opMargin).map(v => Number(Number(v).toFixed(2))),
-//             itemStyle: { color: C.up }, 
-//             lineStyle: { width: 3 }, 
-//             markLine: null 
-//           }
-//         ];
-
-//         case "solvency": 
-//         // 순부채 / 영업이익 비율 계산 및 소수점 1자리 제한
-//         const debtRatio = raw.netDebt?.map((debt, i) => 
-//           (raw.opIncome[i] && raw.opIncome[i] !== 0) 
-//             ? Number((debt / raw.opIncome[i]).toFixed(1)) 
-//             : 0
-//         ) || [];
-
-//         return [
-//           { 
-//             name: "Net Debt (순부채)", 
-//             type: "bar", 
-//             data: raw.netDebt || [], 
-//             itemStyle: { 
-//               color: (p) => p.value > 0 ? C.down : C.up 
-//             } 
-//           },
-//           { 
-//             name: "Debt/Earnings Ratio (채무 상환 능력 지표)", 
-//             type: "line", 
-//             yAxisIndex: 1, 
-//             // 데이터 존재 여부에 따라 소수점 1자리 적용
-//             data: (metrics.netDebtEbitda || metrics.net_debt_ebitda || debtRatio).map(v => Number(Number(v).toFixed(3))), 
-//             itemStyle: { color: '#ffffff' }, 
-//             lineStyle: { width: 2, type: 'dashed' },
-//             symbolSize: 8,
-//             connectNulls: true,
-//             markLine: null 
-//           }
-//         ];
-
-//         case "ruleOf40": 
-//           return [
-//             {
-//               name: "Rule of 40 (%)",
-//               type: "bar",
-//               yAxisIndex: 1,
-//               data: metrics.ruleOf40,
-//               itemStyle: { color: C.up, borderRadius: [4, 4, 0, 0] },
-//               markLine: {
-//                 silent: true,
-//                 symbol: "none",
-//                 data: [{ yAxis: 40 }],
-//                 lineStyle: { color: "#D85604", type: "dashed", width: 2 },
-//                 label: { formatter: "Target 40%", position: "end" }
-//               }
-//             }
-//           ];
-//         default: return [];
-//       }
-//     })()
-//   };
-// }, [chartType, periods, metrics, raw, financialData]);
-
-//   const btnStyle = (active) => ({
-//     padding: "8px 16px",
-//     backgroundColor: active ? "#D85604" : "#1a1a1a",
-//     color: active ? "#fff" : "#888",
-//     border: "1px solid",
-//     borderColor: active ? "#D85604" : "#333",
-//     borderRadius: "6px",
-//     cursor: "pointer",
-//     fontSize: "12px",
-//     fontWeight: "600",
-//     fontFamily: "inherit",
-//     marginLeft: "5px"
-//   });
-
-//   const subTabStyle = (active) => ({
-//     padding: "12px 20px",
-//     cursor: "pointer",
-//     fontWeight: "700",
-//     fontSize: "14px",
-//     color: active ? "#D85604" : "#888",
-//     borderBottom: active ? "2px solid #D85604" : "2px solid transparent",
-//     transition: "0.2s"
-//   });
-
-//   if (loading) return <div style={{ padding: 100, textAlign: "center", color: "#888" }}>LOADING...</div>;
-//   if (!financialData) return <div style={{ padding: 100, textAlign: "center", color: "#888" }}>데이터를 불러올 수 없습니다.</div>;
-
-//   return (
-//     <div style={{ padding: "20px", color: "#fff", fontFamily: "-apple-system, sans-serif" }}>
-//       {/* 1. 차트 영역 */}
-//       <div style={{ backgroundColor: C.bgDeeper, padding: '25px', borderRadius: '16px', border: '1px solid #1a1a1a', marginBottom: '20px' }}>
-//         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
-//           <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>Financial Analysis Charts</h3>
-//           <select 
-//             value={chartType} 
-//             onChange={e => setChartType(e.target.value)} 
-//             style={{ backgroundColor: '#111', color: '#fff', border: '1px solid #333', padding: '8px 12px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}
-//           >
-//             <option value="revenueProfits">Revenue & Profit</option>
-//             <option value="fcfYield">EFCF Margin / Cash Flow (FCF)</option>
-//             <option value="roic">Efficiency (ROIC)</option>
-//             <option value="opLeverage">Operating Leverage</option>
-//             <option value="solvency">Solvency (Debt)</option>
-//             <option value="ruleOf40">Rule of 40</option>
-//           </select>
-//         </div>
-//         <ReactECharts 
-//           option={chartOption} 
-//           style={{ height: "400px" }} 
-//           notMerge={true}  // ✅ 이전 차트 설정을 완전히 지우고 새로 그림
-//           lazyUpdate={true} 
-//         />
-//       </div>
-
-//       {/* 2. 가이드 박스 */}
-//       <div style={{ backgroundColor: '#111', padding: '24px', borderRadius: '12px', border: '1px solid #222', borderLeft: '4px solid #D85604', marginBottom: '30px' }}>
-//         <h4 style={{ color: '#D85604', marginTop: 0, marginBottom: '15px', fontSize: '16px' }}>
-//           💡 {CHART_INFO[chartType].title} 분석 가이드
-//         </h4>
-//         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', fontSize: '13px', color: '#ccc' }}>
-//           <div><strong style={{ color: '#666', display: 'block', marginBottom: '5px' }}>의미</strong> {CHART_INFO[chartType].meaning}</div>
-//           <div><strong style={{ color: '#666', display: 'block', marginBottom: '5px' }}>중요성</strong> {CHART_INFO[chartType].importance}</div>
-//         </div>
-//         <div style={{ marginTop: '15px', padding: '12px', backgroundColor: '#1a1a1a', borderRadius: '6px', fontSize: '13px', border: '1px solid #222' }}>
-//           <span style={{ color: C.yolk, fontWeight: 'bold' }}>판단 기준:</span> {CHART_INFO[chartType].criteria}
-//         </div>
-//       </div>
-
-//       {/* 3. 탭 컨트롤 */}
-//       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #222', marginBottom: '20px' }}>
-//         <div style={{ display: 'flex' }}>
-//           {["incomeStatement", "balanceSheet", "cashFlow"].map(tab => (
-//             <div key={tab} onClick={() => setActiveSubTab(tab)} style={subTabStyle(activeSubTab === tab)}>
-//               {tab === "incomeStatement" ? "Income(P&L)" : tab === "balanceSheet" ? "Balance(B/S)" : "Cash Flow(CFS)"}
-//             </div>
-//           ))}
-//         </div>
-//         <div style={{ marginBottom: '10px' }}>
-//           <button onClick={() => setPeriod("annual")} style={btnStyle(period === "annual")}>Annual(연간)</button>
-//           <button onClick={() => setPeriod("quarterly")} style={btnStyle(period === "quarterly")}>Quarterly(분기)</button>
-//         </div>
-//       </div>
-
-//       {/* 4. 테이블 섹션 */}
-//       <div style={{ overflowX: "auto", borderRadius: "12px", border: "1px solid #1a1a1a", backgroundColor: C.bgDeeper }}>
-//         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-//           <thead>
-//             <tr style={{ backgroundColor: "#111", color: "#666", borderBottom: '1px solid #222' }}>
-//               <th style={{ textAlign: "left", padding: "15px", position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 10, minWidth: '280px' }}>
-//                 Millions USD (English / 한글)
-//               </th>
-//               {periods.map(p => <th key={p} style={{ padding: "15px", textAlign: "right" }}>{p}</th>)}
-//             </tr>
-//           </thead>
-//           <tbody>
-//             {(() => {
-//               if (!tableData || tableData.length === 0) {
-//                 return <tr><td colSpan={periods.length + 1} style={{ padding: 40, textAlign: 'center', color: '#444' }}>데이터가 없습니다.</td></tr>;
-//               }
-
-//               const currentOrder = SORT_ORDER[activeSubTab] || [];
-              
-//               // 1. 정의된 순서에 있는 항목들 추출
-//               const sortedRows = currentOrder
-//                 .map(target => {
-//                   const found = tableData.find(d => d.label === target.key);
-//                   return found ? { ...found, kor: target.kor } : null;
-//                 })
-//                 .filter(Boolean);
-
-//               // 2. 나머지 모든 계정과목들 (정의되지 않은 것들) 추출
-//               const otherRows = tableData.filter(d => !currentOrder.some(target => target.key === d.label));
-
-//               // 3. 전체 합쳐서 렌더링 (모든 계정 포함)
-//               return [...sortedRows, ...otherRows].map((row, i) => {
-//                 const isHighlight = ["Total Revenue", "Operating Income", "Net Income", "Total Assets", "Free Cash Flow"].includes(row.label);
-                
-//                 return (
-//                   <tr 
-//                     key={i} 
-//                     style={{ 
-//                       borderBottom: "1px solid #111",
-//                       backgroundColor: isHighlight ? "rgba(216, 86, 4, 0.05)" : "transparent"
-//                     }} 
-//                     onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surfaceAlt} 
-//                     onMouseLeave={e => e.currentTarget.style.backgroundColor = isHighlight ? "rgba(216, 86, 4, 0.05)" : "transparent"}
-//                   >
-//                     <td style={{ 
-//                       padding: "10px 15px", 
-//                       color: isHighlight ? "#D85604" : "#aaa", 
-//                       fontWeight: isHighlight ? "700" : "400",
-//                       position: 'sticky', 
-//                       left: 0, 
-//                       backgroundColor: C.bgDeeper, 
-//                       borderRight: '1px solid #1a1a1a',
-//                       whiteSpace: 'nowrap'
-//                     }}>
-//                       {row.label} {row.kor ? <span style={{ fontSize: '11px', color: '#666', fontWeight: '400' }}>({row.kor})</span> : ""}
-//                     </td>
-//                     {periods.map(p => {
-//                       const val = row[p];
-//                       const isRatioOrEps = row.label.toLowerCase().includes("eps") || row.label.toLowerCase().includes("rate") || row.label.toLowerCase().includes("share");
-                      
-//                       return (
-//                         <td key={p} style={{ 
-//                           padding: "10px 15px", 
-//                           textAlign: "right", 
-//                           color: isHighlight ? "#fff" : "#eee", 
-//                           fontFamily: 'monospace' 
-//                         }}>
-//                           {val !== undefined 
-//                             ? (isRatioOrEps 
-//                                 ? Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) 
-//                                 : Math.round(Number(val) / 1e6).toLocaleString())
-//                             : "-"}
-//                         </td>
-//                       );
-//                     })}
-//                   </tr>
-//                 );
-//               });
-//             })()}
-//           </tbody>
-//         </table>
-//       </div>
-//     </div>
-//   );
-// };
-
-// export default FinancialsTab;

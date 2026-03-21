@@ -1,19 +1,20 @@
 /**
- * MarketStatus.jsx — v2 (백엔드 API 연결)
+ * MarketStatus.jsx — v3
  *
  * GET /api/market/status
- *   { isOpen, session: "OPEN"|"CLOSED"|"PRE_MARKET"|"AFTER_HOURS", nextOpen }
+ *   { isOpen, session, etStr, krIsOpen, krSession, kstStr, nextOpen, krNextOpen }
  *
- * - API 성공 시 서버 기준 US 세션 상태 반영
- * - API 실패 시 클라이언트 DST 계산 Fallback
- * - 30초마다 자동 갱신
+ * ★ 핵심 계약:
+ *   - session / krSession: 영문 키만 → OPEN | CLOSED | PRE_MARKET | AFTER_HOURS
+ *   - etStr / kstStr: "HH:MM" 포맷 (백엔드 v2 이후)
+ *   - 30초마다 자동 갱신
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { C, FONT } from "../../styles/tokens";
 import api from "../../api";
 
-// ── 로컬 Fallback: DST 자동 계산
+// ── 로컬 Fallback: DST 자동 계산 ──
 function isDST(now) {
   const y = now.getUTCFullYear();
   const mar = new Date(Date.UTC(y, 2, 1));
@@ -23,45 +24,74 @@ function isDST(now) {
   return now >= mar && now < nov;
 }
 
+/** HH:MM 포맷 헬퍼 */
+function fmtHM(h, m) {
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/**
+ * 로컬 fallback — API 실패 시 사용
+ * ★ KST 기준 요일 판단으로 주말 버그 수정
+ */
 function getLocalStatus() {
   const now   = new Date();
   const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-  const dow   = new Date(utcMs).getUTCDay();
-  const isWd  = dow >= 1 && dow <= 5;
 
+  // ── US (ET 시간)
   const etOffset = isDST(now) ? -4 : -5;
   const etNow  = new Date(utcMs + etOffset * 3600000);
-  const etMin  = etNow.getUTCHours() * 60 + etNow.getUTCMinutes();
+  const etH    = etNow.getUTCHours();
+  const etM    = etNow.getUTCMinutes();
+  const etMin  = etH * 60 + etM;
+  const etWd   = etNow.getUTCDay();       // ET 기준 요일 (0=일 ~ 6=토)
+  const etIsWd = etWd >= 1 && etWd <= 5;
 
   let usSession = "CLOSED";
-  if (isWd) {
+  if (etIsWd) {
     if      (etMin >= 240 && etMin < 570)  usSession = "PRE_MARKET";
     else if (etMin >= 570 && etMin < 960)  usSession = "OPEN";
     else if (etMin >= 960 && etMin < 1200) usSession = "AFTER_HOURS";
   }
 
+  // ── KR (KST 시간)  ★ KST 기준 요일 사용
   const kstNow = new Date(utcMs + 9 * 3600000);
-  const kstMin = kstNow.getUTCHours() * 60 + kstNow.getUTCMinutes();
+  const kstH   = kstNow.getUTCHours();
+  const kstM   = kstNow.getUTCMinutes();
+  const kstMin = kstH * 60 + kstM;
+  const kstWd  = kstNow.getUTCDay();       // KST 기준 요일
+  const kstIsWd = kstWd >= 1 && kstWd <= 5;
 
   let krSession = "CLOSED";
-  if (isWd) {
-    if      (kstMin >= 480 && kstMin < 540)  krSession = "PRE_MARKET";
-    else if (kstMin >= 540 && kstMin < 930)  krSession = "OPEN";
-    else if (kstMin >= 930 && kstMin < 1080) krSession = "AFTER_HOURS";
+  if (kstIsWd) {
+    if      (kstMin >= 510 && kstMin < 540)  krSession = "PRE_MARKET";   // 08:30~09:00
+    else if (kstMin >= 540 && kstMin < 930)  krSession = "OPEN";          // 09:00~15:30
+    else if (kstMin >= 930 && kstMin < 1080) krSession = "AFTER_HOURS";   // 15:30~18:00
   }
 
-  // getLocalStatus 함수 내부 하단 수정
-  const fmt = d =>
-    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-
-  // 이제 아래 리턴값이 정상적으로 시차가 적용된 시간을 반환합니다.
-  return { usSession, krSession, etStr: fmt(etNow), kstStr: fmt(kstNow) };
+  return {
+    usSession,
+    krSession,
+    etStr:  fmtHM(etH, etM),
+    kstStr: fmtHM(kstH, kstM),
+  };
 }
 
+/**
+ * API 응답의 시간 문자열에서 HH:MM만 추출
+ * "21:57" → "21:57"
+ * "2026-03-21 21:57 KST" → "21:57"  (구 버전 호환)
+ */
+function parseTimeOnly(str) {
+  if (!str) return null;
+  const m = str.match(/(\d{1,2}:\d{2})/);
+  return m ? m[1] : null;
+}
+
+
 const SESSION_META = {
-  OPEN:        { label: "OPEN",   color: C.up, pulse: true  },
-  PRE_MARKET:  { label: "PRE",    color: C.golden,  pulse: true  },
-  AFTER_HOURS: { label: "AFTER",  color: C.cyan,    pulse: true  },
+  OPEN:        { label: "OPEN",   color: C.up,        pulse: true  },
+  PRE_MARKET:  { label: "PRE",    color: C.golden,    pulse: true  },
+  AFTER_HOURS: { label: "AFTER",  color: C.cyan,      pulse: true  },
   CLOSED:      { label: "CLOSED", color: C.textMuted, pulse: false },
 };
 
@@ -98,10 +128,10 @@ function MarketChip({ flag, label, timeStr, session }) {
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <StatusDot session={session} />
       <div>
-        <div style={{ fontSize: 9, color: C.textMuted, letterSpacing: 0.5 }}>
+        <div style={{ fontSize: 9, color: C.textMuted, letterSpacing: 0.5, fontFamily: FONT.mono }}>
           {flag} {label}
         </div>
-        <div style={{ fontSize: 11, color: C.textPri, fontWeight: 600, lineHeight: 1.2 }}>
+        <div style={{ fontSize: 11, color: C.textPri, fontWeight: 600, lineHeight: 1.2, fontFamily: FONT.mono }}>
           {timeStr}
           <span style={{ fontSize: 9, color: meta.color, marginLeft: 4, fontWeight: 700 }}>
             {meta.label}
@@ -115,36 +145,40 @@ function MarketChip({ flag, label, timeStr, session }) {
 export default function MarketStatus() {
   const [s, setS] = useState(() => getLocalStatus());
 
-  const refresh = () => {
-    // getLocalStatus()는 API 응답 전까지만 보여주는 임시 데이터용
-    const local = getLocalStatus(); 
+  const refresh = useCallback(() => {
+    const local = getLocalStatus();
 
     api.get("/api/market/status")
       .then(res => {
-        // 🔍 데이터가 잘 오는지 확인용 (필요 없으면 삭제)
-        console.log("Market API Data:", res.data);
+        const d = res.data;
 
-        setS({
-          // 1. 세션 상태 업데이트 (OPEN, CLOSED 등)
-          usSession: res.data.session ?? local.usSession,
-          krSession: local.krSession, 
-          
-          // 2. 💡 가장 중요한 부분: 백엔드에서 계산된 정확한 시간을 화면에 표시
-          etStr: res.data.etStr ?? local.etStr,     // "21:51" 형태
-          kstStr: res.data.kstStr ?? local.kstStr, // "10:51" 형태 (한국 시간)
-        });
+        // ★ 영문 세션 키 → SESSION_META 키와 일치하는지 검증
+        const validSessions = ["OPEN", "CLOSED", "PRE_MARKET", "AFTER_HOURS"];
+
+        const usSession = validSessions.includes(d.session)
+          ? d.session
+          : local.usSession;
+
+        const krSession = validSessions.includes(d.krSession)
+          ? d.krSession
+          : local.krSession;
+
+        // ★ 시간은 항상 HH:MM 만 사용 (구 버전 "YYYY-MM-DD HH:MM TZ" 호환)
+        const etStr  = parseTimeOnly(d.etStr)  ?? local.etStr;
+        const kstStr = parseTimeOnly(d.kstStr) ?? local.kstStr;
+
+        setS({ usSession, krSession, etStr, kstStr });
       })
-      .catch((err) => {
-        console.error("Market API Error:", err);
+      .catch(() => {
         setS(local);
       });
-  };
+  }, []);
 
   useEffect(() => {
     refresh();
     const id = setInterval(refresh, 30000);
     return () => clearInterval(id);
-  }, []);
+  }, [refresh]);
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 14, fontFamily: FONT.mono, paddingRight: 4 }}>

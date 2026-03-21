@@ -62,6 +62,12 @@ export const C = {
   // ── 게이지 / 바
   gaugeTrack: "#2d2d2d",
   gaugeBar:   "#686868",
+
+  // ── 인풋 / 컨트롤
+  inputBg:     "#0a0a0a",  // input 배경
+  inputBorder: "#333333",  // input 테두리
+  labelColor:  "#666666",  // 라벨 텍스트
+  white:       "#FFFFFF",  // 순백
 };
 
 export const FONT = {

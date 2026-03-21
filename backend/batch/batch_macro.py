@@ -1,6 +1,8 @@
 """
 매일 09:00 실행 (Phase 3).
 FDR/FRED → 거시지표 수집 → macro_indicators.
+
+★ v2: US2YT(404) 제거 → DXY 추가, 에러 시 skip & 로깅 개선
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -11,29 +13,33 @@ from db_pool import get_cursor
 
 
 MACRO_TARGETS = [
-    ("^VIX",    "VIX",         "VOLATILITY"),
-    ("US10YT",  "US10Y_YIELD", "BOND"),
-    ("US2YT",   "US2Y_YIELD",  "BOND"),
-    ("GC=F",    "GOLD",        "COMMODITY"),
-    ("CL=F",    "OIL_WTI",     "COMMODITY"),
-    ("USD/KRW", "USD_KRW",     "FX"),
-    ("S&P500",  "SP500",       "INDEX"),
+    ("^VIX",       "VIX",         "VOLATILITY"),
+    ("US10YT",     "US10Y_YIELD", "BOND"),
+    # US2YT → FDR에서 404 (지원 종료). 제거.
+    ("GC=F",       "GOLD",        "COMMODITY"),
+    ("CL=F",       "OIL_WTI",     "COMMODITY"),
+    ("USD/KRW",    "USD_KRW",     "FX"),
+    ("^NYICDX",    "DXY",         "FX"),          # ★ 달러인덱스 추가
+    ("S&P500",     "SP500",       "INDEX"),
 ]
 
 
 def run_macro():
     calc_date = datetime.now().date()
     ok, fail  = 0, 0
+    fail_list = []
 
     for symbol, name, category in MACRO_TARGETS:
         try:
             df = fdr.DataReader(symbol)
             if df is None or df.empty:
-                fail += 1
-                continue
+                raise ValueError(f"빈 데이터: {symbol}")
+
+            if len(df) < 2:
+                raise ValueError(f"데이터 부족({len(df)}행): {symbol}")
 
             latest = df.iloc[-1]
-            prev   = df.iloc[-2] if len(df) > 1 else latest
+            prev   = df.iloc[-2]
             val    = float(latest["Close"])
             chg    = round((val - float(prev["Close"])) / float(prev["Close"]) * 100, 4) \
                      if float(prev["Close"]) != 0 else 0
@@ -54,9 +60,12 @@ def run_macro():
 
         except Exception as e:
             fail += 1
+            fail_list.append(f"{symbol}({name})")
             print(f"[MACRO] {symbol} 실패: {e}")
 
     print(f"[MACRO] 완료: {ok}성공 / {fail}실패")
+    if fail_list:
+        print(f"[MACRO] 실패 목록: {', '.join(fail_list)}")
 
 
 if __name__ == "__main__":

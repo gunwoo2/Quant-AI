@@ -1,6 +1,8 @@
 """
 매 2시간 실행 (Phase 2).
 SEC EDGAR Form 4 파싱 → insider_transactions.
+
+★ v2: data_source 컬럼 자동 보정 로직 추가
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,20 +14,33 @@ from db_pool import get_cursor
 SEC_HEADERS = {"User-Agent": "QuantAI research@quantai.com"}
 
 
-def _get_cik(ticker: str) -> str | None:
+def _ensure_schema():
+    """insider_transactions 테이블에 data_source 컬럼이 없으면 자동 추가"""
     try:
-        resp = requests.get(
-            "https://efts.sec.gov/LATEST/search-index?q=%22{}%22&dateRange=custom"
-            "&startdt=2020-01-01&forms=4".format(ticker),
-            headers=SEC_HEADERS, timeout=10
-        )
-        return None
-    except Exception:
-        return None
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'insider_transactions'
+                  AND column_name = 'data_source'
+            """)
+            if cur.fetchone() is None:
+                cur.execute("""
+                    ALTER TABLE insider_transactions
+                    ADD COLUMN data_source VARCHAR(50) DEFAULT 'SEC_EDGAR'
+                """)
+                print("[INSIDER] ✅ data_source 컬럼 자동 추가 완료")
+            else:
+                pass  # 이미 존재
+    except Exception as e:
+        print(f"[INSIDER] ⚠ 스키마 보정 실패: {e}")
 
 
 def run_insider_trades():
     """SEC Form 4 기반 내부자거래 수집"""
+
+    # ── 스키마 보정 (첫 실행 시 1회)
+    _ensure_schema()
+
     with get_cursor() as cur:
         cur.execute("SELECT stock_id, ticker FROM stocks WHERE is_active = TRUE")
         stocks = [dict(r) for r in cur.fetchall()]
@@ -37,7 +52,6 @@ def run_insider_trades():
         ticker   = s["ticker"]
 
         try:
-            # SEC EDGAR company search
             resp = requests.get(
                 f"https://efts.sec.gov/LATEST/search-index?q=%22{ticker}%22"
                 f"&forms=4&dateRange=custom"

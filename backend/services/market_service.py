@@ -153,8 +153,6 @@ def _refresh_cache_background():
 def get_market_indices() -> list[dict]:
     """
     ★ 즉시 응답: 캐시가 있으면 즉시 반환, 없거나 만료면 백그라운드 갱신 후 반환
-    - 첫 호출: 빈 배열 반환 + 백그라운드 갱신 시작 (프론트가 곧 재호출)
-    - 이후: 캐시 즉시 반환 (2분마다 백그라운드 갱신)
     """
     global _cache_ts
 
@@ -177,12 +175,16 @@ def get_market_indices() -> list[dict]:
         return _indices_cache
 
     # 최초 호출 — 캐시 완전 비어있음 → 빈 배열 반환
-    # 프론트엔드가 곧 재호출하면 그때는 캐시 있음
     return []
 
 
 def get_market_status() -> dict:
-    """미국 + 한국 시장 상태 통합 반환"""
+    """미국 + 한국 시장 상태 통합 반환
+    
+    ★ 핵심 계약 (프론트엔드와 동기화):
+      - session/krSession: 영문 키만 사용 → OPEN / CLOSED / PRE_MARKET / AFTER_HOURS
+      - etStr/kstStr: "HH:MM" 포맷만 (날짜 없이 시간만)
+    """
     now_utc = datetime.now(pytz.utc)
 
     # ── 미국 (NYSE) ──
@@ -194,13 +196,13 @@ def get_market_status() -> dict:
     return {
         # 미국 시장
         "isOpen":    us["isOpen"],
-        "session":   us["session"],
-        "etStr":     us["etStr"],
+        "session":   us["session"],       # OPEN / CLOSED / PRE_MARKET / AFTER_HOURS
+        "etStr":     us["etStr"],          # "08:57"
         "nextOpen":  us["nextOpen"],
         # 한국 시장
         "krIsOpen":  kr["isOpen"],
-        "krSession": kr["session"],
-        "kstStr":    kr["kstStr"],
+        "krSession": kr["session"],        # OPEN / CLOSED / PRE_MARKET / AFTER_HOURS
+        "kstStr":    kr["kstStr"],         # "21:57"
         "krNextOpen": kr["nextOpen"],
     }
 
@@ -212,49 +214,49 @@ def _get_us_status(now_utc: datetime) -> dict:
     now_et  = now_utc.astimezone(NY_TZ)
     t       = now_et.time()
     today   = now_et.date()
-    weekday = now_et.weekday()
 
     # NYSE 캘린더
-    nyse = mcal.get_calendar("NYSE")
-    sched = nyse.schedule(
-        start_date=(today - timedelta(days=7)).isoformat(),
-        end_date=(today + timedelta(days=14)).isoformat(),
-    )
-
-    is_trading_day = today.isoformat() in sched.index.strftime("%Y-%m-%d").tolist()
+    try:
+        nyse = mcal.get_calendar("NYSE")
+        sched = nyse.schedule(
+            start_date=(today - timedelta(days=7)).isoformat(),
+            end_date=(today + timedelta(days=14)).isoformat(),
+        )
+        is_trading_day = today.isoformat() in sched.index.strftime("%Y-%m-%d").tolist()
+    except Exception:
+        # 캘린더 실패 시 요일 기반 fallback (ET 기준 요일)
+        is_trading_day = now_et.weekday() < 5
 
     if is_trading_day:
         if US_MARKET_OPEN <= t < US_MARKET_CLOSE:
-            session = "정규장"
+            session = "OPEN"
             is_open = True
         elif US_PRE_MARKET_OPEN <= t < US_MARKET_OPEN:
-            session = "프리마켓"
+            session = "PRE_MARKET"
             is_open = True
         elif US_MARKET_CLOSE <= t < US_AFTER_HOURS_CLOSE:
-            session = "애프터마켓"
+            session = "AFTER_HOURS"
             is_open = True
         else:
-            session = "장 마감"
+            session = "CLOSED"
             is_open = False
     else:
-        if weekday >= 5:
-            session = "주말 휴장"
-        else:
-            session = "공휴일 휴장"
+        session = "CLOSED"
         is_open = False
 
     # 다음 개장일
-    future_days = sched[sched.index > str(today)]
-    next_open = (
-        future_days.index[0].strftime("%Y-%m-%d")
-        if len(future_days) > 0
-        else "N/A"
-    )
+    next_open = "N/A"
+    try:
+        future_days = sched[sched.index > str(today)]
+        if len(future_days) > 0:
+            next_open = future_days.index[0].strftime("%Y-%m-%d")
+    except Exception:
+        pass
 
     return {
         "isOpen":   is_open,
-        "session":  session,
-        "etStr":    now_et.strftime("%Y-%m-%d %H:%M ET"),
+        "session":  session,                         # ★ 영문 키만
+        "etStr":    now_et.strftime("%H:%M"),         # ★ "HH:MM" 만
         "nextOpen": next_open,
     }
 
@@ -266,7 +268,7 @@ def _get_kr_status(now_utc: datetime) -> dict:
     now_kst = now_utc.astimezone(KST_TZ)
     t       = now_kst.time()
     today   = now_kst.date()
-    weekday = now_kst.weekday()
+    weekday = now_kst.weekday()           # ★ KST 기준 요일 (0=월 ~ 6=일)
 
     try:
         xkrx = mcal.get_calendar("XKRX")
@@ -276,41 +278,38 @@ def _get_kr_status(now_utc: datetime) -> dict:
         )
         is_trading_day = today.isoformat() in sched.index.strftime("%Y-%m-%d").tolist()
     except Exception:
+        # 캘린더 실패 시 KST 요일 기반 fallback
         is_trading_day = weekday < 5
 
     if is_trading_day:
         if KR_MARKET_OPEN <= t < KR_MARKET_CLOSE:
-            session = "정규장"
+            session = "OPEN"
             is_open = True
         elif KR_PRE_MARKET_OPEN <= t < KR_MARKET_OPEN:
-            session = "동시호가"
+            session = "PRE_MARKET"
             is_open = True
         elif KR_MARKET_CLOSE <= t < KR_AFTER_HOURS_CLOSE:
-            session = "시간외"
+            session = "AFTER_HOURS"
             is_open = True
         else:
-            session = "장 마감"
+            session = "CLOSED"
             is_open = False
     else:
-        if weekday >= 5:
-            session = "주말 휴장"
-        else:
-            session = "공휴일 휴장"
+        session = "CLOSED"
         is_open = False
 
+    # 다음 개장일
+    next_open = "N/A"
     try:
         future_days = sched[sched.index > str(today)]
-        next_open = (
-            future_days.index[0].strftime("%Y-%m-%d")
-            if len(future_days) > 0
-            else "N/A"
-        )
+        if len(future_days) > 0:
+            next_open = future_days.index[0].strftime("%Y-%m-%d")
     except Exception:
-        next_open = "N/A"
+        pass
 
     return {
         "isOpen":   is_open,
-        "session":  session,
-        "kstStr":   now_kst.strftime("%Y-%m-%d %H:%M KST"),
+        "session":  session,                          # ★ 영문 키만
+        "kstStr":   now_kst.strftime("%H:%M"),         # ★ "HH:MM" 만
         "nextOpen": next_open,
     }
