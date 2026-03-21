@@ -25,8 +25,6 @@ Step 3. Layer 1 점수 계산 → quant_*_scores, sector_percentile_scores, stoc
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-import patch_numpy_adapter  # NumPy→psycopg2 자동 변환
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -676,7 +674,7 @@ def run_quant_score(calc_date: date = None):
             ok += 1
             grade = score_to_grade(layer1_s["layer1_score"])
             if ok % 20 == 0 or ok <= 3:
-                print(f"[L1] {ticker}: {layer1_s["layer1_score"]} ({grade}) ✓")
+                print(f"[L1] {ticker}: {layer1_s['layer1_score']} ({grade}) ✓")
 
         except Exception as e:
             fail += 1
