@@ -545,9 +545,9 @@ def run_quant_score(calc_date: date = None):
                         net_debt_ebitda_score  = EXCLUDED.net_debt_ebitda_score,
                         total_moat_score       = EXCLUDED.total_moat_score
                 """, (stock_id, calc_date,
-                      moat_s["roic_score"], moat_s["gpa_score"],
-                      moat_s["fcf_margin_score"], moat_s["accruals_quality_score"],
-                      moat_s["net_debt_ebitda_score"], moat_s["total_moat_score"]))
+                      _f(moat_s["roic_score"]), _f(moat_s["gpa_score"]),
+                      _f(moat_s["fcf_margin_score"]), _f(moat_s["accruals_quality_score"]),
+                      _f(moat_s["net_debt_ebitda_score"]), _f(moat_s["total_moat_score"]))
 
                 # quant_value_scores
                 cur.execute("""
@@ -563,9 +563,9 @@ def run_quant_score(calc_date: date = None):
                         peg_score            = EXCLUDED.peg_score,
                         total_value_score    = EXCLUDED.total_value_score
                 """, (stock_id, calc_date,
-                      value_s["earnings_yield_score"], value_s["ev_fcf_score"],
-                      value_s["pb_score"], value_s["peg_score"],
-                      value_s["total_value_score"]))
+                      _f(value_s["earnings_yield_score"]), _f(value_s["ev_fcf_score"]),
+                      _f(value_s["pb_score"]), _f(value_s["peg_score"]),
+                      _f(value_s["total_value_score"]))
 
                 # quant_momentum_scores
                 cur.execute("""
@@ -588,11 +588,11 @@ def run_quant_score(calc_date: date = None):
                         earnings_surprise_score = EXCLUDED.earnings_surprise_score,
                         total_momentum_score    = EXCLUDED.total_momentum_score
                 """, (stock_id, calc_date,
-                      momentum_s["f_score_raw"], momentum_s["f_score_points"],
-                      momentum_s["earnings_revision_ratio"], momentum_s["earnings_revision_score"],
-                      momentum_s["ato_acceleration_score"], momentum_s["op_leverage_score"],
-                      momentum_s["earnings_surprise_pct"], momentum_s["earnings_surprise_score"],
-                      momentum_s["total_momentum_score"]))
+                      _f(momentum_s["f_score_raw"]), _f(momentum_s["f_score_points"]),
+                      _f(momentum_s["earnings_revision_ratio"]), _f(momentum_s["earnings_revision_score"]),
+                      _f(momentum_s["ato_acceleration_score"]), _f(momentum_s["op_leverage_score"]),
+                      _f(momentum_s["earnings_surprise_pct"]), _f(momentum_s["earnings_surprise_score"]),
+                      _f(momentum_s["total_momentum_score"]))
 
                 # quant_stability_scores
                 cur.execute("""
@@ -612,10 +612,10 @@ def run_quant_score(calc_date: date = None):
                         dividend_consistency_score = EXCLUDED.dividend_consistency_score,
                         total_stability_score      = EXCLUDED.total_stability_score
                 """, (stock_id, calc_date,
-                      stability_s["annualized_volatility_250d"], stability_s["low_vol_score"],
-                      stability_s["eps_cv_3y"], stability_s["earnings_stability_score"],
-                      stability_s["dividend_consecutive_years"], stability_s["dividend_consistency_score"],
-                      stability_s["total_stability_score"]))
+                      _f(stability_s["annualized_volatility_250d"]), _f(stability_s["low_vol_score"]),
+                      _f(stability_s["eps_cv_3y"]), _f(stability_s["earnings_stability_score"]),
+                      _f(stability_s["dividend_consecutive_years"]), _f(stability_s["dividend_consistency_score"]),
+                      _f(stability_s["total_stability_score"]))
 
                 # sector_percentile_scores
                 cur.execute("""
@@ -640,12 +640,12 @@ def run_quant_score(calc_date: date = None):
                         eps_stability_percentile   = EXCLUDED.eps_stability_percentile,
                         op_leverage_percentile     = EXCLUDED.op_leverage_percentile
                 """, (stock_id, pct.get("sector_id"), calc_date,
-                      pct.get("roic_percentile"), pct.get("gpa_percentile"),
-                      pct.get("fcf_margin_percentile"), pct.get("ev_ebit_percentile"),
-                      pct.get("ev_fcf_percentile"), pct.get("pb_percentile"),
-                      pct.get("peg_percentile"), pct.get("net_debt_ebitda_percentile"),
-                      pct.get("low_vol_percentile"), pct.get("eps_stability_percentile"),
-                      pct.get("op_leverage_percentile")))
+                      _f(pct.get("roic_percentile")), _f(pct.get("gpa_percentile")),
+                      _f(pct.get("fcf_margin_percentile")), _f(pct.get("ev_ebit_percentile")),
+                      _f(pct.get("ev_fcf_percentile")), _f(pct.get("pb_percentile")),
+                      _f(pct.get("peg_percentile")), _f(pct.get("net_debt_ebitda_percentile")),
+                      _f(pct.get("low_vol_percentile")), _f(pct.get("eps_stability_percentile")),
+                      _f(pct.get("op_leverage_percentile")))
 
                 # stock_layer1_analysis (최종 통합)
                 cur.execute("""
@@ -666,10 +666,10 @@ def run_quant_score(calc_date: date = None):
                         total_score_adj        = EXCLUDED.total_score_adj,
                         updated_at             = NOW()
                 """, (stock_id, calc_date,
-                      layer1_s["moat_score"], layer1_s["value_score"],
-                      layer1_s["momentum_score"], layer1_s["stability_score"],
-                      layer1_s["layer1_raw_score"], layer1_s["layer1_score"],
-                      layer1_s["sector_percentile_rank"], layer1_s["total_score_adj"]))
+                      _f(layer1_s["moat_score"]), _f(layer1_s["value_score"]),
+                      _f(layer1_s["momentum_score"]), _f(layer1_s["stability_score"]),
+                      _f(layer1_s["layer1_raw_score"]), _f(layer1_s["layer1_score"]),
+                      _f(layer1_s["sector_percentile_rank"]), _f(layer1_s["total_score_adj"]))
 
             ok += 1
             grade = score_to_grade(layer1_s["layer1_score"])
