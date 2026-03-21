@@ -97,7 +97,7 @@ def calc_final_weighted_score(
     # ── 신뢰도 ──
     if data_completeness >= 1.0:
         confidence = "HIGH"
-    elif data_completeness >= 0.65:   # 2/3 = 0.6666
+    elif data_completeness >= 0.67:
         confidence = "MEDIUM"
     else:
         confidence = "LOW"
@@ -141,7 +141,7 @@ def calc_conviction_signal(
     reason = ""
 
     # Strong Buy: 최소 2개 레이어 데이터 필요
-    if data_completeness >= 0.65:   # 2/3 = 0.6666
+    if data_completeness >= 0.67:
         if weighted_score >= 72 and l1 >= 65:
             # 추가 조건: L2 또는 L3 중 하나라도 55 이상
             if l2 >= 55 or l3 >= 55:

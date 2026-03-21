@@ -281,7 +281,7 @@ def run_supplement_financials():
             fins = []
             with get_cursor() as cur:
                 cur.execute("""
-                    SELECT fiscal_year, revenue, gross_profit, ebit, net_income,
+                    SELECT fiscal_year, revenue, ebit, net_income,
                            operating_cash_flow, total_assets, total_equity,
                            total_debt, cash_and_equivalents, ebitda,
                            invested_capital, free_cash_flow,
@@ -436,190 +436,63 @@ def run_supplement_financials():
 
 def run_quant_score(calc_date: date = None):
     """
-    Layer 1 점수 계산 — TTM(Trailing Twelve Months) 기반.
-    8분기 QUARTERLY 데이터 → TTM 합산 → 파생지표 → 점수
+    Layer 1 점수 계산.
+    ★ ETF 제외.
+    ★ sector_percentile 섹터별 캐시 (중복 쿼리 제거).
+    ★ Earnings Revision/Surprise 데이터 없을 시 중립점 부여.
     """
     if calc_date is None:
         calc_date = datetime.now().date()
 
     log_id = _log_start("QUANT_SCORE")
-    stocks = _get_active_equities()
+    stocks = _get_active_equities()     # ★ ETF 제외
     ok, fail = 0, 0
+
+    # ★ 섹터별 percentile 캐시 (같은 섹터를 매번 재조회 방지)
     sector_pct_cache = {}
 
     for s in stocks:
         ticker   = s["ticker"]
         stock_id = s["stock_id"]
         sector   = s.get("sector_code") or "45"
-        shares   = _f(s.get("shares_outstanding")) or 0
 
         try:
-            # ── 현재 주가 ──
-            price = 0.0
-            with get_cursor() as cur:
-                cur.execute(
-                    "SELECT current_price FROM stock_prices_realtime WHERE stock_id = %s",
-                    (stock_id,))
-                rt = cur.fetchone()
-                if rt:
-                    price = _f(rt["current_price"]) or 0.0
-
-            market_cap = price * shares if (price and shares) else None
-
-            # ── 최근 8분기 QUARTERLY 조회 ──
-            all_quarters = []
+            # ── 재무 데이터 ──
+            fins = []
             with get_cursor() as cur:
                 cur.execute("""
-                    SELECT fiscal_year, fiscal_quarter,
-                           revenue, ebit, net_income,
-                           operating_cash_flow, free_cash_flow,
-                           gross_profit, ebitda, income_tax, pretax_income,
-                           eps_actual,
-                           total_assets, total_equity, total_debt,
-                           cash_and_equivalents, invested_capital
-                    FROM stock_financials
-                    WHERE stock_id = %s AND report_type = 'QUARTERLY'
-                    ORDER BY fiscal_year DESC, fiscal_quarter DESC
-                    LIMIT 8
+                    SELECT * FROM stock_financials
+                    WHERE stock_id = %s AND report_type = 'ANNUAL'
+                    ORDER BY fiscal_year DESC LIMIT 2
                 """, (stock_id,))
-                all_quarters = [dict(r) for r in cur.fetchall()]
+                fins = [dict(r) for r in cur.fetchall()]
 
-            if len(all_quarters) < 4:
-                print(f"[L1] {ticker} skip: {len(all_quarters)}Q (need 4)")
+            if not fins:
+                print(f"[L1] {ticker} 스킵: 재무데이터 없음")
                 fail += 1
                 continue
 
-            # ── TTM 합산 ──
-            flow_keys = ["revenue", "ebit", "net_income", "operating_cash_flow",
-                         "free_cash_flow", "gross_profit", "ebitda",
-                         "income_tax", "pretax_income", "eps_actual"]
+            fin      = fins[0]
+            fin_prev = fins[1] if len(fins) > 1 else {}
 
-            def _sum_flow(quarters):
-                out = {}
-                for key in flow_keys:
-                    vals = [_f(q.get(key)) for q in quarters if _f(q.get(key)) is not None]
-                    out[key] = sum(vals) if vals else None
-                return out
-
-            # TTM 현재 (최근 4분기)
-            fin = _sum_flow(all_quarters[:4])
-            lq = all_quarters[0]
-            for bk in ["total_assets", "total_equity", "total_debt",
-                       "cash_and_equivalents", "invested_capital"]:
-                fin[bk] = _f(lq.get(bk))
-
-            if not _f(fin.get("revenue")):
-                print(f"[L1] {ticker} skip: no TTM revenue")
-                fail += 1
-                continue
-
-            # TTM 전년 (5~8분기)
-            fin_prev = {}
-            if len(all_quarters) >= 8:
-                fin_prev = _sum_flow(all_quarters[4:8])
-                pq = all_quarters[4]
-                for bk in ["total_assets", "total_equity", "total_debt",
-                           "cash_and_equivalents", "invested_capital"]:
-                    fin_prev[bk] = _f(pq.get(bk))
-            elif len(all_quarters) > 4:
-                fin_prev = _sum_flow(all_quarters[4:])
-                pq = all_quarters[4]
-                for bk in ["total_assets", "total_equity", "total_debt",
-                           "cash_and_equivalents", "invested_capital"]:
-                    fin_prev[bk] = _f(pq.get(bk))
-
-            # ── TTM 파생지표 ──
-            ebit       = _f(fin.get("ebit"))
-            debt       = _f(fin.get("total_debt"))
-            cash       = _f(fin.get("cash_and_equivalents"))
-            equity     = _f(fin.get("total_equity"))
-            fcf        = _f(fin.get("free_cash_flow"))
-            ta         = _f(fin.get("total_assets"))
-            ic         = _f(fin.get("invested_capital"))
-            gp         = _f(fin.get("gross_profit"))
-            rev        = _f(fin.get("revenue"))
-            ni         = _f(fin.get("net_income"))
-            ocf        = _f(fin.get("operating_cash_flow"))
-            ebitda_val = _f(fin.get("ebitda"))
-            income_tax = _f(fin.get("income_tax"))
-            pretax_inc = _f(fin.get("pretax_income"))
-
-            ev = (market_cap + (debt or 0) - (cash or 0)) if market_cap else None
-
-            # ROIC
-            roic = None
-            if ebit is not None and ic and ic != 0:
-                if income_tax is not None and pretax_inc and pretax_inc != 0:
-                    eff_tax = max(0.0, min(abs(income_tax / pretax_inc), 0.50))
-                else:
-                    eff_tax = 0.21
-                roic = round(ebit * (1 - eff_tax) / ic, 4)
-
-            fin["roic"]             = roic
-            fin["gpa"]              = round(gp / ta, 4) if (gp and ta and ta != 0) else None
-            fin["fcf_margin"]       = round(fcf / rev, 4) if (fcf is not None and rev and rev != 0) else None
-            fin["ev_ebit"]          = round(ev / ebit, 2) if (ev and ebit and ebit != 0) else None
-            fin["ev_fcf"]           = round(ev / fcf, 2) if (ev and fcf and fcf != 0) else None
-            fin["pb_ratio"]         = round(market_cap / equity, 2) if (market_cap and equity and equity != 0) else None
-
-            net_debt = ((debt or 0) - (cash or 0)) if debt is not None else None
-            fin["net_debt_ebitda"]  = round(net_debt / ebitda_val, 4) if (net_debt is not None and ebitda_val and ebitda_val != 0) else None
-            fin["accruals_quality"] = round((ni - ocf) / ta, 4) if (ni is not None and ocf is not None and ta and ta != 0) else None
-            fin["asset_turnover"]   = round(rev / ta, 4) if (rev and ta and ta != 0) else None
-
-            # 전년 TTM asset_turnover
-            prev_rev = _f(fin_prev.get("revenue"))
-            prev_ta  = _f(fin_prev.get("total_assets"))
-            fin_prev["asset_turnover"] = round(prev_rev / prev_ta, 4) if (prev_rev and prev_ta and prev_ta != 0) else None
-
-            # ★ Operating Leverage (TTM vs 전년TTM)
-            prev_ebit = _f(fin_prev.get("ebit"))
-            op_lev = None
-            if all(v is not None for v in [ebit, prev_ebit, rev, prev_rev]):
-                if prev_ebit != 0 and prev_rev != 0:
-                    d_ebit = (ebit - prev_ebit) / abs(prev_ebit)
-                    d_rev  = (rev  - prev_rev)  / abs(prev_rev)
-                    if d_rev != 0:
-                        op_lev = round(d_ebit / d_rev, 4)
-            fin["operating_leverage"] = op_lev
-
-            # PEG
-            fin["peg_ratio"] = None
-            if market_cap and ni and ni > 0:
-                per = market_cap / ni
-                prev_ni = _f(fin_prev.get("net_income"))
-                if prev_ni and prev_ni > 0:
-                    eg = ((ni - prev_ni) / abs(prev_ni)) * 100
-                    if eg > 0:
-                        fin["peg_ratio"] = round(per / eg, 4)
-
-            # ★ 분기 EPS 히스토리 (Surprise/Revision)
-            qtr_eps_hist = [_f(q.get("eps_actual")) for q in all_quarters]
-
-            # ★ 롤링 TTM EPS (안정성 CV)
-            all_qtr_eps = []
+            # ── EPS 이력 (3개년) ──
+            eps_hist = []
             with get_cursor() as cur:
                 cur.execute("""
                     SELECT eps_actual FROM stock_financials
-                    WHERE stock_id = %s AND report_type = 'QUARTERLY'
+                    WHERE stock_id = %s AND report_type = 'ANNUAL'
                       AND eps_actual IS NOT NULL
-                    ORDER BY fiscal_year DESC, fiscal_quarter DESC
-                    LIMIT 16
+                    ORDER BY fiscal_year DESC LIMIT 3
                 """, (stock_id,))
-                all_qtr_eps = [_f(r["eps_actual"]) for r in cur.fetchall()]
+                eps_hist = [_f(r["eps_actual"]) for r in cur.fetchall()]
 
-            eps_hist_for_cv = []
-            for idx in range(0, len(all_qtr_eps) - 3):
-                w = all_qtr_eps[idx:idx+4]
-                if all(v is not None for v in w):
-                    eps_hist_for_cv.append(sum(w))
-
-            # ── 가격 250일 ──
+            # ── 가격 데이터 (250일) ──
             price_rows = []
             with get_cursor() as cur:
                 cur.execute("""
                     SELECT trade_date, close_price FROM stock_prices_daily
-                    WHERE stock_id = %s ORDER BY trade_date DESC LIMIT 250
+                    WHERE stock_id = %s
+                    ORDER BY trade_date DESC LIMIT 250
                 """, (stock_id,))
                 price_rows = [dict(r) for r in cur.fetchall()]
 
@@ -627,33 +500,36 @@ def run_quant_score(calc_date: date = None):
             div_years = 0
             with get_cursor() as cur:
                 cur.execute("""
-                    SELECT COUNT(DISTINCT fiscal_year) AS cnt FROM stock_financials
+                    SELECT COUNT(*) AS cnt FROM stock_financials
                     WHERE stock_id = %s AND report_type = 'ANNUAL'
                       AND dividends_paid IS NOT NULL AND dividends_paid < 0
                 """, (stock_id,))
                 row = cur.fetchone()
                 div_years = int(row["cnt"]) if row else 0
 
-            # price_df
+            # ── price_df ──
             price_df = None
             if price_rows:
                 price_df = pd.DataFrame(price_rows)
                 price_df["close_price"] = price_df["close_price"].apply(_f)
 
-            # ── 섹터 백분위 ──
+            # ── 섹터 백분위 (캐시) ──
             if sector not in sector_pct_cache:
                 sector_pct_cache[sector] = _bulk_sector_percentiles(sector)
-            pct = sector_pct_cache[sector].get(stock_id, {})
 
-            # ── 점수 계산 ★ qtr_eps_hist, eps_hist_for_cv 전달 ──
-            moat_s      = calc_moat_scores(fin, pct)
-            value_s     = calc_value_scores(fin, pct)
-            momentum_s  = calc_momentum_scores(fin, fin_prev, pct, qtr_eps_hist)
-            stability_s = calc_stability_scores(price_df, eps_hist_for_cv, div_years, pct)
-            layer1_s    = calc_layer1_score(moat_s, value_s, momentum_s, stability_s, pct)
+            sector_data = sector_pct_cache[sector]
+            pct = sector_data.get(stock_id, {})
+
+            # ── 점수 계산 (섹터 컨텍스트 전달) ──
+            moat_s      = calc_moat_scores(fin, pct, sector_code=sector)
+            value_s     = calc_value_scores(fin, pct, sector_code=sector)
+            momentum_s  = calc_momentum_scores(fin, fin_prev, pct, sector_code=sector)
+            stability_s = calc_stability_scores(price_df, eps_hist, div_years, pct, sector_code=sector)
+            layer1_s    = calc_layer1_score(moat_s, value_s, momentum_s, stability_s, pct, sector_code=sector)
 
             # ── DB 저장 ──
             with get_cursor() as cur:
+                # quant_moat_scores
                 cur.execute("""
                     INSERT INTO quant_moat_scores (
                         stock_id, calc_date,
@@ -673,6 +549,7 @@ def run_quant_score(calc_date: date = None):
                       moat_s["fcf_margin_score"], moat_s["accruals_quality_score"],
                       moat_s["net_debt_ebitda_score"], moat_s["total_moat_score"]))
 
+                # quant_value_scores
                 cur.execute("""
                     INSERT INTO quant_value_scores (
                         stock_id, calc_date,
@@ -690,6 +567,7 @@ def run_quant_score(calc_date: date = None):
                       value_s["pb_score"], value_s["peg_score"],
                       value_s["total_value_score"]))
 
+                # quant_momentum_scores
                 cur.execute("""
                     INSERT INTO quant_momentum_scores (
                         stock_id, calc_date,
@@ -716,6 +594,7 @@ def run_quant_score(calc_date: date = None):
                       momentum_s["earnings_surprise_pct"], momentum_s["earnings_surprise_score"],
                       momentum_s["total_momentum_score"]))
 
+                # quant_stability_scores
                 cur.execute("""
                     INSERT INTO quant_stability_scores (
                         stock_id, calc_date,
@@ -738,6 +617,7 @@ def run_quant_score(calc_date: date = None):
                       stability_s["dividend_consecutive_years"], stability_s["dividend_consistency_score"],
                       stability_s["total_stability_score"]))
 
+                # sector_percentile_scores
                 cur.execute("""
                     INSERT INTO sector_percentile_scores (
                         stock_id, sector_id, calc_date,
@@ -748,7 +628,6 @@ def run_quant_score(calc_date: date = None):
                         eps_stability_percentile, op_leverage_percentile
                     ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (stock_id, calc_date) DO UPDATE SET
-                        sector_id                  = EXCLUDED.sector_id,
                         roic_percentile            = EXCLUDED.roic_percentile,
                         gpa_percentile             = EXCLUDED.gpa_percentile,
                         fcf_margin_percentile      = EXCLUDED.fcf_margin_percentile,
@@ -760,7 +639,7 @@ def run_quant_score(calc_date: date = None):
                         low_vol_percentile         = EXCLUDED.low_vol_percentile,
                         eps_stability_percentile   = EXCLUDED.eps_stability_percentile,
                         op_leverage_percentile     = EXCLUDED.op_leverage_percentile
-                """, (stock_id, s.get("sector_id"), calc_date,
+                """, (stock_id, pct.get("sector_id"), calc_date,
                       pct.get("roic_percentile"), pct.get("gpa_percentile"),
                       pct.get("fcf_margin_percentile"), pct.get("ev_ebit_percentile"),
                       pct.get("ev_fcf_percentile"), pct.get("pb_percentile"),
@@ -768,6 +647,7 @@ def run_quant_score(calc_date: date = None):
                       pct.get("low_vol_percentile"), pct.get("eps_stability_percentile"),
                       pct.get("op_leverage_percentile")))
 
+                # stock_layer1_analysis (최종 통합)
                 cur.execute("""
                     INSERT INTO stock_layer1_analysis (
                         stock_id, calc_date,
@@ -794,18 +674,14 @@ def run_quant_score(calc_date: date = None):
             ok += 1
             grade = score_to_grade(layer1_s["layer1_score"])
             if ok % 20 == 0 or ok <= 3:
-                srp = momentum_s.get("earnings_surprise_pct")
-                olv = fin.get("operating_leverage")
-                print(f"[L1] {ticker}: L1={layer1_s['layer1_score']} "
-                      f"Mom={momentum_s['total_momentum_score']}(surprise={srp},opLev={olv}) "
-                      f"opLevScore={momentum_s['op_leverage_score']} ({grade})")
+                print(f"[L1] {ticker}: {layer1_s["layer1_score"]} ({grade}) ✓")
 
         except Exception as e:
             fail += 1
-            print(f"[L1] {ticker} error: {e}")
+            print(f"[L1] {ticker} 실패: {e}")
 
     _log_end(log_id, "SUCCESS" if fail == 0 else "PARTIAL", ok, fail)
-    print(f"[L1] done: {ok} ok / {fail} fail (TTM)")
+    print(f"[L1] 완료: {ok}성공 / {fail}실패")
     return ok, fail
 
 

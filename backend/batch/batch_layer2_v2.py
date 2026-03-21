@@ -1,6 +1,6 @@
 """
-batch_layer2_v2.py — Layer 2: NLP 감성 + 애널리스트 + 내부자 거래
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+batch_layer2.py — Layer 2: NLP 감성 + 애널리스트 + 내부자 거래
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 매일 06:00 ET 실행 (scheduler.py에서 호출)
 
@@ -12,16 +12,11 @@ batch_layer2_v2.py — Layer 2: NLP 감성 + 애널리스트 + 내부자 거래
   5. Finnhub 내부자 거래 수집  → insider_transactions + insider_signal_aggregates
   6. Layer 2 최종 스코어링     → layer2_scores (★ Final Score가 읽는 핵심 테이블)
 
-v3.1 변경사항:
-  - 스코어링 로직을 utils.layer2_scoring 으로 분리
-  - Sigmoid 기반 정규화 (계단식 제거)
-  - 뉴스: 신뢰도 가중 + 최근성 + 볼륨
-  - 애널리스트: Sigmoid + 컨센서스 모멘텀 + 가격목표
-  - 내부자: 금액 비중 + Sigmoid 정규화
-  - 최종 통합: 동적 가중치 재분배 (결측 → 50 대체 제거)
+가중치: 뉴스 40% + 애널리스트 35% + 내부자 25%
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from l2_time_decay_patch import run_news_daily_aggregate_v2
 
 import requests
 import yfinance as yf
@@ -29,70 +24,76 @@ import numpy as np
 from datetime import datetime, date, timedelta
 from db_pool import get_cursor
 
-# ── v3.1: Layer 2 스코어링 엔진 ──
-from utils.layer2_scoring import (
-    calc_news_sentiment_score,
-    calc_analyst_rating_score,
-    calc_insider_trading_score,
-    calc_layer2_total_score,
-)
-
 # ── API Keys ──
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
+
+# ── Layer 2 가중치 ──
+W_NEWS     = 0.40
+W_ANALYST  = 0.35
+W_INSIDER  = 0.25
 
 # ── FinBERT 모델 (Lazy Load) ──
 _finbert_pipeline = None
 
-
 def _get_finbert():
-    """FinBERT 모델 로드 (최초 1회)"""
+    """FinBERT 파이프라인 Lazy Load (최초 호출 시 1회만 로드)"""
     global _finbert_pipeline
     if _finbert_pipeline is None:
+        print("[FINBERT] 모델 로딩 중... (최초 1회, ~30초)")
         try:
-            from transformers import pipeline as hf_pipeline
-            print("[FinBERT] 모델 로딩 중...")
-            _finbert_pipeline = hf_pipeline(
-                "text-classification",
+            from transformers import pipeline
+            _finbert_pipeline = pipeline(
+                "sentiment-analysis",
                 model="ProsusAI/finbert",
                 tokenizer="ProsusAI/finbert",
-                return_all_scores=True,
+                device=-1,               # CPU 모드
                 truncation=True,
                 max_length=512,
             )
-            print("[FinBERT] ✅ 로드 완료")
+            print("[FINBERT] ✅ 모델 로드 완료")
         except Exception as e:
-            print(f"[FinBERT] ⚠️  로드 실패: {e} → 키워드 폴백 사용")
+            print(f"[FINBERT] ❌ 모델 로드 실패: {e}")
+            print("[FINBERT] fallback → 키워드 기반 분석 사용")
             _finbert_pipeline = "FALLBACK"
     return _finbert_pipeline
 
 
-# ═══════════════════════════════════════════════════════════════
-#  이벤트 분류 + 감성 분석 (변경 없음)
-# ═══════════════════════════════════════════════════════════════
+# ── 이벤트 분류 키워드 (FinBERT 보조) ──
+EVENT_PATTERNS = {
+    "EARNINGS":    ["earnings", "revenue beat", "revenue miss", "eps beat", "eps miss",
+                    "quarterly results", "profit", "financial results"],
+    "M&A":         ["acquisition", "acquire", "merger", "takeover", "buyout", "deal"],
+    "GUIDANCE":    ["guidance", "outlook", "forecast", "raise guidance", "lower guidance",
+                    "full-year", "expects"],
+    "ANALYST":     ["upgrade", "downgrade", "price target", "rating", "initiate",
+                    "overweight", "underweight"],
+    "REGULATORY":  ["fda", "sec", "approval", "regulation", "compliance", "investigation",
+                    "lawsuit", "antitrust"],
+    "MANAGEMENT":  ["ceo", "cfo", "appoint", "resign", "executive", "board"],
+    "BUYBACK":     ["buyback", "repurchase", "share repurchase"],
+    "DIVIDEND":    ["dividend", "payout", "yield increase", "dividend cut"],
+}
 
-EVENT_KEYWORDS = {
-    "earnings":    ["earnings", "revenue", "profit", "EPS", "quarterly results"],
-    "dividend":    ["dividend", "payout", "yield"],
-    "fda":         ["FDA", "approval", "clinical trial", "phase"],
-    "merger":      ["merger", "acquisition", "M&A", "takeover", "buyout"],
-    "legal":       ["lawsuit", "SEC", "investigation", "settlement", "fraud"],
-    "management":  ["CEO", "CFO", "appointed", "resigned", "board"],
+EVENT_WEIGHT = {
+    "M&A": 1.3, "EARNINGS": 1.2, "GUIDANCE": 1.15, "REGULATORY": 1.2,
+    "ANALYST": 1.1, "MANAGEMENT": 1.05, "BUYBACK": 1.05, "DIVIDEND": 1.0,
+    "GENERAL": 1.0,
 }
 
 
 def _classify_event(text: str) -> str:
-    """뉴스 텍스트에서 이벤트 유형 분류"""
+    """뉴스 텍스트에서 이벤트 유형 분류 (규칙 기반)"""
     text_lower = text.lower()
-    for event_type, keywords in EVENT_KEYWORDS.items():
-        if any(kw.lower() in text_lower for kw in keywords):
+    for event_type, keywords in EVENT_PATTERNS.items():
+        if any(kw in text_lower for kw in keywords):
             return event_type
-    return "general"
+    return "GENERAL"
 
 
 def _analyze_sentiment(text: str) -> tuple:
     """
-    FinBERT 감성 분석 → (score, label, confidence)
-    score: -1 ~ +1
+    FinBERT 감성 분석 (fallback: 키워드 기반)
+    Returns: (score: float [-1~+1], label: str, confidence: float [0~1])
     """
     model = _get_finbert()
 
@@ -100,61 +101,50 @@ def _analyze_sentiment(text: str) -> tuple:
         return _keyword_sentiment(text)
 
     try:
-        results = model(text[:512])
-        if results and isinstance(results[0], list):
-            scores_dict = {r["label"]: r["score"] for r in results[0]}
-        else:
-            scores_dict = {r["label"]: r["score"] for r in results}
+        result = model(text[:512])[0]
+        label_raw  = result["label"].lower()     # positive / negative / neutral
+        confidence = round(result["score"], 4)
 
-        pos = scores_dict.get("positive", 0)
-        neg = scores_dict.get("negative", 0)
-        neu = scores_dict.get("neutral", 0)
-
-        score = pos - neg  # -1 ~ +1
-        confidence = max(pos, neg, neu)
-
-        if pos > neg and pos > neu:
+        if label_raw == "positive":
+            score = confidence
             label = "POSITIVE"
-        elif neg > pos and neg > neu:
+        elif label_raw == "negative":
+            score = -confidence
             label = "NEGATIVE"
         else:
+            score = 0.0
             label = "NEUTRAL"
 
-        return round(score, 4), label, round(confidence, 4)
+        return (round(score, 4), label, confidence)
 
     except Exception as e:
-        print(f"[FinBERT] 추론 실패: {e}")
+        print(f"[FINBERT] 추론 실패, fallback 사용: {e}")
         return _keyword_sentiment(text)
 
 
 def _keyword_sentiment(text: str) -> tuple:
-    """키워드 기반 폴백 감성 분석"""
-    text_lower = text.lower()
-    pos_words = ["surge", "jump", "beat", "upgrade", "growth", "strong", "record",
-                 "profit", "bullish", "outperform", "rally"]
-    neg_words = ["drop", "fall", "miss", "downgrade", "loss", "weak", "decline",
-                 "bearish", "underperform", "crash", "layoff", "fraud"]
+    """키워드 기반 감성 분석 (FinBERT 로드 실패 시 fallback)"""
+    POSITIVE = {"beat","exceed","upgrade","outperform","buy","growth",
+                "record","strong","raise","bullish","profit","surge",
+                "soar","breakthrough","approval","innovation","accelerate"}
+    NEGATIVE = {"miss","downgrade","underperform","sell","decline",
+                "cut","weak","bearish","loss","fall","disappoint",
+                "warning","lawsuit","investigation","recall","default"}
 
-    pos_count = sum(1 for w in pos_words if w in text_lower)
-    neg_count = sum(1 for w in neg_words if w in text_lower)
+    words = set(text.lower().split())
+    pos = len(words & POSITIVE)
+    neg = len(words & NEGATIVE)
 
-    total = pos_count + neg_count
-    if total == 0:
-        return 0.0, "NEUTRAL", 0.3
-
-    score = (pos_count - neg_count) / total
-    label = "POSITIVE" if score > 0.1 else ("NEGATIVE" if score < -0.1 else "NEUTRAL")
-    confidence = min(total / 5, 1.0) * 0.6  # 키워드 방식은 신뢰도 낮음
-
-    return round(score, 4), label, round(confidence, 4)
+    if pos > neg:   return (0.5, "POSITIVE", 0.55)
+    if neg > pos:   return (-0.5, "NEGATIVE", 0.55)
+    return (0.0, "NEUTRAL", 0.50)
 
 
 # ═══════════════════════════════════════════════════════════════
-#  1. 뉴스 수집 (Finnhub) — 변경 없음
+#  1. FINNHUB 뉴스 수집
 # ═══════════════════════════════════════════════════════════════
-
 def run_news_collection():
-    """Finnhub에서 종목별 최신 뉴스 수집 → news_articles"""
+    """Finnhub 뉴스 수집 → news_articles"""
     if not FINNHUB_API_KEY:
         print("[NEWS] ⚠️  FINNHUB_API_KEY 없음 - 스킵")
         return
@@ -163,10 +153,9 @@ def run_news_collection():
         cur.execute("SELECT stock_id, ticker FROM stocks WHERE is_active = TRUE")
         stocks = [dict(r) for r in cur.fetchall()]
 
-    from_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
-    to_date = datetime.now().strftime("%Y-%m-%d")
-
-    ok, skip, fail = 0, 0, 0
+    ok, fail = 0, 0
+    from_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    to_date   = datetime.now().strftime("%Y-%m-%d")
 
     for s in stocks:
         stock_id, ticker = s["stock_id"], s["ticker"]
@@ -178,120 +167,126 @@ def run_news_collection():
                 timeout=10
             )
             if resp.status_code != 200:
-                fail += 1
                 continue
 
             articles = resp.json()
-            if not articles:
-                skip += 1
-                continue
+            inserted = 0
 
-            for art in articles[:10]:  # 종목당 최대 10건
+            for art in articles[:10]:
+                url   = art.get("url", "")
                 title = art.get("headline", "")
-                url = art.get("url", "")
-                if not title or not url:
+                if not url or not title:
                     continue
-
-                published = datetime.fromtimestamp(art.get("datetime", 0))
-                source = art.get("source", "")
-                snippet = art.get("summary", "")[:500]
 
                 with get_cursor() as cur:
                     cur.execute("""
                         INSERT INTO news_articles (
-                            stock_id, published_at, title, content_snippet,
-                            url, source_name, data_source
-                        ) VALUES (%s, %s, %s, %s, %s, %s, 'FINNHUB')
+                            stock_id, published_at, title,
+                            content_snippet, url, source_name, data_source
+                        ) VALUES (%s, to_timestamp(%s), %s, %s, %s, %s, 'FINNHUB')
                         ON CONFLICT (url) DO NOTHING
-                    """, (stock_id, published, title, snippet, url, source))
+                        RETURNING news_id
+                    """, (stock_id, art.get("datetime"), title,
+                          art.get("summary", "")[:500], url,
+                          art.get("source", "")))
+                    if cur.fetchone():
+                        inserted += 1
 
             ok += 1
+            if inserted > 0:
+                print(f"[NEWS] {ticker}: {inserted}건 수집")
+
         except Exception as e:
             fail += 1
-            if fail <= 5:
-                print(f"[NEWS] {ticker} 실패: {e}")
+            print(f"[NEWS] {ticker} 실패: {e}")
 
-    print(f"[NEWS] ✅ 완료: {ok}성공 / {skip}스킵 / {fail}실패")
+    print(f"[NEWS] ✅ 완료: {ok}성공 / {fail}실패 (전체 {len(stocks)}종목)")
 
 
 # ═══════════════════════════════════════════════════════════════
-#  2. FinBERT 감성 분석 — 변경 없음
+#  2. FINBERT 감성 분석 (미분석 뉴스 대상)
 # ═══════════════════════════════════════════════════════════════
-
 def run_finbert_analysis():
-    """미분석 뉴스에 FinBERT 감성 분석 수행 → news_sentiment_scores"""
+    """미분석 뉴스에 FinBERT 감성 분석 실행 → news_sentiment_scores"""
+
+    # 아직 sentiment가 없는 뉴스 조회
     with get_cursor() as cur:
         cur.execute("""
-            SELECT a.news_id, a.stock_id, a.title, a.content_snippet
-            FROM news_articles a
+            SELECT a.news_id, a.stock_id, a.title,
+                   COALESCE(a.content_snippet, '') AS snippet
+            FROM   news_articles a
             LEFT JOIN news_sentiment_scores s ON a.news_id = s.news_id
-            WHERE s.sentiment_id IS NULL
-              AND a.published_at >= NOW() - INTERVAL '48 hours'
+            WHERE  s.sentiment_id IS NULL
+              AND  a.published_at >= NOW() - INTERVAL '3 days'
             ORDER BY a.published_at DESC
             LIMIT 500
         """)
-        pending = [dict(r) for r in cur.fetchall()]
+        unscored = [dict(r) for r in cur.fetchall()]
 
-    if not pending:
-        print("[FINBERT] 분석 대기 뉴스 없음")
+    if not unscored:
+        print("[FINBERT] 분석할 미분석 뉴스 없음")
         return
 
-    print(f"[FINBERT] 분석 대기: {len(pending)}건")
+    print(f"[FINBERT] {len(unscored)}건 분석 시작...")
     ok, fail = 0, 0
 
-    for art in pending:
+    for art in unscored:
         try:
+            # 제목 + 본문 snippet 결합 (FinBERT는 512 토큰 제한)
             text = art["title"]
-            if art.get("content_snippet"):
-                text += ". " + art["content_snippet"][:300]
+            if art["snippet"]:
+                text += ". " + art["snippet"][:300]
 
             score, label, confidence = _analyze_sentiment(text)
             event_type = _classify_event(text)
 
-            model_ver = "finbert-v1+event"
-            if _finbert_pipeline == "FALLBACK":
-                model_ver = "keyword-fallback"
+            # 이벤트 가중치 적용
+            event_w = EVENT_WEIGHT.get(event_type, 1.0)
+            adjusted_score = round(max(-1, min(1, score * event_w)), 4)
 
             with get_cursor() as cur:
                 cur.execute("""
                     INSERT INTO news_sentiment_scores (
-                        news_id, stock_id, sentiment_score, sentiment_label,
-                        confidence, model_version, analyzed_at
+                        news_id, stock_id, sentiment_score,
+                        sentiment_label, confidence, model_version, analyzed_at
                     ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (news_id) DO NOTHING
+                    ON CONFLICT (news_id) DO UPDATE SET
+                        sentiment_score = EXCLUDED.sentiment_score,
+                        sentiment_label = EXCLUDED.sentiment_label,
+                        confidence      = EXCLUDED.confidence,
+                        model_version   = EXCLUDED.model_version,
+                        analyzed_at     = NOW()
                 """, (art["news_id"], art["stock_id"],
-                      score, label, confidence, model_ver))
+                      adjusted_score, label, confidence,
+                      'finbert-v1+event'))
 
             ok += 1
         except Exception as e:
             fail += 1
-            if fail <= 5:
-                print(f"[FINBERT] news_id={art['news_id']} 실패: {e}")
+            if fail <= 3:
+                print(f"[FINBERT] 분석 실패 (news_id={art['news_id']}): {e}")
 
     print(f"[FINBERT] ✅ 완료: {ok}건 분석 / {fail}건 실패")
 
 
 # ═══════════════════════════════════════════════════════════════
-#  3. 일별 뉴스 감성 집계 — v3.1 스코어링 적용 ★
+#  3. 일별 뉴스 감성 집계 → news_sentiment_daily
 # ═══════════════════════════════════════════════════════════════
-
 def run_news_daily_aggregate():
     """오늘 기준 종목별 뉴스 감성 집계 → news_sentiment_daily + layer2_news_score"""
 
     today = date.today()
 
     with get_cursor() as cur:
-        # v3.1: confidence, 24h 비율도 함께 조회
+        # 최근 24시간 뉴스 감성 집계
         cur.execute("""
             SELECT
                 a.stock_id,
                 ROUND(AVG(s.sentiment_score), 4) AS avg_score,
-                ROUND(AVG(s.confidence), 4) AS avg_confidence,
                 COUNT(*) FILTER (WHERE s.sentiment_label = 'POSITIVE') AS pos_cnt,
                 COUNT(*) FILTER (WHERE s.sentiment_label = 'NEGATIVE') AS neg_cnt,
                 COUNT(*) FILTER (WHERE s.sentiment_label = 'NEUTRAL')  AS neu_cnt,
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE a.published_at >= NOW() - INTERVAL '24 hours') AS recent_24h
+                COUNT(*) AS total
             FROM news_articles a
             JOIN news_sentiment_scores s ON a.news_id = s.news_id
             WHERE a.published_at >= NOW() - INTERVAL '48 hours'
@@ -305,20 +300,10 @@ def run_news_daily_aggregate():
 
     ok = 0
     for r in rows:
-        total = int(r["total"]) if r["total"] else 0
-        recent_24h = int(r["recent_24h"]) if r["recent_24h"] else 0
-
-        # ★ v3.1: layer2_scoring 엔진 사용
-        result = calc_news_sentiment_score(
-            avg_sentiment=float(r["avg_score"]) if r["avg_score"] else 0.0,
-            total_articles=total,
-            positive_count=int(r["pos_cnt"]) if r["pos_cnt"] else 0,
-            negative_count=int(r["neg_cnt"]) if r["neg_cnt"] else 0,
-            neutral_count=int(r["neu_cnt"]) if r["neu_cnt"] else 0,
-            avg_confidence=float(r["avg_confidence"]) if r["avg_confidence"] else 0.5,
-            recent_24h_ratio=recent_24h / total if total > 0 else 0.5,
-        )
-        news_score = result["news_score"]
+        # avg_sentiment (-1 ~ +1) → news_score (0 ~ 100)
+        avg = float(r["avg_score"]) if r["avg_score"] else 0.0
+        news_score = round((avg + 1) * 50, 2)       # -1→0, 0→50, +1→100
+        news_score = max(0, min(100, news_score))
 
         with get_cursor() as cur:
             cur.execute("""
@@ -334,19 +319,17 @@ def run_news_daily_aggregate():
                     neutral_count       = EXCLUDED.neutral_count,
                     total_articles      = EXCLUDED.total_articles,
                     layer2_news_score   = EXCLUDED.layer2_news_score
-            """, (r["stock_id"], today,
-                  float(r["avg_score"]) if r["avg_score"] else 0.0,
+            """, (r["stock_id"], today, avg,
                   r["pos_cnt"], r["neg_cnt"], r["neu_cnt"],
-                  total, news_score))
+                  r["total"], news_score))
         ok += 1
 
     print(f"[NEWS-AGG] ✅ {ok}종목 일별 집계 완료")
 
 
 # ═══════════════════════════════════════════════════════════════
-#  4. 애널리스트 레이팅 수집 + 스코어링 — v3.1 ★
+#  4. 애널리스트 레이팅 수집 + 스코어링
 # ═══════════════════════════════════════════════════════════════
-
 def run_analyst_ratings():
     """yfinance 애널리스트 레이팅 수집 → analyst_rating_aggregates"""
 
@@ -391,29 +374,26 @@ def run_analyst_ratings():
 
             buy_pct  = round(buy_count / total * 100, 2)
             sell_pct = round(sell_count / total * 100, 2)
+
+            # ── 애널리스트 스코어링 (0~100) ──
+            # Component 1: Buy 비율 (40%)
+            buy_score = buy_pct
+
+            # Component 2: Upgrade 모멘텀 (30%)
             net_upgrade = upgrade_count - downgrade_count
+            upgrade_momentum = 50 + (net_upgrade / max(total, 1)) * 100
+            upgrade_momentum = max(0, min(100, upgrade_momentum))
 
-            # ★ v3.1: layer2_scoring 엔진 사용
-            # 가격목표 조회 (가용하면)
-            target_price = None
-            current_price = None
-            try:
-                info = yf_ticker.info
-                target_price = info.get("targetMeanPrice")
-                current_price = info.get("currentPrice") or info.get("regularMarketPrice")
-            except Exception:
-                pass
+            # Component 3: 커버리지 강도 (30%) — 많은 애널리스트가 관심 = 긍정
+            coverage_bonus = min(total / 20, 1.0) * 100
 
-            result = calc_analyst_rating_score(
-                buy_count=buy_count,
-                hold_count=hold_count,
-                sell_count=sell_count,
-                upgrade_count_90d=upgrade_count,
-                downgrade_count_90d=downgrade_count,
-                target_price=target_price,
-                current_price=current_price,
+            analyst_score = round(
+                buy_score * 0.40 +
+                upgrade_momentum * 0.30 +
+                coverage_bonus * 0.30,
+                2
             )
-            analyst_score = result["analyst_score"]
+            analyst_score = max(0, min(100, analyst_score))
 
             with get_cursor() as cur:
                 cur.execute("""
@@ -451,11 +431,9 @@ def run_analyst_ratings():
 
 
 # ═══════════════════════════════════════════════════════════════
-#  5. 내부자 거래 수집 + 스코어링 (Finnhub) — v3.1 ★
+#  5. 내부자 거래 수집 + 스코어링 (Finnhub)
 # ═══════════════════════════════════════════════════════════════
-
 C_LEVEL_TITLES = {"ceo", "cfo", "coo", "cto", "president", "chief"}
-
 
 def _is_c_level(title: str) -> bool:
     return any(t in title.lower() for t in C_LEVEL_TITLES) if title else False
@@ -491,42 +469,26 @@ def run_insider_collection():
             recent = [t for t in data if (t.get("transactionDate") or "") >= cutoff]
 
             c_level_buy_value = 0.0
-            c_level_sell_value = 0.0
-            c_level_buying = 0
-            c_level_selling = 0
             insider_buy_count = 0
             insider_sell_count = 0
-            total_buy_value = 0.0
-            total_sell_value = 0.0
+            c_level_buying = 0
             large_sell_alert = False
-            last_buy_date = None
-            last_sell_date = None
 
             for txn in recent[:30]:
                 name   = txn.get("name", "Unknown")
-                change = txn.get("change", 0)
-                price  = txn.get("transactionPrice", 0) or 0
-                value  = abs(price * change) if price else 0
+                change = txn.get("change", 0)             # + = buy, - = sell
+                value  = abs(txn.get("transactionPrice", 0) * change) if txn.get("transactionPrice") else 0
                 txn_date = txn.get("transactionDate", "")
                 is_c = _is_c_level(name)
 
                 if change > 0:
                     insider_buy_count += 1
-                    total_buy_value += value
                     if is_c:
                         c_level_buy_value += value
                         c_level_buying += 1
-                    if not last_buy_date or txn_date > last_buy_date:
-                        last_buy_date = txn_date
                 elif change < 0:
                     insider_sell_count += 1
-                    total_sell_value += value
-                    if is_c:
-                        c_level_sell_value += value
-                        c_level_selling += 1
-                    if not last_sell_date or txn_date > last_sell_date:
-                        last_sell_date = txn_date
-                    # CEO 대규모 매도 체크
+                    # CEO 대규모 매도 체크 (설계서: 지분 20%+ 매도 → 경보)
                     ownership_pct = txn.get("share", 0)
                     if is_c and "ceo" in name.lower() and ownership_pct and ownership_pct > 20:
                         large_sell_alert = True
@@ -544,40 +506,28 @@ def run_insider_collection():
                         ON CONFLICT DO NOTHING
                     """, (stock_id, name, "",
                           is_c, txn_date, txn_type,
-                          abs(change), price if price else None,
+                          abs(change), txn.get("transactionPrice"),
                           round(value, 2),
                           txn.get("filingDate")))
 
-            # ★ v3.1: layer2_scoring 엔진 사용
-            # 최근 매수/매도 일수 계산
-            days_buy = None
-            days_sell = None
-            if last_buy_date:
-                try:
-                    days_buy = (date.today() - datetime.strptime(last_buy_date, "%Y-%m-%d").date()).days
-                except Exception:
-                    pass
-            if last_sell_date:
-                try:
-                    days_sell = (date.today() - datetime.strptime(last_sell_date, "%Y-%m-%d").date()).days
-                except Exception:
-                    pass
+            # ── 내부자 스코어링 (0~100) ──
+            insider_score = 50.0     # 기본 중립
 
-            result = calc_insider_trading_score(
-                c_level_buy_count=c_level_buying,
-                c_level_sell_count=c_level_selling,
-                c_level_buy_value=c_level_buy_value,
-                c_level_sell_value=c_level_sell_value,
-                insider_buy_count=insider_buy_count,
-                insider_sell_count=insider_sell_count,
-                total_buy_value=total_buy_value,
-                total_sell_value=total_sell_value,
-                large_sell_alert=large_sell_alert,
-                market_cap=None,  # yfinance에서 별도 조회 가능
-                days_since_last_buy=days_buy,
-                days_since_last_sell=days_sell,
-            )
-            insider_score = result["insider_score"]
+            # C-레벨 매수 보너스
+            insider_score += c_level_buying * 15              # CEO/CFO 매수 1건 = +15
+
+            # 임원 3명+ 동시 매수 (30일) → 집단 매수 보너스
+            if insider_buy_count >= 3:
+                insider_score += 20
+
+            # 일반 매도 페널티
+            insider_score -= insider_sell_count * 3
+
+            # CEO 대규모 매도 → 강력 페널티
+            if large_sell_alert:
+                insider_score -= 40
+
+            insider_score = max(0, min(100, round(insider_score, 2)))
 
             # 시그널 판별
             if insider_score >= 70:
@@ -616,14 +566,14 @@ def run_insider_collection():
 
 
 # ═══════════════════════════════════════════════════════════════
-#  6. ★★★ LAYER 2 최종 스코어링 → layer2_scores — v3.1 ★
+#  6. ★★★ LAYER 2 최종 스코어링 → layer2_scores
 # ═══════════════════════════════════════════════════════════════
-
 def run_layer2_scoring():
     """
     3개 서브 점수 통합 → layer2_scores INSERT
-
-    v3.1: 동적 가중치 재분배 (결측 → 50 대체 제거)
+    
+    layer2_total = news × 40% + analyst × 35% + insider × 25%
+    
     ★ batch_final_score.py가 이 테이블을 읽어서 Final Score를 계산함
     """
     today = date.today()
@@ -641,9 +591,6 @@ def run_layer2_scoring():
         news_score    = None
         analyst_score = None
         insider_score = None
-        news_available    = False
-        analyst_available = False
-        insider_available = False
 
         with get_cursor() as cur:
             # 뉴스 감성 점수 (최근 3일 내)
@@ -653,9 +600,8 @@ def run_layer2_scoring():
                 ORDER BY sentiment_date DESC LIMIT 1
             """, (stock_id, today))
             row = cur.fetchone()
-            if row and row["layer2_news_score"] is not None:
-                news_score = float(row["layer2_news_score"])
-                news_available = True
+            if row:
+                news_score = float(row["layer2_news_score"]) if row["layer2_news_score"] else None
 
             # 애널리스트 점수 (최근 7일 내)
             cur.execute("""
@@ -664,9 +610,8 @@ def run_layer2_scoring():
                 ORDER BY calc_date DESC LIMIT 1
             """, (stock_id, today))
             row = cur.fetchone()
-            if row and row["layer2_analyst_score"] is not None:
-                analyst_score = float(row["layer2_analyst_score"])
-                analyst_available = True
+            if row:
+                analyst_score = float(row["layer2_analyst_score"]) if row["layer2_analyst_score"] else None
 
             # 내부자 거래 점수 (최근 7일 내)
             cur.execute("""
@@ -675,23 +620,18 @@ def run_layer2_scoring():
                 ORDER BY calc_date DESC LIMIT 1
             """, (stock_id, today))
             row = cur.fetchone()
-            if row and row["layer2_insider_score"] is not None:
-                insider_score = float(row["layer2_insider_score"])
-                insider_available = True
+            if row:
+                insider_score = float(row["layer2_insider_score"]) if row["layer2_insider_score"] else None
 
-        # ★ v3.1: 동적 가중 통합 점수 계산
-        result = calc_layer2_total_score(
-            news_score=news_score,
-            analyst_score=analyst_score,
-            insider_score=insider_score,
-            news_data_available=news_available,
-            analyst_data_available=analyst_available,
-            insider_data_available=insider_available,
-        )
-        layer2_total = result["layer2_total_score"]
-        data_quality = result["layer2_data_quality"]
+        # ── 최종 통합 점수 계산 ──
+        # 데이터 없는 서브는 50(중립)으로 대체
+        ns = news_score    if news_score    is not None else 50.0
+        as_ = analyst_score if analyst_score is not None else 50.0
+        is_ = insider_score if insider_score is not None else 50.0
 
-        # DB INSERT 시 서브점수가 None이면 None 유지 (v3.0 처럼 50 대체 X)
+        layer2_total = round(ns * W_NEWS + as_ * W_ANALYST + is_ * W_INSIDER, 2)
+        layer2_total = max(0, min(100, layer2_total))
+
         with get_cursor() as cur:
             cur.execute("""
                 INSERT INTO layer2_scores (
@@ -707,22 +647,21 @@ def run_layer2_scoring():
                     insider_signal_score = EXCLUDED.insider_signal_score,
                     layer2_total_score   = EXCLUDED.layer2_total_score
             """, (stock_id, today,
-                  news_score,     # None이면 NULL
-                  None,           # earnings_call_score (Phase 3)
-                  analyst_score,  # None이면 NULL
-                  insider_score,  # None이면 NULL
+                  ns,    # news_sentiment_score
+                  None,  # earnings_call_score (Phase 3)
+                  as_,   # analyst_rating_score
+                  is_,   # insider_signal_score
                   layer2_total))
 
         ok += 1
 
     print(f"[L2-SCORE] ✅ {ok}종목 Layer 2 점수 산출 완료")
-    print(f"[L2-SCORE] v3.1 동적 가중 적용 (데이터 가용성 기반)")
+    print(f"[L2-SCORE] 가중치: News({W_NEWS:.0%}) + Analyst({W_ANALYST:.0%}) + Insider({W_INSIDER:.0%})")
 
 
 # ═══════════════════════════════════════════════════════════════
 #  전체 파이프라인 실행
 # ═══════════════════════════════════════════════════════════════
-
 def run_all():
     """Layer 2 전체 파이프라인 (scheduler에서 호출)"""
     print("=" * 60)
@@ -739,7 +678,7 @@ def run_all():
 
     # Step 3: 일별 감성 집계
     print("\n── Step 3/6: 일별 뉴스 감성 집계 ──")
-    run_news_daily_aggregate()
+    run_news_daily_aggregate_v2()
 
     # Step 4: 애널리스트 레이팅
     print("\n── Step 4/6: 애널리스트 레이팅 수집 ──")
