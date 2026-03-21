@@ -73,7 +73,7 @@ export default function MarketMarquee() {
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       style={{
-        background: "#0a0a0a",
+        background: C.bgDeeper,
         borderBottom: `1px solid ${C.border}`,
         height: 30,
         // 중요: 가로 스크롤 방지를 위한 핵심 설정
@@ -88,12 +88,12 @@ export default function MarketMarquee() {
       {/* 좌우 페이드 마스크 */}
       <div style={{
         position: "absolute", left: 0, top: 0, bottom: 0, width: 40, zIndex: 2,
-        background: "linear-gradient(to right, #0a0a0a, transparent)",
+        background: `linear-gradient(to right, ${C.bgDeeper}, transparent)`,
         pointerEvents: "none",
       }} />
       <div style={{
         position: "absolute", right: 0, top: 0, bottom: 0, width: 40, zIndex: 2,
-        background: "linear-gradient(to left, #0a0a0a, transparent)",
+        background: `linear-gradient(to left, ${C.bgDeeper}, transparent)`,
         pointerEvents: "none",
       }} />
 
@@ -130,7 +130,7 @@ export default function MarketMarquee() {
             {item.chgRaw != null && (
               <span style={{
                 fontFamily: FONT.mono, fontSize: 10, fontWeight: 600,
-                color: item.up ? C.cyan : C.scarlet,
+                color: item.up ? C.cyan : C.down,
               }}>
                 {item.up ? "▲" : "▼"} {item.chg}
               </span>

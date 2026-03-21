@@ -10,7 +10,7 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { C, SECTORS, MOCK_STOCKS, gradeColor, gradeLabel, sectorByBackendName } from "../../styles/tokens";
+import { C, SECTORS, MOCK_STOCKS, gradeColor, gradeLabel, gradeTextColor, chgColor, signalColor, sectorByBackendName } from "../../styles/tokens";
 import { DeleteConfirmModal } from "./Modals";
 import api from "../../api";
 
@@ -215,8 +215,8 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
         {checked.size > 0 && (
           <button onClick={() => setShowDelete(true)} style={{
             fontFamily: "'Inter', sans-serif", fontSize: 12,
-            color: C.red, background: "none",
-            border: `1px solid ${C.red}55`,
+            color: C.down, background: "none",
+            border: `1px solid ${C.down}55`,
             borderRadius: 3, padding: "5px 11px", cursor: "pointer",
             whiteSpace: "nowrap", flexShrink: 0, marginLeft: "auto",
           }}>
@@ -232,7 +232,7 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
         <div style={{
           display: "flex", alignItems: "center",
           padding: "0 16px", height: 34,
-          background: "#050505",
+          background: C.bgDeeper,
           borderBottom: `1px solid ${C.border}`,
           flexShrink: 0,
           minWidth: "fit-content",
@@ -278,7 +278,7 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
         borderTop: `1px solid ${C.border}`,
         padding: "5px 16px",
         fontSize: 11, color: C.textMuted,
-        background: "#050505",
+        background: C.bgDeeper,
         display: "flex", justifyContent: "space-between", alignItems: "center",
         flexShrink: 0,
       }}>
@@ -338,11 +338,7 @@ function Row({ row, odd, checked, onCheck, onClick }) {
   const gc    = gradeColor(row.grade);
   const label = gradeLabel(row.grade);
 
-  const sigColor =
-    row.grade === "S"                         ? C.cyan   :
-    row.grade === "A"  || row.grade === "A+"  ? C.yolk   :
-    row.grade === "B+" || row.grade === "B"   ? C.primary:
-    row.grade === "C"                         ? C.scarlet: C.red;
+  const sigColor = signalColor(row.grade);
 
   // null 안전 렌더
   const fmtPrice = (v) => v != null
@@ -357,7 +353,7 @@ function Row({ row, odd, checked, onCheck, onClick }) {
       style={{
         display: "flex", alignItems: "center",
         padding: "0 16px", height: 46,
-        background: checked ? `${C.primary}12` : rowHov ? "#333333" : odd ? "#030303" : C.bgDeep,
+        background: checked ? `${C.primary}12` : rowHov ? C.borderHi : odd ? C.bgDeeper : C.bgDeep,
         borderBottom: `1px solid ${C.border}22`,
         cursor: "pointer", transition: "background 0.1s",
         fontFamily: "'Inter', sans-serif",
@@ -412,7 +408,7 @@ function Row({ row, odd, checked, onCheck, onClick }) {
       <div style={{ width: 68, minWidth: 68, flexShrink: 0, padding: "0 4px" }}>
         <span style={{
           fontSize: 12, fontWeight: 600,
-          color: (row.chg ?? 0) > 0 ? C.cyan : (row.chg ?? 0) < 0 ? C.scarlet : C.textMuted,
+          color: chgColor(row.chg),
         }}>
           {fmtChg(row.chg)}
         </span>
@@ -458,7 +454,7 @@ function Row({ row, odd, checked, onCheck, onClick }) {
 
 function MiniBar({ value }) {
   return (
-    <div style={{ width: "100%", height: 2, background: "#2a2a2a", borderRadius: 1, overflow: "hidden" }}>
+    <div style={{ width: "100%", height: 2, background: C.surfaceHi, borderRadius: 1, overflow: "hidden" }}>
       <div style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, height: "100%", background: C.gaugebar, borderRadius: 1 }} />
     </div>
   );

@@ -25,7 +25,7 @@ export default function Topbar({ activeTab, onTabChange }) {
     <>
       <div style={{
         height: 52,
-        background: "#0a0a0a",
+        background: C.bgDeeper,
         borderBottom: `1px solid ${C.border}`,
         display: "flex",
         alignItems: "center",
@@ -82,7 +82,7 @@ export default function Topbar({ activeTab, onTabChange }) {
               whiteSpace: "nowrap",
               transition: "background 0.15s",
             }}
-            onMouseEnter={e => e.currentTarget.style.background = "#AD1B02"}
+            onMouseEnter={e => e.currentTarget.style.background = C.primary}
             onMouseLeave={e => e.currentTarget.style.background = C.primary}
           >
             + ADD TICKER

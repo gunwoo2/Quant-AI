@@ -1,40 +1,97 @@
-/* global.css — QUANT AI Global Styles */
+/* global.css — QUANT AI v2
+ *
+ * ★ CSS 변수는 tokens.js C 객체와 1:1 동기화
+ * ★ 상승/하락: 한국식 (빨강/파랑)
+ * ★ 등급: 오렌지 채도 그라데이션
+ */
 
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  --cyan:      #00F5FF;
-  --black:     #000000;
-  --orange:    #D85604;
-  --scarlet:   #AD1B02;
-  --golden:    #E88D14;
-  --yolk:      #F3BE26;
-  --pink:      #E669A2;
-  --bg-dark:   #0f0f0f;
-  --card-bg:   #1a1a1a;
-  --border:    #2d2d2d;
-  --text-gray: #a0a0a0;
+  /* ── 브랜드 */
+  --primary:     #D85604;
+  --golden:      #E88D14;
+  --yolk:        #F3BE26;
+  --pink:        #E669A2;
+  --cyan:        #00F5FF;
+
+  /* ── 상승/하락 (한국식) */
+  --up:          #FF4444;
+  --down:        #3B82F6;
+  --neutral:     #888888;
+  --up-dim:      #FF444433;
+  --down-dim:    #3B82F633;
+
+  /* ── 등급 */
+  --grade-s:     #FFB800;
+  --grade-ap:    #E88D14;
+  --grade-a:     #D85604;
+  --grade-bp:    #A0653A;
+  --grade-b:     #6B5B4E;
+  --grade-c:     #555555;
+  --grade-d:     #3A3A3A;
+
+  /* ── 배경 */
+  --bg-deeper:   #080808;
+  --bg-deep:     #000000;
+  --bg-dark:     #0f0f0f;
+  --surface:     #111111;
+  --surface-alt: #161616;
+  --card-bg:     #1a1a1a;
+  --surface-hi:  #252525;
+
+  /* ── 테두리 */
+  --border:      #2d2d2d;
+  --border-hi:   #3d3d3d;
+
+  /* ── 텍스트 */
+  --text-pri:    #e8e8e8;
+  --text-sec:    #b0b0b0;
+  --text-gray:   #a0a0a0;
+  --text-muted:  #555555;
 }
 
+/* ── Reset ───────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #root {
   height: 100%;
   background: var(--bg-dark);
-  color: #e8e8e8;
+  color: var(--text-pri);
   font-family: 'Inter', -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-/* 스크롤바 */
+/* ── 스크롤바 ────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: #0a0a0a; }
+::-webkit-scrollbar-track { background: var(--bg-deeper); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #3d3d3d; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
 
-/* 기본 버튼 리셋 */
-button { font-family: inherit; }
+/* ── 기본 리셋 ───────────────────────────── */
+button { font-family: inherit; cursor: pointer; }
 input, select { font-family: inherit; }
 
-/* 선택 색상 */
+/* ── 선택 색상 ───────────────────────────── */
 ::selection { background: rgba(0, 245, 255, 0.2); color: #fff; }
+
+/* ── 상승/하락 유틸리티 ──────────────────── */
+.up   { color: var(--up); }
+.down { color: var(--down); }
+.flat { color: var(--neutral); }
+
+/* ── 등급 배지 유틸리티 ──────────────────── */
+.grade-s  { color: #000; background: var(--grade-s); }
+.grade-ap { color: #000; background: var(--grade-ap); }
+.grade-a  { color: #000; background: var(--grade-a); }
+.grade-bp { color: #fff; background: var(--grade-bp); }
+.grade-b  { color: #fff; background: var(--grade-b); }
+.grade-c  { color: #fff; background: var(--grade-c); }
+.grade-d  { color: #fff; background: var(--grade-d); }
+
+/* ── 포인트 텍스트 유틸리티 ──────────────── */
+.text-cyan    { color: var(--cyan); }
+.text-pink    { color: var(--pink); }
+.text-primary { color: var(--primary); }
+.text-golden  { color: var(--golden); }
+.text-yolk    { color: var(--yolk); }

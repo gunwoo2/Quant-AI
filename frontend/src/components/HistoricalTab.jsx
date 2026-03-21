@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { C, FONT, chgColor } from '../styles/tokens';
 import { useOutletContext } from 'react-router-dom';
 import api from '../api';
 
@@ -135,10 +136,10 @@ const HistoricalTab = () => {
     <div style={{ width: '100%', maxWidth: '1400px', margin: '0 auto', position: 'relative' }}>
       {fetchError && (
         <div style={{
-          background: '#1a0800', border: '1px solid #AD1B0240',
-          borderLeft: '3px solid #AD1B02', borderRadius: 6,
+          background: C.bgDeeper, border: '1px solid ${C.primary}40',
+          borderLeft: `3px solid ${C.primary}`, borderRadius: 6,
           padding: '8px 16px', marginBottom: 16,
-          fontSize: 11, color: '#AD1B02', fontFamily: 'monospace',
+          fontSize: 11, color: C.up, fontFamily: 'monospace',
         }}>
           ⚠ 가격 이력 데이터를 불러오지 못했습니다. 백엔드 연결 및 ticker를 확인해주세요.
         </div>
@@ -200,7 +201,7 @@ const HistoricalTab = () => {
                   <td style={dateTdStyle}>{item.date}</td>
                   <td style={commonTdStyle}>{Number(item.open).toFixed(2)}</td>
                   <td style={{ ...commonTdStyle, fontWeight: '800', color: '#FFFFFF' }}>{close.toFixed(2)}</td>
-                  <td style={{ ...commonTdStyle, color: isUp ? '#AD1B02' : '#0066FF', fontWeight: '800' }}>{isUp ? '▲' : '▼'} {Math.abs(changePct)}%</td>
+                  <td style={{ ...commonTdStyle, color: isUp ? C.up : C.down, fontWeight: '800' }}>{isUp ? '▲' : '▼'} {Math.abs(changePct)}%</td>
                   <td style={commonTdStyle}>{Number(item.volume).toLocaleString()}</td>
                   <td style={commonTdStyle}>{item.per != null && item.per !== 0 ? Number(item.per).toFixed(2) : '-'}</td>
                   <td style={{ ...commonTdStyle, color: '#F3BE26', fontWeight: 'bold' }}>{item.roic != null && item.roic !== 0 ? `${(Math.abs(Number(item.roic)) <= 1 ? (Number(item.roic) * 100).toFixed(2) : Number(item.roic).toFixed(2))}%` : '-'}</td>
@@ -226,19 +227,19 @@ const chartToggleBtnStyle = { background: 'none', border: '1px solid #444', colo
 const floatingContainerStyle = { position: 'fixed', backgroundColor: 'rgba(15, 15, 15, 0.75)', backdropFilter: 'blur(15px)', borderRadius: '12px', border: '1px solid rgba(232, 141, 20, 0.4)', boxShadow: '0 30px 60px rgba(0,0,0,0.5)', zIndex: 9999, overflow: 'hidden' };
 const headerStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: 'rgba(232, 141, 20, 0.15)', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', cursor: 'grab' };
 const closeIconStyle = { background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '14px' };
-const filterBarStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '25px', padding: '20px', backgroundColor: '#080808', borderRadius: '12px', border: '1px solid #1a1a1a' };
+const filterBarStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '25px', padding: '20px', backgroundColor: C.bgDeeper, borderRadius: '12px', border: '1px solid #1a1a1a' };
 const defaultBtnStyle = { background: 'none', border: '1px solid #D85604', color: '#D85604', fontSize: '9px', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
 const labelStyle = { fontSize: '10px', color: '#555', fontWeight: 'bold', marginBottom: '6px' };
 const inputStyle = { backgroundColor: '#111', border: '1px solid #222', color: '#eee', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', outline: 'none' };
 const freqContainerStyle = { display: 'flex', backgroundColor: '#000', padding: '4px', borderRadius: '8px', border: '1px solid #111' };
 const freqButtonStyle = { border: 'none', padding: '6px 16px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' };
-const tableWrapperStyle = { overflowX: 'auto', backgroundColor: '#080808', borderRadius: '12px', border: '1px solid #1a1a1a', maxHeight: '700px' };
+const tableWrapperStyle = { overflowX: 'auto', backgroundColor: C.bgDeeper, borderRadius: '12px', border: '1px solid #1a1a1a', maxHeight: '700px' };
 const tableStyle = { width: '100%', borderCollapse: 'collapse', textAlign: 'right' };
-const stickyHeaderStyle = { position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#080808' };
+const stickyHeaderStyle = { position: 'sticky', top: 0, zIndex: 10, backgroundColor: C.bgDeeper };
 const trStyle = { borderBottom: '1px solid #111' };
 const inputGroupStyle = { display: 'flex', flexDirection: 'column' };
-const dateTdStyle = { padding: '18px 10px', textAlign: 'left', paddingLeft: '20px', width: '110px', backgroundColor: 'rgba(216, 86, 4, 0.05)', color: '#e5e5e5', fontWeight: '600', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
-const commonTdStyle = { padding: '18px 10px', color: '#bbbbbb', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
+const dateTdStyle = { padding: '18px 10px', textAlign: 'left', paddingLeft: '20px', width: '110px', backgroundColor: 'rgba(216, 86, 4, 0.05)', color: C.textPri, fontWeight: '600', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
+const commonTdStyle = { padding: '18px 10px', color: C.textSec, fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
 const thStyle = { padding: '20px 10px', color: '#444', fontWeight: '900', fontSize: '11px', fontFamily: '"JetBrains Mono", monospace' };
 const loadingTdStyle = { padding: '100px', textAlign: 'center', color: '#D85604', fontSize: '13px', fontWeight: 'bold' };
 
@@ -431,7 +432,7 @@ export default HistoricalTab;
 //                   <td style={dateTdStyle}>{item.trading_date}</td>
 //                   <td style={commonTdStyle}>{Number(item.open_price).toFixed(2)}</td>
 //                   <td style={{ ...commonTdStyle, fontWeight: '800', color: '#FFFFFF' }}>{close.toFixed(2)}</td>
-//                   <td style={{ ...commonTdStyle, color: isUp ? '#AD1B02' : '#0066FF', fontWeight: '800' }}>{isUp ? '▲' : '▼'} {Math.abs(changePct)}%</td>
+//                   <td style={{ ...commonTdStyle, color: isUp ? C.up : C.down, fontWeight: '800' }}>{isUp ? '▲' : '▼'} {Math.abs(changePct)}%</td>
 //                   <td style={commonTdStyle}>{Number(item.volume).toLocaleString()}</td>
 //                   <td style={commonTdStyle}>{item.per || '-'}</td>
 //                   <td style={{ ...commonTdStyle, color: '#F3BE26', fontWeight: 'bold' }}>{item.roic ? `${item.roic}%` : '-'}</td>
@@ -457,19 +458,19 @@ export default HistoricalTab;
 // const floatingContainerStyle = { position: 'fixed', backgroundColor: 'rgba(15, 15, 15, 0.75)', backdropFilter: 'blur(15px)', borderRadius: '12px', border: '1px solid rgba(232, 141, 20, 0.4)', boxShadow: '0 30px 60px rgba(0,0,0,0.5)', zIndex: 9999, overflow: 'hidden' };
 // const headerStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', backgroundColor: 'rgba(232, 141, 20, 0.15)', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', cursor: 'grab' };
 // const closeIconStyle = { background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '14px' };
-// const filterBarStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '25px', padding: '20px', backgroundColor: '#080808', borderRadius: '12px', border: '1px solid #1a1a1a' };
+// const filterBarStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '25px', padding: '20px', backgroundColor: C.bgDeeper, borderRadius: '12px', border: '1px solid #1a1a1a' };
 // const defaultBtnStyle = { background: 'none', border: '1px solid #D85604', color: '#D85604', fontSize: '9px', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
 // const labelStyle = { fontSize: '10px', color: '#555', fontWeight: 'bold', marginBottom: '6px' };
 // const inputStyle = { backgroundColor: '#111', border: '1px solid #222', color: '#eee', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', outline: 'none' };
 // const freqContainerStyle = { display: 'flex', backgroundColor: '#000', padding: '4px', borderRadius: '8px', border: '1px solid #111' };
 // const freqButtonStyle = { border: 'none', padding: '6px 16px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' };
-// const tableWrapperStyle = { overflowX: 'auto', backgroundColor: '#080808', borderRadius: '12px', border: '1px solid #1a1a1a', maxHeight: '700px' };
+// const tableWrapperStyle = { overflowX: 'auto', backgroundColor: C.bgDeeper, borderRadius: '12px', border: '1px solid #1a1a1a', maxHeight: '700px' };
 // const tableStyle = { width: '100%', borderCollapse: 'collapse', textAlign: 'right' };
-// const stickyHeaderStyle = { position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#080808' };
+// const stickyHeaderStyle = { position: 'sticky', top: 0, zIndex: 10, backgroundColor: C.bgDeeper };
 // const trStyle = { borderBottom: '1px solid #111' };
 // const inputGroupStyle = { display: 'flex', flexDirection: 'column' };
-// const dateTdStyle = { padding: '18px 10px', textAlign: 'left', paddingLeft: '20px', width: '110px', backgroundColor: 'rgba(216, 86, 4, 0.05)', color: '#e5e5e5', fontWeight: '600', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
-// const commonTdStyle = { padding: '18px 10px', color: '#bbbbbb', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
+// const dateTdStyle = { padding: '18px 10px', textAlign: 'left', paddingLeft: '20px', width: '110px', backgroundColor: 'rgba(216, 86, 4, 0.05)', color: C.textPri, fontWeight: '600', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
+// const commonTdStyle = { padding: '18px 10px', color: C.textSec, fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' };
 // const thStyle = { padding: '20px 10px', color: '#444', fontWeight: '900', fontSize: '11px', fontFamily: '"JetBrains Mono", monospace' };
 // const loadingTdStyle = { padding: '100px', textAlign: 'center', color: '#D85604', fontSize: '13px', fontWeight: 'bold' };
 

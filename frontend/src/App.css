@@ -1,34 +1,50 @@
-:root {
-  --black: #000000;
-  --orange: #D85604;
-  --scarlet: #AD1B02;
-  --golden: #E88D14;
-  --yolk: #F3BE26;
-  --pink: #E669A2;
-  --bg-dark: #0f0f0f;
-  --card-bg: #1a1a1a;
-  --border: #2d2d2d;
-  --text-gray: #a0a0a0;
-}
+/* App.css — QUANT AI v2
+ * ★ 모든 색상은 global.css CSS 변수 또는 tokens.js C 객체 참조
+ */
 
 body {
   margin: 0;
   background-color: var(--bg-dark);
-  color: white;
-  font-family: 'Inter', sans-serif;
+  color: var(--text-pri);
+  font-family: 'Inter', -apple-system, sans-serif;
 }
 
 .app-container { display: flex; min-height: 100vh; }
-.main-content { flex: 1; margin-left: 260px; padding: 0; }
+.main-content  { flex: 1; margin-left: 260px; padding: 0; }
 .page-container { padding: 30px; }
 
-/* Table Styles */
-.sa-table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 8px; overflow: hidden; }
-.sa-table th { background: #252525; color: var(--text-gray); text-align: left; padding: 15px; font-size: 12px; border-bottom: 1px solid var(--border); }
-.sa-table td { padding: 15px; border-bottom: 1px solid var(--border); font-size: 14px; }
-.sa-table tr:hover { background: #222; }
+/* Table */
+.sa-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card-bg);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.sa-table th {
+  background: var(--surface);
+  color: var(--text-gray);
+  text-align: left;
+  padding: 15px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sa-table td {
+  padding: 15px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.sa-table tr:hover { background: var(--surface); }
 
-/* Utility */
-.up { color: #26a69a; }
-.down { color: var(--scarlet); }
-.score-tag { background: var(--orange); padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; }
+/* 상승/하락 (한국식) */
+.up   { color: var(--up); }
+.down { color: var(--down); }
+
+/* Score 배지 */
+.score-tag {
+  background: var(--primary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 12px;
+}

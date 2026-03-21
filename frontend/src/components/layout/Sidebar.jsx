@@ -63,7 +63,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
       width:    open ? W_OPEN : W_CLOSE,
       minWidth: open ? W_OPEN : W_CLOSE,
       height:   "100%",
-      background: "#0a0a0a",
+      background: C.bgDeeper,
       borderRight: `1px solid ${C.border}`,
       display: "flex", flexDirection: "column",
       transition: "width 0.2s ease",
@@ -209,7 +209,7 @@ function SectorFlyout({ activeSector, getStatFor, onSelect }) {
     <div style={{
       position: "absolute", left: "100%", top: 0,
       width: 310,
-      background: "#0d0d0d",
+      background: C.bgDark,
       border: `1px solid ${C.border}`,
       borderLeft: `2px solid ${C.primary}`,
       borderRadius: "0 4px 4px 0",
@@ -266,7 +266,7 @@ function SectorRow({ sector, stat, active, onSelect }) {
   const [hov, setHov] = useState(false);
   const avg = parseFloat(stat.avgScore);
   const scoreColor =
-    !isNaN(avg) ? (avg >= 65 ? C.cyan : avg >= 50 ? C.golden : C.scarlet) : C.textMuted;
+    !isNaN(avg) ? (avg >= 65 ? C.cyan : avg >= 50 ? C.golden : C.down) : C.textMuted;
 
   return (
     <button

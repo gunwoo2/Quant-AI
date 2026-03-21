@@ -66,7 +66,7 @@ export function AddTickerModal({ onClose, onAdd }) {
           disabled={isSaving}
           style={{
             ...inputStyle,
-            borderColor: error ? C.red : C.border,
+            borderColor: error ? C.down : C.border,
             color: C.cyan, letterSpacing: 2,
             fontFamily: FONT.mono, fontSize: 15, fontWeight: 700,
           }}
@@ -77,13 +77,13 @@ export function AddTickerModal({ onClose, onAdd }) {
         </p>
 
         {error && (
-          <p style={{ fontFamily: FONT.sans, fontSize: 12, color: C.red, marginTop: 8 }}>⚠ {error}</p>
+          <p style={{ fontFamily: FONT.sans, fontSize: 12, color: C.down, marginTop: 8 }}>⚠ {error}</p>
         )}
 
         {isSaving && progress && (
           <div style={{
             marginTop: 12, padding: "10px 14px",
-            background: "#0a0a0a", border: `1px solid ${C.border}`,
+            background: C.bgDeeper, border: `1px solid ${C.border}`,
             borderRadius: 4, fontFamily: FONT.sans, fontSize: 11, color: C.primary,
           }}>
             ⟳ {progress}
@@ -113,10 +113,10 @@ export function DeleteConfirmModal({ tickers, onClose, onConfirm, isLoading }) {
     <Overlay onBgClick={!isLoading ? onClose : undefined}>
       <ModalBox title="⚠ 티커 삭제 경고" onClose={!isLoading ? onClose : undefined} danger>
         <div style={{
-          background: `${C.red}12`, border: `1px solid ${C.red}60`,
+          background: `${C.down}12`, border: `1px solid ${C.down}60`,
           borderRadius: 4, padding: "14px 16px", marginBottom: 16,
         }}>
-          <p style={{ fontFamily: FONT.sans, fontSize: 13, color: C.red, fontWeight: 700, marginBottom: 8 }}>
+          <p style={{ fontFamily: FONT.sans, fontSize: 13, color: C.down, fontWeight: 700, marginBottom: 8 }}>
             이 작업은 되돌릴 수 없습니다!
           </p>
           <ul style={{ fontFamily: FONT.sans, fontSize: 12, color: C.textGray, paddingLeft: 16, margin: 0, lineHeight: 1.8 }}>
@@ -138,7 +138,7 @@ export function DeleteConfirmModal({ tickers, onClose, onConfirm, isLoading }) {
         </div>
 
         <p style={{ fontFamily: FONT.sans, fontSize: 12, color: C.textGray, marginBottom: 8 }}>
-          삭제하려면 아래에 <strong style={{ color: C.red, letterSpacing: 1 }}>DELETE</strong>를 입력하세요.
+          삭제하려면 아래에 <strong style={{ color: C.down, letterSpacing: 1 }}>DELETE</strong>를 입력하세요.
         </p>
         <input
           autoFocus value={confirmText}
@@ -147,8 +147,8 @@ export function DeleteConfirmModal({ tickers, onClose, onConfirm, isLoading }) {
           style={{
             ...inputStyle, fontFamily: FONT.mono, fontSize: 14,
             letterSpacing: 2, textAlign: "center",
-            borderColor: canDelete ? C.red : C.border,
-            color: canDelete ? C.red : C.textGray,
+            borderColor: canDelete ? C.down : C.border,
+            color: canDelete ? C.down : C.textGray,
           }}
         />
 
@@ -185,13 +185,13 @@ function ModalBox({ children, title, onClose, danger }) {
   return (
     <div style={{
       background: "#111",
-      border: `1px solid ${danger ? C.red + "60" : C.border}`,
+      border: `1px solid ${danger ? C.down + "60" : C.border}`,
       borderRadius: 8, width: 440, maxWidth: "92vw",
       padding: "22px 26px",
-      boxShadow: danger ? `0 0 40px ${C.red}20` : "0 20px 60px rgba(0,0,0,0.8)",
+      boxShadow: danger ? `0 0 40px ${C.down}20` : "0 20px 60px rgba(0,0,0,0.8)",
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <span style={{ fontFamily: FONT.sans, fontSize: 13, fontWeight: 700, color: danger ? C.red : C.primary, letterSpacing: 0.5 }}>
+        <span style={{ fontFamily: FONT.sans, fontSize: 13, fontWeight: 700, color: danger ? C.down : C.primary, letterSpacing: 0.5 }}>
           {title}
         </span>
         {onClose && (
@@ -225,6 +225,6 @@ const secondaryBtn = {
 };
 const dangerBtn = {
   flex: 1, fontFamily: FONT.sans, fontSize: 12, fontWeight: 700,
-  background: C.red, color: "#fff", border: "none",
+  background: C.down, color: "#fff", border: "none",
   borderRadius: 4, padding: "10px 16px",
 };

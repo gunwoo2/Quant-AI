@@ -674,7 +674,7 @@ def run_quant_score(calc_date: date = None):
             ok += 1
             grade = score_to_grade(layer1_s["layer1_score"])
             if ok % 20 == 0 or ok <= 3:
-                print(f"[L1] {ticker}: {layer1_s["layer1_score"]} ({grade}) ✓")
+                print(f"[L1] {ticker}: {layer1_s['layer1_score']} ({grade}) ✓")
 
         except Exception as e:
             fail += 1

@@ -1,4 +1,5 @@
 import React from 'react';
+import { C } from '../styles/tokens';
 
 const Footer = () => {
   return (
@@ -57,7 +58,7 @@ const Footer = () => {
           padding: '4px 12px',
           borderRadius: '2px'
         }}>
-          <span>STATUS: <span style={{color: '#AD1B02'}}>●</span> ONLINE</span>
+          <span>STATUS: <span style={{color: C.up}}>●</span> ONLINE</span>
           <span style={{color: '#222'}}>|</span>
           <span>VERSION: 1.0.4-PRO</span>
           <span style={{color: '#222'}}>|</span>

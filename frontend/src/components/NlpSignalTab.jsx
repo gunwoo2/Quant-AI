@@ -595,66 +595,107 @@ function TranscriptTab() {
         ⚙ Phase 3 기능 — Claude/GPT API + FMP Earnings Call Transcript. 현재 Mock 데이터.
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-        <Card>
-          <SL right="Q4'24 vs Q3'24">TONE SHIFT RADAR (톤 변화 레이더)</SL>
-          <ResponsiveContainer width="100%" height={250}>
-            <RadarChart data={toneRadar}>
-              <PolarGrid stroke={T.borderHi} />
-              <PolarAngleAxis dataKey="axis" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} />
-              <Radar name="Q4'24" dataKey="A" stroke={T.accent} fill={T.accent} fillOpacity={0.1} strokeWidth={1.5} />
-              <Radar name="Q3'24" dataKey="B" stroke={T.borderHi} fill="none" strokeWidth={1} strokeDasharray="4 2" />
-              <Tooltip contentStyle={tt} />
-            </RadarChart>
-          </ResponsiveContainer>
-        </Card>
+      {/* ── 기존 UI + Coming Soon 오버레이 래퍼 ── */}
+      <div style={{ position:'relative' }}>
 
-        <Card>
-          <SL>AI TRANSCRIPT INSIGHTS (AI 실적발표 분석)</SL>
-          <div style={{ display:'flex', flexDirection:'column', gap:14, marginBottom:16 }}>
-            <div style={{ borderLeft:`2px solid ${T.up}`, paddingLeft:12 }}>
-              <div style={{ fontSize:9, fontWeight:800, color:T.up, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>BULLISH SIGNAL (강세 신호)</div>
-              <div style={{ fontSize:11, color:T.textSub, lineHeight:1.75 }}>
-                CEO가 AI 인프라 수요를 'unprecedented'로 언급. 역대 어닝콜 최고 낙관 Tone 기록.
+        {/* ── 기존 콘텐츠 (그대로 유지) ── */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+          <Card>
+            <SL right="Q4'24 vs Q3'24">TONE SHIFT RADAR (톤 변화 레이더)</SL>
+            <ResponsiveContainer width="100%" height={250}>
+              <RadarChart data={toneRadar}>
+                <PolarGrid stroke={T.borderHi} />
+                <PolarAngleAxis dataKey="axis" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} />
+                <Radar name="Q4'24" dataKey="A" stroke={T.accent} fill={T.accent} fillOpacity={0.1} strokeWidth={1.5} />
+                <Radar name="Q3'24" dataKey="B" stroke={T.borderHi} fill="none" strokeWidth={1} strokeDasharray="4 2" />
+                <Tooltip contentStyle={tt} />
+              </RadarChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card>
+            <SL>AI TRANSCRIPT INSIGHTS (AI 실적발표 분석)</SL>
+            <div style={{ display:'flex', flexDirection:'column', gap:14, marginBottom:16 }}>
+              <div style={{ borderLeft:`2px solid ${T.up}`, paddingLeft:12 }}>
+                <div style={{ fontSize:9, fontWeight:800, color:T.up, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>BULLISH SIGNAL (강세 신호)</div>
+                <div style={{ fontSize:11, color:T.textSub, lineHeight:1.75 }}>
+                  CEO가 AI 인프라 수요를 'unprecedented'로 언급. 역대 어닝콜 최고 낙관 Tone 기록.
+                </div>
+              </div>
+              <div style={{ borderLeft:`2px solid ${T.down}`, paddingLeft:12 }}>
+                <div style={{ fontSize:9, fontWeight:800, color:T.down, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>RISK FACTOR (위험 요인)</div>
+                <div style={{ fontSize:11, color:T.textSub, lineHeight:1.75 }}>
+                  공급 부족에 따른 리드타임 지연 리스크. CFO 재무 가이던스 언어는 중립~보수적.
+                </div>
               </div>
             </div>
-            <div style={{ borderLeft:`2px solid ${T.down}`, paddingLeft:12 }}>
-              <div style={{ fontSize:9, fontWeight:800, color:T.down, letterSpacing:1.5, marginBottom:4, fontFamily:FONT.sans }}>RISK FACTOR (위험 요인)</div>
-              <div style={{ fontSize:11, color:T.textSub, lineHeight:1.75 }}>
-                공급 부족에 따른 리드타임 지연 리스크. CFO 재무 가이던스 언어는 중립~보수적.
-              </div>
+            <div style={{ fontSize:9, color:T.textMuted, letterSpacing:1.5, marginBottom:8, fontFamily:FONT.sans }}>KEY PHRASES (핵심 키워드)</div>
+            <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginBottom:5 }}>
+              {['Sovereign AI','Cloud Capex','unprecedented'].map(w => (
+                <span key={w} style={{ fontSize:9, padding:'3px 8px', borderRadius:2,
+                  background:`${T.up}10`, color:T.up, border:`1px solid ${T.up}30`, fontFamily:FONT.sans }}>{w}</span>
+              ))}
             </div>
+            <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
+              {['supply constraints','execution risk'].map(w => (
+                <span key={w} style={{ fontSize:9, padding:'3px 8px', borderRadius:2,
+                  background:`${T.down}10`, color:T.down, border:`1px solid ${T.down}30`, fontFamily:FONT.sans }}>{w}</span>
+              ))}
+            </div>
+          </Card>
+        </div>
+
+        <div style={{ marginTop:16 }}>
+          <Card>
+            <SL right="CEO·CFO Tone 점수">QUARTERLY TONE HISTORY (분기별 톤 추이)</SL>
+            <ResponsiveContainer width="100%" height={160}>
+              <ComposedChart data={qHist} margin={{ left:-20, right:0 }}>
+                <XAxis dataKey="q" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
+                <YAxis domain={[40,100]} tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tt} />
+                <Bar dataKey="ceo" name="CEO" fill={T.accent} fillOpacity={0.6} maxBarSize={30} radius={[2,2,0,0]} />
+                <Bar dataKey="cfo" name="CFO" fill={T.borderHi} maxBarSize={30} radius={[2,2,0,0]} />
+                <Line type="monotone" dataKey="ceo" stroke={T.accent} strokeWidth={1.5} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </Card>
+        </div>
+
+        {/* ── 반투명 Coming Soon 오버레이 ── */}
+        <div style={{
+          position:'absolute', inset:0,
+          background:'rgba(10, 10, 10, 0.72)',
+          backdropFilter:'blur(2px)',
+          WebkitBackdropFilter:'blur(2px)',
+          display:'flex', flexDirection:'column',
+          justifyContent:'center', alignItems:'center',
+          zIndex:10, borderRadius:2,
+        }}>
+          <div style={{
+            display:'inline-flex', alignItems:'center', gap:8,
+            padding:'10px 28px',
+            background:'linear-gradient(135deg, #0d3b3b 0%, #0a2a2a 100%)',
+            border:'1.5px solid #E669A2',
+            borderRadius:4,
+            boxShadow:'0 0 24px rgba(0,229,200,0.15), inset 0 0 12px rgba(0,229,200,0.05)',
+          }}>
+            <span style={{ fontSize:13 }}>🔴</span>
+            <span style={{
+              fontSize:11, fontWeight:800, letterSpacing:2,
+              color:'#E669A2', fontFamily:FONT.sans, textTransform:'uppercase',
+            }}>
+              PHASE 2 — COMING SOON
+            </span>
           </div>
-          <div style={{ fontSize:9, color:T.textMuted, letterSpacing:1.5, marginBottom:8, fontFamily:FONT.sans }}>KEY PHRASES (핵심 키워드)</div>
-          <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginBottom:5 }}>
-            {['Sovereign AI','Cloud Capex','unprecedented'].map(w => (
-              <span key={w} style={{ fontSize:9, padding:'3px 8px', borderRadius:2,
-                background:`${T.up}10`, color:T.up, border:`1px solid ${T.up}30`, fontFamily:FONT.sans }}>{w}</span>
-            ))}
+          <div style={{
+            marginTop:10, fontSize:9, color:'#E669A2',
+            fontFamily:FONT.sans, letterSpacing:0.5,
+          }}>
+            유료 API 연동 후 활성화
           </div>
-          <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
-            {['supply constraints','execution risk'].map(w => (
-              <span key={w} style={{ fontSize:9, padding:'3px 8px', borderRadius:2,
-                background:`${T.down}10`, color:T.down, border:`1px solid ${T.down}30`, fontFamily:FONT.sans }}>{w}</span>
-            ))}
-          </div>
-        </Card>
+        </div>
+
       </div>
-
-      <Card>
-        <SL right="CEO·CFO Tone 점수">QUARTERLY TONE HISTORY (분기별 톤 추이)</SL>
-        <ResponsiveContainer width="100%" height={160}>
-          <ComposedChart data={qHist} margin={{ left:-20, right:0 }}>
-            <XAxis dataKey="q" tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-            <YAxis domain={[40,100]} tick={{ fill:T.textMuted, fontSize:9, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={tt} />
-            <Bar dataKey="ceo" name="CEO" fill={T.accent} fillOpacity={0.6} maxBarSize={30} radius={[2,2,0,0]} />
-            <Bar dataKey="cfo" name="CFO" fill={T.borderHi} maxBarSize={30} radius={[2,2,0,0]} />
-            <Line type="monotone" dataKey="ceo" stroke={T.accent} strokeWidth={1.5} dot={false} />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </Card>
     </div>
   );
 }
-

@@ -70,7 +70,7 @@ export default function StockDetail() {
   const subTabs = [
     { id: 'quant-rating', label: 'Quant Rating', badge: 'L1', color: C.primary },
     { id: 'nlp-signal', label: 'NLP Signal', badge: 'L2', color: '#7c3aed' },
-    { id: 'market-signal', label: 'Market Signal', badge: 'L3', color: '#0891b2' },
+    { id: 'market-signal', label: 'Market Signal', badge: 'L3', color: C.cyan },
   ];
 
   const GlobalBar = () => (
@@ -121,8 +121,8 @@ export default function StockDetail() {
           <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 14 }}>
             <span style={{ fontSize: 30, fontWeight: 600 }}>${realtime.price?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             <div style={{ 
-              color: (realtime.change >= 0) ? C.cyan : C.scarlet, 
-              backgroundColor: (realtime.change >= 0) ? `${C.cyan}15` : `${C.scarlet}15`, 
+              color: (realtime.change >= 0) ? C.up : C.down, 
+              backgroundColor: (realtime.change >= 0) ? `${C.up}15` : `${C.down}15`, 
               padding: '5px 20px', 
               borderRadius: 4, 
               fontSize: 17 

@@ -18,12 +18,12 @@ import { C, FONT } from '../styles/tokens';
 
 /* ── 디자인 토큰 ── */
 const T = {
-  bg:'#0a0a0a', surface:'#0f0f0f', card:'#111111', border:'#1e1e1e', borderHi:'#2a2a2a',
-  text:'#e2e2e2', textSub:'#888888', textMuted:'#444444',
-  accent:'#D85604', up:'#22c55e', down:'#ef4444', neutral:'#a0a0a0', l3:'#0891b2',
-  warn:'#f59e0b', phase2:'#6366f1',
+  bg:C.bgDeeper, surface:C.bgDark, card:C.surface, border:C.cardBg, borderHi:C.surfaceHi,
+  text:C.textPri, textSub:C.neutral, textMuted:C.borderHi,
+  accent:C.primary, up:C.up, down:C.down, neutral:C.neutral, l3:C.cyan,
+  warn:C.golden, phase2:C.cyan,
 };
-const tt = { backgroundColor:'#111', border:'1px solid #2a2a2a', borderRadius:2, fontSize:10, color:'#e2e2e2', fontFamily:FONT.sans, padding:'7px 12px' };
+const tt = { backgroundColor:C.surface, border:`1px solid ${C.surfaceHi}`, borderRadius:2, fontSize:10, color:C.textPri, fontFamily:FONT.sans, padding:'7px 12px' };
 
 /* ── 공용 컴포넌트 ── */
 const SL = ({ children, right }) => (
@@ -171,7 +171,7 @@ function OverviewTab({ data }) {
   const gradeLabel = (s) => {
     if (s == null) return { text:'N/A', color:T.textMuted };
     if (s >= 80) return { text:'STRONG BUY (강력매수)', color:T.up };
-    if (s >= 65) return { text:'BUY (매수)', color:'#4ade80' };
+    if (s >= 65) return { text:'BUY (매수)', color:C.up };
     if (s >= 50) return { text:'NEUTRAL (중립)', color:T.warn };
     if (s >= 35) return { text:'SELL (매도)', color:T.accent };
     return { text:'STRONG SELL (강력매도)', color:T.down };
@@ -305,7 +305,7 @@ function TechnicalTab({ data }) {
     if (v == null) return { label:'N/A', color:T.textMuted };
     if (v >= 80) return { label:'극과매수 (Extreme Overbought)', color:T.down };
     if (v >= 70) return { label:'과매수 (Overbought)', color:T.warn };
-    if (v >= 60) return { label:'강세 (Bullish)', color:'#4ade80' };
+    if (v >= 60) return { label:'강세 (Bullish)', color:C.up };
     if (v >= 40) return { label:'중립 (Neutral)', color:T.up };
     if (v >= 30) return { label:'약세 (Bearish)', color:T.warn };
     return { label:'과매도 (Oversold)', color:T.down };
@@ -465,7 +465,7 @@ function FlowTab({ data }) {
   const pcLabel = (s) => {
     if (s == null) return { text:'N/A (데이터 없음)', color:T.textMuted };
     if (s >= 6) return { text:'극단 강세 (Extreme Bullish)', color:T.up };
-    if (s >= 4) return { text:'강세 (Bullish)', color:'#4ade80' };
+    if (s >= 4) return { text:'강세 (Bullish)', color:C.up };
     if (s >= 2) return { text:'중립 (Neutral)', color:T.warn };
     return { text:'약세 (Bearish)', color:T.down };
   };
@@ -582,7 +582,7 @@ function MacroTab({ data }) {
   const spyTrend = () => {
     if (!spy.close || !spy.ma50) return { text:'N/A', color:T.textMuted };
     if (spy.ma200 && spy.close > spy.ma50 && spy.ma50 > spy.ma200) return { text:'정배열 상승 (Bullish Alignment)', color:T.up };
-    if (spy.close > spy.ma50) return { text:'단기 강세 (Above MA50)', color:'#4ade80' };
+    if (spy.close > spy.ma50) return { text:'단기 강세 (Above MA50)', color:C.up };
     if (spy.ma200 && spy.close < spy.ma50 && spy.ma50 < spy.ma200) return { text:'역배열 하락 (Bearish Alignment)', color:T.down };
     return { text:'혼조 (Mixed)', color:T.warn };
   };

@@ -13,6 +13,12 @@ import QuantRatingTab  from './components/QuantRatingTab';
 import NlpSignalTab    from './components/NlpSignalTab';
 import MarketSignalTab from './components/MarketSignalTab';
 
+const RatingTab = () => (
+  <div style={{ color: '#D85604', padding: '20px', fontFamily: 'monospace', letterSpacing: 1 }}>
+    AI Rating: Coming Soon.
+  </div>
+);
+
 function App() {
   return (
     <BrowserRouter>
@@ -28,7 +34,7 @@ function App() {
             <Route path="summary" element={<SummaryTab />} />
             <Route path="historical" element={<HistoricalTab />} />
             <Route path="financials" element={<FinancialsTab />} />
-            
+            <Route path="rating" element={<RatingTab />} />
 
             {/* 2. Multi-Layer 하위 그룹 */}
             <Route path="multi-layer">

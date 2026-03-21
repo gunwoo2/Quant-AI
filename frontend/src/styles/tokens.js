@@ -1,65 +1,96 @@
 /**
- * tokens.js — QUANT AI Design Tokens
+ * tokens.js — QUANT AI Design Tokens v2
  *
- * 색상 체계
- *   1순위 메인    : #D85604  (PwC Orange)
- *   2순위         : #AD1B02 · #E88D14 · #F3BE26
- *   3순위 포인트  : #E669A2 · #00F5FF
- *   상승 / Buy    : #00F5FF  (cyan)
- *   하락 / Sell   : #AD1B02  (scarlet)
- *   포인트 텍스트 : #E669A2  (pink)
- *   티커 hover    : #F3BE26  (yolk)
- *   나머지        : 블랙·그레이 다크모드
+ * ★ 모든 컴포넌트는 이 파일의 C 객체만 참조할 것
+ * ★ 하드코딩 색상 금지 — C.up / C.down / gradeColor() / chgColor() 사용
+ *
+ * 색상 체계 (PwC Orange 기반)
+ *   메인       : #D85604 (PwC Orange)
+ *   보조       : #E88D14 · #F3BE26
+ *   포인트     : #E669A2 (pink) · #00F5FF (cyan)
+ *   상승/하락  : 한국식 (#FF4444 빨강 / #3B82F6 파랑)
+ *   등급       : 오렌지 채도 그라데이션 (S 골드 → D 차콜)
  */
 
 export const C = {
-  // ── 브랜드
+  // ── 브랜드 (PwC)
   primary:  "#D85604",   // PwC Orange — 메인 강조
-  scarlet:  "#AD1B02",   // 하락 · Sell · 위험
-  golden:   "#E88D14",   // 보조 강조
-  yolk:     "#F3BE26",   // 티커 hover
-  pink:     "#E669A2",   // 포인트 텍스트 · TOP 티커
-  cyan:     "#00F5FF",   // 상승 · Buy · 최상위 등급
-  green:    "#00FF00",   // 상승 2순위
-  red:      "#FF0033",   // 하락 2순위
+  golden:   "#E88D14",   // 골든 오렌지 — 보조 강조
+  yolk:     "#F3BE26",   // 욜크 — 티커 hover · 차트 포인트
 
-  // ── 배경 / 서피스
-  bgDeep:   "#000000",
-  bgDark:   "#0f0f0f",
-  surface:  "#111111",
-  cardBg:   "#1a1a1a",
+  // ── 포인트 액센트
+  pink:     "#E669A2",   // 핑크 — TOP 티커 · 하이라이트
+  cyan:     "#00F5FF",   // 사이안 — 포인트 강조 · 링크 · 배지
+
+  // ── 상승 / 하락 (한국식)
+  up:       "#FF4444",   // 상승 · 매수 — 밝은 빨강
+  down:     "#3B82F6",   // 하락 · 매도 — 밝은 파랑
+  neutral:  "#888888",   // 무변동 · 중립
+  // 연한 버전 (배경·차트 fill용)
+  upDim:    "#FF444433", // 상승 배경 (투명)
+  downDim:  "#3B82F633", // 하락 배경 (투명)
+
+  // ── 등급 전용 (오렌지 채도 그라데이션)
+  gradeS:   "#FFB800",   // S  — 골드 플래시 ✦
+  gradeAP:  "#E88D14",   // A+ — 골든 오렌지
+  gradeA:   "#D85604",   // A  — PwC 오렌지
+  gradeBP:  "#A0653A",   // B+ — 브론즈
+  gradeB:   "#6B5B4E",   // B  — 옅은 브라운
+  gradeC:   "#555555",   // C  — 다크 그레이
+  gradeD:   "#3A3A3A",   // D  — 차콜
+
+  // ── 배경 / 서피스 (어두운 순서)
+  bgDeeper:  "#080808",  // 가장 깊은 배경
+  bgDeep:    "#000000",  // body 배경
+  bgDark:    "#0f0f0f",  // 일반 배경
+  surface:   "#111111",  // 카드 위 서피스
+  surfaceAlt:"#161616",  // 서피스 대안
+  cardBg:    "#1a1a1a",  // 카드 배경
+  surfaceHi: "#252525",  // 강조 서피스 (hover)
 
   // ── 테두리
-  border:   "#2d2d2d",
-  borderHi: "#3d3d3d",
+  border:   "#2d2d2d",   // 기본 테두리
+  borderHi: "#3d3d3d",   // 강조 테두리
 
   // ── 텍스트
-  textPri:   "#e8e8e8",
-  textGray:  "#a0a0a0",
-  textMuted: "#555555",
-  textcontent: "#b0b0b0",
+  textPri:     "#e8e8e8", // 기본 텍스트
+  textSec:     "#b0b0b0", // 보조 텍스트
+  textGray:    "#a0a0a0", // 회색 텍스트
+  textMuted:   "#555555", // 비활성 텍스트
+  textContent: "#b0b0b0", // 컨텐츠 본문
 
   // ── 게이지 / 바
   gaugeTrack: "#2d2d2d",
-  gaugebar: "#686868"
+  gaugeBar:   "#686868",
 };
 
 export const FONT = {
-  mono: "'Courier New', monospace",
-  sans: "'Inter', sans-serif",
+  mono: "'IBM Plex Mono', 'Courier New', monospace",
+  sans: "'Inter', -apple-system, sans-serif",
 };
- 
-/** 등급 → 색상 */
+
+
+// ═══════════════════════════════════════════
+//  유틸리티 함수
+// ═══════════════════════════════════════════
+
+/** 등급 → 색상 (오렌지 그라데이션) */
 export const gradeColor = (g) => ({
-  "S":  "#66ddee",
-  "A+": "#F3BE26",
-  "A":  "#F3BE26",
-  "B+": "#D85604",
-  "B":  "#D85604",
-  "C":  "#7a0000",
-  "D":  "#FF0033",
+  "S":  C.gradeS,
+  "A+": C.gradeAP,
+  "A":  C.gradeA,
+  "B+": C.gradeBP,
+  "B":  C.gradeB,
+  "C":  C.gradeC,
+  "D":  C.gradeD,
 }[g] ?? C.textGray);
- 
+
+/** 등급 → 텍스트 색상 (배지 위 글자) */
+export const gradeTextColor = (g) => {
+  if (["S","A+","A"].includes(g)) return "#000000";
+  return "#FFFFFF";
+};
+
 /** 등급 → 투자의견 레이블 */
 export const gradeLabel = (g) => ({
   "S":  "Strong Buy",
@@ -70,18 +101,32 @@ export const gradeLabel = (g) => ({
   "C":  "Sell",
   "D":  "Strong Sell",
 }[g] ?? "—");
- 
-/**
- * SECTORS — 섹터 목록
- *
- * 필드:
- *   key         : 프론트엔드 내부 키 (URL param 등으로 사용)
- *   label       : 한글 표시명
- *   en          : 영문 약칭 (UI 표시용)
- *   backendName : DB/API에서 반환되는 sector_name (JOIN 키)
- *   code        : GICS 섹터 코드 (API ?sector=45 필터용)
- *   icon        : 이모지 아이콘
- */
+
+/** 등락률 → 색상 (한국식: 양수=빨강, 음수=파랑) */
+export const chgColor = (v) => {
+  if (v == null) return C.textGray;
+  const n = Number(v);
+  if (n > 0) return C.up;
+  if (n < 0) return C.down;
+  return C.neutral;
+};
+
+/** 투자의견 텍스트 색상 — S/A+ = cyan 포인트, 이하 = 등급색 */
+export const signalColor = (g) => ({
+  "S":  C.cyan,
+  "A+": C.pink,
+  "A":  C.primary,
+  "B+": C.golden,
+  "B":  C.gradeBP,
+  "C":  C.gradeC,
+  "D":  C.gradeD,
+}[g] ?? C.textGray);
+
+
+// ═══════════════════════════════════════════
+//  섹터 / Mock 데이터
+// ═══════════════════════════════════════════
+
 export const SECTORS = [
   { key: "TECHNOLOGY",        label: "정보통신기술",      en: "Technology",       backendName: "Information Technology",  code: "45", icon: "💻" },
   { key: "FINANCIALS",        label: "금융",              en: "Financials",       backendName: "Financials",              code: "40", icon: "🏦" },
@@ -95,28 +140,25 @@ export const SECTORS = [
   { key: "COMMUNICATION",     label: "통신서비스",          en: "Communication",    backendName: "Communication Services",  code: "50", icon: "📡" },
   { key: "CONSUMER_STAPLES",  label: "필수소비재",          en: "Consumer Sta.",    backendName: "Consumer Staples",        code: "30", icon: "🛒" },
 ];
- 
-/**
- * sectorByCode(gicsCode) — GICS 코드 → SECTORS 엔트리
- * 백엔드 /api/sectors 응답(key:"45")을 프론트 SECTORS와 매핑할 때 사용
- */
+
 export const sectorByCode = (code) =>
   SECTORS.find(s => s.code === String(code)) ?? null;
- 
-/**
- * sectorByBackendName(name) — DB sector_name → SECTORS 엔트리
- * /api/stocks 응답(sector:"Information Technology")을 프론트 키로 매핑
- */
+
 export const sectorByBackendName = (name) => {
   if (!name) return null;
-  return (
-    SECTORS.find(s => s.backendName === name) ??
-    SECTORS.find(s => s.en.toLowerCase() === name.toLowerCase()) ??
-    null
-  );
+  const lower = name.toLowerCase().trim();
+  return SECTORS.find(s => s.backendName.toLowerCase() === lower) ?? null;
 };
- 
-// ── 섹터 통계 (하드코딩 Fallback — /api/sectors 실패 시 사용)
+
+export const MOCK_STOCKS = [
+  { ticker:"NVDA", name:"NVIDIA Corp",              sector:"Information Technology", country:"US", price:875.20, chg:3.36,  l1:91, l2:82, l3:88, score:88.4, grade:"S",  signal:"Strong Buy" },
+  { ticker:"AAPL", name:"Apple Inc",                 sector:"Information Technology", country:"US", price:192.50, chg:1.24,  l1:78, l2:71, l3:75, score:76.2, grade:"A+", signal:"Buy" },
+  { ticker:"MSFT", name:"Microsoft Corp",             sector:"Information Technology", country:"US", price:415.80, chg:-0.87, l1:72, l2:68, l3:70, score:71.0, grade:"A",  signal:"Outperform" },
+  { ticker:"TSLA", name:"Tesla Inc",                  sector:"Consumer Discretionary", country:"US", price:178.30, chg:-2.15, l1:55, l2:48, l3:52, score:52.3, grade:"B+", signal:"Hold" },
+  { ticker:"INTC", name:"Intel Corp",                 sector:"Information Technology", country:"US", price:32.50,  chg:-0.45, l1:42, l2:38, l3:40, score:41.8, grade:"B",  signal:"Underperform" },
+];
+
+
 export const SECTOR_STATS = {
   TECHNOLOGY:        { count: 142, avgScore: 68.4, topTicker: "NVDA" },
   FINANCIALS:        { count:  89, avgScore: 61.2, topTicker: "JPM"  },
@@ -130,24 +172,3 @@ export const SECTOR_STATS = {
   COMMUNICATION:     { count:  33, avgScore: 63.1, topTicker: "META" },
   CONSUMER_STAPLES:  { count:  41, avgScore: 50.4, topTicker: "COST" },
 };
- 
-// ── Mock 종목 데이터 (API 실패 Fallback)
-export const MOCK_STOCKS = [
-  { ticker:"ADBE",  name:"Adobe Inc.",                  country:"US", sector:"Information Technology", grade:"S",  score:80.2, l1:82, l2:77, l3:80, price:283.62,  chg:+0.15 },
-  { ticker:"CF",    name:"CF Industries Holdings",      country:"US", sector:"Materials",              grade:"S",  score:79.1, l1:81, l2:76, l3:78, price:118.50,  chg:+2.35 },
-  { ticker:"DECK",  name:"Deckers Outdoor Corp.",       country:"US", sector:"Consumer Discretionary", grade:"S",  score:78.4, l1:80, l2:74, l3:77, price:104.25,  chg:+0.24 },
-  { ticker:"LULU",  name:"Lululemon Athletica Inc.",    country:"US", sector:"Consumer Discretionary", grade:"S",  score:77.8, l1:79, l2:73, l3:76, price:170.13,  chg:+0.14 },
-  { ticker:"RL",    name:"Ralph Lauren Corporation",    country:"US", sector:"Consumer Discretionary", grade:"S",  score:77.2, l1:78, l2:75, l3:74, price:338.36,  chg: 0.00 },
-  { ticker:"LRCX",  name:"Lam Research Corporation",   country:"US", sector:"Information Technology", grade:"A+", score:74.5, l1:78, l2:70, l3:72, price:195.51,  chg:-1.92 },
-  { ticker:"CBOE",  name:"Cboe Global Markets",        country:"US", sector:"Financials",             grade:"A+", score:73.8, l1:75, l2:71, l3:73, price:301.27,  chg:+0.29 },
-  { ticker:"DELL",  name:"Dell Technologies Inc.",     country:"US", sector:"Information Technology", grade:"A+", score:72.9, l1:76, l2:68, l3:70, price:146.48,  chg:+0.57 },
-  { ticker:"PLTR",  name:"Palantir Technologies",      country:"US", sector:"Information Technology", grade:"A+", score:72.1, l1:74, l2:69, l3:71, price:154.38,  chg:-1.77 },
-  { ticker:"RTX",   name:"RTX Corporation",            country:"US", sector:"Industrials",            grade:"A+", score:71.6, l1:73, l2:68, l3:72, price:209.76,  chg:-1.41 },
-  { ticker:"FIX",   name:"Comfort Systems USA",        country:"US", sector:"Industrials",            grade:"A",  score:67.3, l1:70, l2:64, l3:65, price:1254.00, chg:-1.96 },
-  { ticker:"AOS",   name:"A.O. Smith Corporation",     country:"US", sector:"Industrials",            grade:"A",  score:66.8, l1:68, l2:63, l3:67, price:71.01,   chg:-1.43 },
-  { ticker:"NVDA",  name:"NVIDIA Corporation",         country:"US", sector:"Information Technology", grade:"S",  score:88.4, l1:91, l2:82, l3:88, price:875.20,  chg:+3.36 },
-  { ticker:"JPM",   name:"JPMorgan Chase & Co.",       country:"US", sector:"Financials",             grade:"A",  score:65.1, l1:68, l2:67, l3:59, price:198.20,  chg:+0.50 },
-  { ticker:"XOM",   name:"Exxon Mobil Corporation",    country:"US", sector:"Energy",                 grade:"B+", score:57.4, l1:62, l2:55, l3:51, price:112.30,  chg:-0.90 },
-  { ticker:"TSLA",  name:"Tesla, Inc.",                country:"US", sector:"Consumer Discretionary", grade:"B",  score:48.3, l1:45, l2:49, l3:54, price:245.10,  chg:-2.80 },
-  { ticker:"PFE",   name:"Pfizer Inc.",                country:"US", sector:"Health Care",            grade:"D",  score:28.1, l1:24, l2:31, l3:30, price:28.10,   chg:-3.10 },
-];
