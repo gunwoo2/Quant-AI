@@ -547,7 +547,8 @@ def run_quant_score(calc_date: date = None):
                 """, (stock_id, calc_date,
                       _f(moat_s["roic_score"]), _f(moat_s["gpa_score"]),
                       _f(moat_s["fcf_margin_score"]), _f(moat_s["accruals_quality_score"]),
-                      _f(moat_s["net_debt_ebitda_score"]), _f(moat_s["total_moat_score"]))
+                      _f(moat_s["net_debt_ebitda_score"]), _f(moat_s["total_moat_score"])))
+
 
                 # quant_value_scores
                 cur.execute("""
@@ -565,7 +566,8 @@ def run_quant_score(calc_date: date = None):
                 """, (stock_id, calc_date,
                       _f(value_s["earnings_yield_score"]), _f(value_s["ev_fcf_score"]),
                       _f(value_s["pb_score"]), _f(value_s["peg_score"]),
-                      _f(value_s["total_value_score"]))
+                      _f(value_s["total_value_score"])))
+
 
                 # quant_momentum_scores
                 cur.execute("""
@@ -592,7 +594,8 @@ def run_quant_score(calc_date: date = None):
                       _f(momentum_s["earnings_revision_ratio"]), _f(momentum_s["earnings_revision_score"]),
                       _f(momentum_s["ato_acceleration_score"]), _f(momentum_s["op_leverage_score"]),
                       _f(momentum_s["earnings_surprise_pct"]), _f(momentum_s["earnings_surprise_score"]),
-                      _f(momentum_s["total_momentum_score"]))
+                      _f(momentum_s["total_momentum_score"])))
+
 
                 # quant_stability_scores
                 cur.execute("""
@@ -615,7 +618,8 @@ def run_quant_score(calc_date: date = None):
                       _f(stability_s["annualized_volatility_250d"]), _f(stability_s["low_vol_score"]),
                       _f(stability_s["eps_cv_3y"]), _f(stability_s["earnings_stability_score"]),
                       _f(stability_s["dividend_consecutive_years"]), _f(stability_s["dividend_consistency_score"]),
-                      _f(stability_s["total_stability_score"]))
+                      _f(stability_s["total_stability_score"])))
+
 
                 # sector_percentile_scores
                 cur.execute("""
@@ -645,7 +649,8 @@ def run_quant_score(calc_date: date = None):
                       _f(pct.get("ev_fcf_percentile")), _f(pct.get("pb_percentile")),
                       _f(pct.get("peg_percentile")), _f(pct.get("net_debt_ebitda_percentile")),
                       _f(pct.get("low_vol_percentile")), _f(pct.get("eps_stability_percentile")),
-                      _f(pct.get("op_leverage_percentile")))
+                      _f(pct.get("op_leverage_percentile"))))
+
 
                 # stock_layer1_analysis (최종 통합)
                 cur.execute("""
@@ -669,7 +674,8 @@ def run_quant_score(calc_date: date = None):
                       _f(layer1_s["moat_score"]), _f(layer1_s["value_score"]),
                       _f(layer1_s["momentum_score"]), _f(layer1_s["stability_score"]),
                       _f(layer1_s["layer1_raw_score"]), _f(layer1_s["layer1_score"]),
-                      _f(layer1_s["sector_percentile_rank"]), _f(layer1_s["total_score_adj"]))
+                      _f(layer1_s["sector_percentile_rank"]), _f(layer1_s["total_score_adj"])))
+
 
             ok += 1
             grade = score_to_grade(layer1_s["layer1_score"])
@@ -715,3 +721,4 @@ if __name__ == "__main__":
     from db_pool import init_pool
     init_pool()
     run_all()
+
