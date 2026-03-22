@@ -89,6 +89,10 @@ def _fetch_one(symbol: str, label: str, category: str) -> dict:
         prev_close = float(prev["Close"])
         chg        = round((close - prev_close) / prev_close * 100, 2) if prev_close else 0.0
 
+        import math
+        if math.isnan(close) or math.isinf(close): close = 0.0
+        if math.isnan(chg) or math.isinf(chg): chg = 0.0
+
         return {
             "symbol":   symbol,
             "label":    label,

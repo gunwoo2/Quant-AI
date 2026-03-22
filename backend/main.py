@@ -193,7 +193,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://*.cloudshell.dev", "http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["https://*.cloudshell.dev", "http://localhost:5173", "http://localhost:3000", "http://34.29.129.236:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
