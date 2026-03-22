@@ -56,6 +56,8 @@ def get_layer3_data(ticker: str) -> dict | None:
         "technical": technical,
         "flow": flow,
         "macro": macro,
+        "patterns": _get_patterns(stock_id, today),
+        "fearGreed": _get_fear_greed(today)
     }
 
 
@@ -313,3 +315,57 @@ def _get_macro(today: date, sector_code: str) -> dict:
         "sectorEtfs": etf_list,
         "mySectorScore": my_etf_score,
     }
+
+def _get_patterns(stock_id: int, today) -> list:
+    """chart_patterns 테이블에서 종목별 패턴 조회"""
+    try:
+        from db_pool import get_cursor
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT pattern_type, pattern_name, direction, strength, description
+                FROM chart_patterns
+                WHERE stock_id = %s AND calc_date >= %s::date - INTERVAL '3 days'
+                ORDER BY strength DESC NULLS LAST
+            """, (stock_id, today))
+            rows = cur.fetchall()
+        return [
+            {
+                "type": r["pattern_type"],
+                "name": r["pattern_name"],
+                "direction": r["direction"],
+                "confidence": float(r["strength"]) if r["strength"] else 0,
+                "desc": r["description"] or "",
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"[L3-SVC] _get_patterns 에러: {e}")
+        return []
+
+
+def _get_fear_greed(today) -> dict:
+    """market_fear_greed 테이블에서 최신 F&G 조회"""
+    try:
+        from db_pool import get_cursor
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT score, classification, source, calc_date
+                FROM market_fear_greed
+                ORDER BY calc_date DESC LIMIT 2
+            """)
+            rows = cur.fetchall()
+        if not rows:
+            return {"value": None, "label": "N/A", "prev": None}
+        
+        current = rows[0]
+        prev = rows[1] if len(rows) > 1 else None
+        
+        return {
+            "value": float(current["score"]) if current["score"] else None,
+            "label": current["classification"] or "N/A",
+            "prev": float(prev["score"]) if prev and prev["score"] else None,
+            "date": str(current["calc_date"]),
+        }
+    except Exception as e:
+        print(f"[L3-SVC] _get_fear_greed 에러: {e}")
+        return {"value": None, "label": "N/A", "prev": None}

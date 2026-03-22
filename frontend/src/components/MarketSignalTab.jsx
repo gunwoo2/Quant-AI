@@ -84,7 +84,7 @@ const SUBTABS = [
   { id:'TECHNICAL', label:'Technical (기술지표)' },
   { id:'FLOW',      label:'Flow (수급·구조)' },
   { id:'MACRO',     label:'Macro (시장환경)' },
-  { id:'PHASE2',    label:'Phase 2 (예정)', badge:true },
+  { id:'PHASE2',    label:'Chart (패턴·지표)' },
 ];
 
 /* ════════════════════════════════════════════════════════════ */
@@ -121,9 +121,9 @@ export default function MarketSignalTab() {
   return (
     <div style={{ fontFamily:FONT.sans, color:T.text }}>
       {/* 헤더 */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 14px', background:T.surface, border:`1px solid ${T.border}`, borderLeft:`3px solid ${T.l3}`, marginBottom:14 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <span style={{ fontSize:9, fontWeight:800, color:T.l3, letterSpacing:2 }}>LAYER 3</span>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 14px', background:T.surface, border:`1px solid ${T.border}`, borderLeft:`3px solid ${C.gaugeBar}`, marginBottom:14 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                <span style={{ fontSize:9, fontWeight:800, color:C.textSec, letterSpacing:2 }}>LAYER 3</span>
           <span style={{ width:1, height:12, background:T.border, display:'inline-block' }} />
           <span style={{ fontSize:11, color:T.textSub }}>시장 신호 (Market Signal)</span>
           <span style={{ fontSize:9, color:T.textMuted }}>· 가중치 25%</span>
@@ -137,9 +137,9 @@ export default function MarketSignalTab() {
           <button key={s.id} onClick={()=>setTab(s.id)} style={{
             padding:'8px 18px', background:'none', border:'none', cursor:'pointer',
             fontSize:10, fontWeight:tab===s.id?700:400, fontFamily:FONT.sans,
-            color:tab===s.id ? (s.badge ? T.phase2 : T.l3) : T.textMuted,
+            color:tab===s.id ? (s.warn ? T.warn : T.warn) : T.textMuted,
             letterSpacing:1,
-            borderBottom:tab===s.id ? `2px solid ${s.badge ? T.phase2 : T.l3}` : '2px solid transparent',
+            borderBottom:tab===s.id ? `2px solid ${s.warn ? T.warn : T.warn}` : '2px solid transparent',
             display:'flex', alignItems:'center', gap:5,
           }}>
             {s.label}
@@ -152,7 +152,7 @@ export default function MarketSignalTab() {
       {tab==='TECHNICAL' && <TechnicalTab data={data} />}
       {tab==='FLOW'      && <FlowTab data={data} />}
       {tab==='MACRO'     && <MacroTab data={data} />}
-      {tab==='PHASE2'    && <Phase2Tab />}
+      {tab==='PHASE2'    && <Phase2Tab data={data} />}
     </div>
   );
 }
@@ -201,7 +201,7 @@ function OverviewTab({ data }) {
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
             {sections.map((sec, i) => {
               const c = scoreColor(sec.score, sec.max);
-              const pctVal = sec.max > 0 ? (sec.score || 0) / sec.max : 0;
+              const pctVal = sec.max > 0 ? ((sec.score ?? 0) / sec.max) : 0;
               const sig = pctVal >= 0.7 ? 'STRONG' : pctVal >= 0.45 ? 'NEUTRAL' : 'WEAK';
               return (
                 <div key={i}>
@@ -212,7 +212,7 @@ function OverviewTab({ data }) {
                     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
                       <Badge color={c}>{sig}</Badge>
                       <span style={{ fontSize:12, fontWeight:700, color:c, fontFamily:FONT.sans, minWidth:30, textAlign:'right' }}>
-                        {sec.score != null ? sec.score.toFixed(1) : '—'}
+                        {sec.score != null && sec.score !== 0 ? Number(sec.score).toFixed(1) : sec.score === 0 ? '0.0' : '—'}
                       </span>
                       <span style={{ fontSize:9, color:T.textMuted }}>/{sec.max}</span>
                     </div>
@@ -239,7 +239,7 @@ function OverviewTab({ data }) {
             </div>
           </div>
           {ov.calcDate && (
-            <div style={{ marginTop:10, fontSize:9, color:T.textMuted, fontFamily:FONT.mono }}>마지막 계산: {ov.calcDate}</div>
+            <div style={{ marginTop:10, fontSize:9, color:T.textMuted, fontFamily:FONT.sans }}>마지막 계산: {ov.calcDate}</div>
           )}
         </Card>
       </div>
@@ -268,7 +268,7 @@ function OverviewTab({ data }) {
             </tr></thead>
             <tbody>
               {[...radar, ...indicators].map((ind, i) => {
-                const pctVal = ind.max > 0 ? ((ind.score || 0) / ind.max * 100) : 0;
+                const pctVal = ind.max > 0 ? ((ind.score ?? 0) / ind.max * 100) : 0;
                 return (
                   <tr key={i} style={{ borderBottom:`1px solid ${T.border}22` }}>
                     <TD style={{ fontWeight:600, color:T.text }}>{ind.subject || ind.name}</TD>
@@ -279,7 +279,7 @@ function OverviewTab({ data }) {
                         <div style={{ width:60, height:3, background:T.border, borderRadius:2, overflow:'hidden' }}>
                           <div style={{ width:`${pctVal}%`, height:'100%', background:scoreColor(ind.score, ind.max), borderRadius:2 }} />
                         </div>
-                        <span style={{ fontSize:10, color:scoreColor(ind.score, ind.max), fontFamily:FONT.mono, minWidth:30, textAlign:'right' }}>{pctVal.toFixed(0)}%</span>
+                        <span style={{ fontSize:10, color:scoreColor(ind.score, ind.max), fontFamily:FONT.sans, minWidth:30, textAlign:'right' }}>{pctVal.toFixed(0)}%</span>
                       </div>
                     </TD>
                   </tr>
@@ -519,7 +519,7 @@ function FlowTab({ data }) {
                 <Bar dataKey="svr" name="svr" maxBarSize={16} radius={[2,2,0,0]} fillOpacity={0.5}>
                   {svTrend.map((e,i) => <Cell key={i} fill={svrColor(e.svr)} />)}
                 </Bar>
-                <Line type="monotone" dataKey="svr5d" name="svr5d" stroke={T.l3} strokeWidth={2} dot={false} />
+                <Line type="sanstone" dataKey="svr5d" name="svr5d" stroke={T.l3} strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
@@ -732,22 +732,13 @@ function MacroTab({ data }) {
 /*  ★ 필요 API: TradingView, CNN Fear&Greed, FRED, CBOE,       */
 /*              Unusual Whales, S3 Partners                     */
 /* ════════════════════════════════════════════════════════════ */
-function Phase2Tab() {
+function Phase2Tab({ data }) {
 
-  /* ── 목업 데이터 ── */
-  const mockPatterns = [
-    { name:'Cup & Handle (컵앤핸들)', confidence:87, direction:'BULLISH', timeframe:'3M', desc:'바닥을 다진 후 손잡이 형성 → 상방 돌파 준비' },
-    { name:'Double Bottom (이중바닥)', confidence:72, direction:'BULLISH', timeframe:'6W', desc:'W자 형태의 지지선 확인 → 반등 신호' },
-    { name:'Bull Flag (상승깃발)', confidence:65, direction:'BULLISH', timeframe:'2W', desc:'급등 후 박스권 조정 → 추세 지속 기대' },
-    { name:'Head & Shoulders (머리어깨)', confidence:0, direction:'—', timeframe:'—', desc:'천장패턴 미감지' },
-    { name:'Ascending Triangle (상승삼각형)', confidence:58, direction:'BULLISH', timeframe:'1M', desc:'저점 상승 + 수평 저항 → 돌파 임박' },
-    { name:'Falling Wedge (하락쐐기)', confidence:0, direction:'—', timeframe:'—', desc:'미감지' },
-    { name:'Triple Top (삼중천장)', confidence:0, direction:'—', timeframe:'—', desc:'미감지' },
-    { name:'Symmetrical Triangle (대칭삼각형)', confidence:41, direction:'NEUTRAL', timeframe:'3W', desc:'수렴 진행 중 → 방향 미정' },
-  ];
+  /* ── 실데이터 (배치 수집) ── */
+  const patterns = data?.patterns || [];
+  const fg = data?.fearGreed || {};
 
-  const mockFearGreed = { value: 62, label: 'Greed (탐욕)', prev: 58 };
-
+  /* ── 목업 데이터 (Coming Soon) ── */
   const mockFedRate = [
     { date:'2024-09', rate:5.25, label:'동결' },
     { date:'2024-12', rate:5.00, label:'25bp 인하' },
@@ -756,177 +747,166 @@ function Phase2Tab() {
     { date:'2025-09', rate:4.50, label:'동결' },
     { date:'2026-01', rate:4.25, label:'25bp 인하' },
   ];
-
   const mockOptionsFlow = [
-    { time:'14:32', type:'CALL', strike:'$250', exp:'Apr 18', premium:'$2.4M', sentiment:'BULLISH', unusual:true },
-    { time:'13:15', type:'PUT', strike:'$220', exp:'Mar 28', premium:'$890K', sentiment:'BEARISH', unusual:false },
-    { time:'11:47', type:'CALL', strike:'$260', exp:'May 16', premium:'$5.1M', sentiment:'BULLISH', unusual:true },
-    { time:'10:02', type:'CALL', strike:'$240', exp:'Apr 18', premium:'$1.7M', sentiment:'BULLISH', unusual:false },
+    { time:'14:32', type:'CALL', strike:'$250', exp:'Apr 18', premium:'$2.4M', sentiment:'BULLISH' },
+    { time:'13:15', type:'PUT', strike:'$220', exp:'Mar 28', premium:'$890K', sentiment:'BEARISH' },
+    { time:'11:47', type:'CALL', strike:'$260', exp:'May 16', premium:'$5.1M', sentiment:'BULLISH' },
   ];
-
   const mockDarkPool = { pct: 38.2, avgPct: 35.5, netBuy: 12.4, trend:'ACCUMULATION' };
 
   const overlay = {
     position:'absolute', top:0, left:0, right:0, bottom:0,
-    background:'rgba(10,10,10,0.65)', backdropFilter:'blur(2px)',
-    display:'flex', alignItems:'center', justifyContent:'center', zIndex:2, borderRadius:2,
-  };
-  const lockBadge = {
-    padding:'6px 14px', background:`${T.phase2}20`, border:`1px solid ${T.phase2}50`,
-    borderRadius:3, color:T.phase2, fontSize:10, fontWeight:700, letterSpacing:1,
-    fontFamily:FONT.sans,
+    background:'rgba(13,13,18,0.7)', backdropFilter:'blur(4px)',
+    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+    zIndex:10, borderRadius:12,
   };
 
   const PreviewCard = ({ children, title, api }) => (
     <div style={{ position:'relative' }}>
       <Card style={{ opacity:0.6, filter:'grayscale(30%)' }}>
-        <SL right={<span style={{ color:T.phase2, fontSize:8 }}>API: {api}</span>}>{title}</SL>
+        <SL right={api}>{title}</SL>
         {children}
       </Card>
       <div style={overlay}>
-        <div style={{ textAlign:'center' }}>
-          <div style={lockBadge}>🔒 PHASE 2 — COMING SOON</div>
-          <div style={{ fontSize:9, color:T.textMuted, marginTop:6 }}>유료 API 연동 후 활성화</div>
-        </div>
+        <div style={{ fontSize:22, marginBottom:6 }}>🔒</div>
+        <div style={{ fontSize:11, fontWeight:700, color:T.textPri, letterSpacing:2 }}>COMING SOON</div>
+        <div style={{ fontSize:9, color:T.textMuted, marginTop:4 }}>Phase 2 업데이트 예정</div>
       </div>
     </div>
   );
 
+  /* ── 패턴 방향 색상 ── */
+  const dirColor = (d) => d === 'BULLISH' ? T.up : d === 'BEARISH' ? T.down : T.warn;
+  const dirIcon = (d) => d === 'BULLISH' ? '▲' : d === 'BEARISH' ? '▼' : '●';
+
+  /* ── F&G 색상 ── */
+  const fgColor = (v) => {
+    if (v == null) return T.textMuted;
+    if (v <= 25) return T.down;
+    if (v <= 45) return T.accent;
+    if (v <= 55) return T.warn;
+    if (v <= 75) return T.up;
+    return '#22c55e';
+  };
+
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-      {/* Phase 2 안내 배너 */}
-      <div style={{ padding:'14px 20px', background:`${T.phase2}10`, border:`1px solid ${T.phase2}30`, borderRadius:2, borderLeft:`3px solid ${T.phase2}` }}>
-        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
-          <span style={{ fontSize:11, fontWeight:800, color:T.phase2, letterSpacing:1 }}>📋 PHASE 2 ROADMAP</span>
-        </div>
-        <div style={{ fontSize:10, color:T.textSub, lineHeight:1.8 }}>
-          아래 기능들은 <span style={{ color:T.phase2, fontWeight:700 }}>유료 API 구독 후</span> 활성화됩니다.
-          현재는 <span style={{ color:T.warn, fontWeight:600 }}>목업 미리보기</span>만 제공하며, 실데이터는 연결되지 않습니다.<br/>
-          UI 레이아웃과 점수 배점은 확정 상태이므로, API 키만 입력하면 바로 동작합니다.
-        </div>
-        <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
-          {[
-            { name:'Chart Patterns (차트패턴)', api:'TradingView / TA-Lib Pro', status:'UI 완료' },
-            { name:'Fear & Greed Index', api:'CNN / Alternative.me', status:'UI 완료' },
-            { name:'Fed Rate Cycle (연준금리)', api:'FRED API', status:'UI 완료' },
-            { name:'Options Flow (옵션흐름)', api:'Unusual Whales / Tradier', status:'UI 완료' },
-            { name:'Dark Pool Volume', api:'Quandl / S3 Partners', status:'UI 완료' },
-            { name:'Put/Call Ratio 상세', api:'CBOE 유료피드', status:'현재 yfinance 대체' },
-          ].map((item, i) => (
-            <div key={i} style={{ padding:'6px 12px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, flex:'0 0 auto' }}>
-              <div style={{ fontSize:10, fontWeight:600, color:T.text }}>{item.name}</div>
-              <div style={{ fontSize:8, color:T.textMuted }}>{item.api} · <span style={{ color:T.phase2 }}>{item.status}</span></div>
-            </div>
-          ))}
-        </div>
-      </div>
 
-      {/* ── 1. Chart Patterns 목업 ── */}
-      <PreviewCard title="차트 패턴 탐지 (CHART PATTERN DETECTION) — 8개 패턴" api="TradingView">
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8 }}>
-          {mockPatterns.map((p, i) => {
-            const active = p.confidence > 0;
-            const dirColor = p.direction === 'BULLISH' ? T.up : p.direction === 'BEARISH' ? T.down : T.neutral;
-            return (
-              <div key={i} style={{ padding:'10px 12px', background:active ? T.surface : 'transparent', border:`1px solid ${active ? T.borderHi : T.border}`, borderRadius:2 }}>
-                <div style={{ display:'flex', alignItems:'center', gap:4, marginBottom:4 }}>
-                  <span style={{ width:6, height:6, borderRadius:'50%', background:active ? dirColor : T.borderHi }} />
-                  <span style={{ fontSize:9, fontWeight:600, color:active ? T.text : T.textMuted }}>{p.name}</span>
-                </div>
-                {active ? (
-                  <>
-                    <div style={{ fontSize:18, fontWeight:900, color:dirColor, fontFamily:FONT.sans }}>{p.confidence}%</div>
-                    <div style={{ fontSize:8, color:T.textMuted }}>{p.direction} · {p.timeframe}</div>
-                    <div style={{ fontSize:8, color:T.textMuted, marginTop:4 }}>{p.desc}</div>
-                  </>
-                ) : (
-                  <div style={{ fontSize:10, color:T.textMuted }}>미감지</div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </PreviewCard>
-
-      {/* ── 2행: Fear & Greed + Fed Rate ── */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-        <PreviewCard title="공포·탐욕 지수 (FEAR & GREED INDEX)" api="CNN / Alternative.me">
-          <div style={{ display:'flex', alignItems:'center', gap:20 }}>
-            <div>
-              <div style={{ fontSize:48, fontWeight:900, color:T.warn, fontFamily:FONT.sans, lineHeight:1 }}>{mockFearGreed.value}</div>
-              <div style={{ fontSize:11, color:T.warn, fontWeight:700, marginTop:4 }}>{mockFearGreed.label}</div>
-              <div style={{ fontSize:9, color:T.textMuted, marginTop:2 }}>전일: {mockFearGreed.prev} (+{mockFearGreed.value - mockFearGreed.prev})</div>
-            </div>
-            <div style={{ flex:1 }}>
-              <div style={{ height:8, background:T.borderHi, borderRadius:4, position:'relative' }}>
-                <div style={{ position:'absolute', left:0, top:0, width:'25%', height:'100%', background:T.down, borderRadius:'4px 0 0 4px' }} />
-                <div style={{ position:'absolute', left:'25%', top:0, width:'25%', height:'100%', background:T.accent }} />
-                <div style={{ position:'absolute', left:'50%', top:0, width:'25%', height:'100%', background:T.warn }} />
-                <div style={{ position:'absolute', left:'75%', top:0, width:'25%', height:'100%', background:T.up, borderRadius:'0 4px 4px 0' }} />
-                <div style={{ position:'absolute', left:`${mockFearGreed.value}%`, top:-4, width:3, height:16, background:T.text, borderRadius:1 }} />
-              </div>
-              <div style={{ display:'flex', justifyContent:'space-between', marginTop:4 }}>
-                <span style={{ fontSize:7, color:T.down }}>극단공포</span>
-                <span style={{ fontSize:7, color:T.accent }}>공포</span>
-                <span style={{ fontSize:7, color:T.warn }}>탐욕</span>
-                <span style={{ fontSize:7, color:T.up }}>극단탐욕</span>
-              </div>
-            </div>
+      {/* ── 1. Chart Patterns (실데이터) ── */}
+      <Card>
+        <SL right={`${patterns.length}개 감지`}>차트 패턴 탐지 (CHART PATTERN DETECTION)</SL>
+        {patterns.length === 0 ? (
+          <div style={{ padding:20, textAlign:'center', color:T.textMuted, fontSize:12 }}>
+            감지된 패턴이 없습니다. 배치 실행 후 표시됩니다.
           </div>
-        </PreviewCard>
+        ) : (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(260px, 1fr))', gap:10 }}>
+            {patterns.map((p, i) => (
+              <div key={i} style={{
+                padding:'12px 14px', borderRadius:10,
+                background:T.bgDark, border:`1px solid ${T.border}`,
+              }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:T.textPri, fontFamily:FONT.sans }}>
+                    {p.name}
+                  </span>
+                  <Badge color={dirColor(p.direction)}>
+                    {dirIcon(p.direction)} {p.direction}
+                  </Badge>
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <span style={{ fontSize:10, color:T.textMuted }}>{p.desc}</span>
+                  <span style={{ fontSize:13, fontWeight:800, color:dirColor(p.direction), fontFamily:FONT.sans }}>
+                    {p.confidence?.toFixed(0)}%
+                  </span>
+                </div>
+                <div style={{ marginTop:6 }}>
+                  <MiniBar val={p.confidence} max={100} color={dirColor(p.direction)} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
+      {/* ── 2행: Fear & Greed (실데이터) + Fed Rate (Coming Soon) ── */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+
+        {/* Fear & Greed — 실데이터 */}
+        <Card>
+          <SL right={fg.date || ''}>공포·탐욕 지수 (FEAR & GREED INDEX)</SL>
+          {fg.value != null ? (
+            <div style={{ textAlign:'center', padding:'16px 0' }}>
+              <div style={{ fontSize:48, fontWeight:900, color:fgColor(fg.value), fontFamily:FONT.sans, lineHeight:1 }}>
+                {fg.value.toFixed(0)}
+              </div>
+              <div style={{ fontSize:11, color:fgColor(fg.value), fontWeight:700, marginTop:4 }}>{fg.label}</div>
+              {fg.prev != null && (
+                <div style={{ fontSize:9, color:T.textMuted, marginTop:2 }}>전일: {fg.prev.toFixed(0)}</div>
+              )}
+              {/* 게이지 바 */}
+              <div style={{ position:'relative', height:6, background:T.border, borderRadius:3, margin:'14px 20px 0', overflow:'hidden' }}>
+                <div style={{
+                  position:'absolute', left:0, top:0, bottom:0,
+                  width:`${fg.value}%`,
+                  background:`linear-gradient(90deg, ${T.down}, ${T.warn}, ${T.up})`,
+                  borderRadius:3,
+                }} />
+              </div>
+              <div style={{ display:'flex', justifyContent:'space-between', margin:'4px 20px 0', fontSize:8, color:T.textMuted }}>
+                <span>Extreme Fear</span><span>Neutral</span><span>Extreme Greed</span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding:20, textAlign:'center', color:T.textMuted, fontSize:12 }}>
+              데이터 없음 — 배치 실행 후 표시됩니다.
+            </div>
+          )}
+        </Card>
+
+        {/* Fed Rate — Coming Soon */}
         <PreviewCard title="연준 금리 사이클 (FED RATE CYCLE)" api="FRED API">
-          <ResponsiveContainer width="100%" height={120}>
+          <ResponsiveContainer width="100%" height={100}>
             <AreaChart data={mockFedRate} margin={{ left:-10, right:10 }}>
-              <XAxis dataKey="date" tick={{ fill:T.textMuted, fontSize:8, fontFamily:FONT.sans }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill:T.textMuted, fontSize:8, fontFamily:FONT.sans }} axisLine={false} tickLine={false} domain={[4,5.5]} />
-              <Tooltip contentStyle={tt} />
-              <Area type="stepAfter" dataKey="rate" stroke={T.phase2} fill={T.phase2} fillOpacity={0.1} strokeWidth={2} />
+              <XAxis dataKey="date" tick={{ fontSize:8, fill:T.textMuted }} />
+              <YAxis domain={[4, 5.5]} tick={{ fontSize:8, fill:T.textMuted }} />
+              <Area type="stepAfter" dataKey="rate" stroke={T.l3} fill={T.l3+'22'} />
             </AreaChart>
           </ResponsiveContainer>
-          <div style={{ fontSize:9, color:T.textMuted, marginTop:4 }}>
+          <div style={{ fontSize:9, color:T.textMuted, marginTop:4, fontFamily:FONT.sans }}>
             현재: {mockFedRate[mockFedRate.length-1].rate}% · {mockFedRate[mockFedRate.length-1].label}
           </div>
         </PreviewCard>
       </div>
 
-      {/* ── 3행: Options Flow + Dark Pool ── */}
-      <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:16 }}>
+      {/* ── 3행: Options Flow + Dark Pool (Coming Soon) ── */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
         <PreviewCard title="이상 옵션 흐름 (UNUSUAL OPTIONS FLOW)" api="Unusual Whales / Tradier">
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead><tr style={{ borderBottom:`1px solid ${T.border}` }}>
-              <TH>시간</TH><TH>유형</TH><TH>행사가</TH><TH>만기</TH><TH>프리미엄</TH><TH>센티먼트</TH><TH>이상감지</TH>
-            </tr></thead>
-            <tbody>
-              {mockOptionsFlow.map((o, i) => (
-                <tr key={i} style={{ borderBottom:`1px solid ${T.border}22`, background:i%2?T.surface:'transparent' }}>
-                  <TD style={{ fontFamily:FONT.sans, fontSize:10 }}>{o.time}</TD>
-                  <TD><Badge color={o.type==='CALL'?T.up:T.down}>{o.type}</Badge></TD>
-                  <TD style={{ fontFamily:FONT.sans }}>{o.strike}</TD>
-                  <TD style={{ fontSize:10, color:T.textMuted }}>{o.exp}</TD>
-                  <TD style={{ fontFamily:FONT.sans, fontWeight:600 }}>{o.premium}</TD>
-                  <TD><Badge color={o.sentiment==='BULLISH'?T.up:T.down}>{o.sentiment}</Badge></TD>
-                  <TD>{o.unusual ? <Badge color={T.warn}>⚡ UNUSUAL</Badge> : <span style={{ fontSize:9, color:T.textMuted }}>—</span>}</TD>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            {mockOptionsFlow.map((o, i) => (
+              <div key={i} style={{ display:'flex', gap:8, fontSize:10, padding:'6px 0', borderBottom:`1px solid ${T.border}` }}>
+                <span style={{ color:T.textMuted, fontFamily:FONT.sans, minWidth:36 }}>{o.time}</span>
+                <Badge color={o.type==='CALL' ? T.up : T.down}>{o.type}</Badge>
+                <span style={{ color:T.textSub, flex:1 }}>{o.strike} ({o.exp})</span>
+                <span style={{ fontWeight:700, color:T.textPri, fontFamily:FONT.sans }}>{o.premium}</span>
+              </div>
+            ))}
+          </div>
         </PreviewCard>
 
         <PreviewCard title="다크풀 거래 (DARK POOL)" api="Quandl / S3 Partners">
-          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            <div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, padding:'8px 0' }}>
+            <div style={{ textAlign:'center' }}>
               <div style={{ fontSize:9, color:T.textMuted }}>Dark Pool 비율 (DP%)</div>
-              <div style={{ fontSize:28, fontWeight:900, color:T.l3, fontFamily:FONT.sans, lineHeight:1 }}>{mockDarkPool.pct}%</div>
+              <div style={{ fontSize:28, fontWeight:900, color:T.l3, fontFamily:FONT.sans, lineHeight:1, marginTop:4 }}>{mockDarkPool.pct}%</div>
               <div style={{ fontSize:9, color:T.textMuted }}>시장평균: {mockDarkPool.avgPct}%</div>
             </div>
-            <div>
-              <div style={{ fontSize:9, color:T.textMuted }}>순매수 (Net Buy)</div>
-              <div style={{ fontSize:22, fontWeight:900, color:T.up, fontFamily:FONT.sans }}>${mockDarkPool.netBuy}M</div>
-            </div>
-            <div>
-              <div style={{ fontSize:9, color:T.textMuted }}>추세</div>
-              <Badge color={T.up}>{mockDarkPool.trend}</Badge>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontSize:9, color:T.textMuted }}>Net Buy (%)</div>
+              <div style={{ fontSize:22, fontWeight:900, color:T.up, fontFamily:FONT.sans, lineHeight:1, marginTop:4 }}>+{mockDarkPool.netBuy}%</div>
+              <div style={{ marginTop:6 }}>
+                <Badge color={T.up}>{mockDarkPool.trend}</Badge>
+              </div>
             </div>
           </div>
         </PreviewCard>

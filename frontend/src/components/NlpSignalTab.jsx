@@ -26,22 +26,12 @@ import api from '../api';
    Design Tokens
 ───────────────────────────────────────────── */
 const T = {
-  bg:       '#0a0a0a',
-  surface:  '#0f0f0f',
-  card:     '#111111',
-  border:   '#1e1e1e',
-  borderHi: '#2a2a2a',
-  text:     '#e2e2e2',
-  textSub:  '#888888',
-  textMuted:'#444444',
-  accent:   '#D85604',
-  up:       '#22c55e',
-  down:     '#ef4444',
-  neutral:  '#a0a0a0',
-  l2:       '#9b59b6',
+  bg:C.bgDeeper, surface:C.bgDark, card:C.surface, border:C.cardBg, borderHi:C.surfaceHi,
+  text:C.textPri, textSub:C.neutral, textMuted:C.borderHi,
+  accent:C.primary, up:C.up, down:C.down, neutral:C.neutral, l2:C.pink, warn:C.golden
 };
 
-const tt = { backgroundColor:'#111', border:`1px solid #2a2a2a`, borderRadius:2, fontSize:10, color:'#e2e2e2', fontFamily:FONT.sans, padding:'7px 12px' };
+const tt = { backgroundColor:C.surface, border:`1px solid ${C.surfaceHi}`, borderRadius:2, fontSize:10, color:C.textPri, fontFamily:FONT.sans, padding:'7px 12px' };
 
 /* ─────────────────────────────────────────────
    공용 컴포넌트
@@ -90,8 +80,8 @@ const TD = ({ children, style = {} }) => (
    로딩 / 에러 표시
 ───────────────────────────────────────────── */
 const Loader = () => (
-  <div style={{ display:'flex', justifyContent:'center', alignItems:'center', height:200, color:T.textMuted, fontSize:11, fontFamily:FONT.sans }}>
-    데이터 로딩 중...
+  <div style={{ display:'flex', justifyContent:'center', alignItems:'center', height:200, color:T.textMuted, fontSize:15, fontFamily:FONT.sans }}>
+    Layer 2 데이터 로딩 중...
   </div>
 );
 const ErrorMsg = ({ msg }) => (
@@ -134,14 +124,25 @@ export default function NlpSignalTab() {
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+      {/* 헤더 */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 14px', background:T.surface, border:`1px solid ${T.border}`, borderLeft:`3px solid ${C.gaugeBar}`, marginBottom:14 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ fontSize:9, fontWeight:800, color:C.textSec, letterSpacing:2 }}>LAYER 2</span>
+          <span style={{ width:1, height:12, background:T.border, display:'inline-block' }} />
+          <span style={{ fontSize:11, color:T.textSub }}>NLP 시그널 (AI Sentiment)</span>
+          <span style={{ fontSize:9, color:T.textMuted }}>· 가중치 25%</span>
+        </div>
+        <span style={{ fontSize:9, color:T.textMuted }}>{data?.news?.calcDate || ''}</span>
+      </div>
+
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
         {SUBTABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             background:'none', border:'none', cursor:'pointer',
             padding:'10px 22px', fontSize:10, fontWeight:700,
-            color: tab===t.id ? T.accent : T.textMuted,
-            borderBottom: tab===t.id ? `2px solid ${T.accent}` : '2px solid transparent',
+            color: tab===t.id ? T.warn : T.textMuted,
+            borderBottom: tab===t.id ? `2px solid ${T.warn}` : '2px solid transparent',
             letterSpacing:1.2, textTransform:'uppercase', fontFamily:FONT.sans,
             transition:'color 0.12s', position:'relative', top:1,
           }}>
@@ -320,7 +321,7 @@ function NewsTab({ data }) {
                 <Bar dataKey="s" maxBarSize={22} radius={[2,2,0,0]}>
                   {trend.map((e,i) => <Cell key={i} fill={e.s>=0 ? T.up : T.down} fillOpacity={0.65} />)}
                 </Bar>
-                <Line type="monotone" dataKey="s" stroke={T.accent} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
+                <Line type="sanstone" dataKey="s" stroke={T.accent} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
@@ -655,7 +656,7 @@ function TranscriptTab() {
                 <Tooltip contentStyle={tt} />
                 <Bar dataKey="ceo" name="CEO" fill={T.accent} fillOpacity={0.6} maxBarSize={30} radius={[2,2,0,0]} />
                 <Bar dataKey="cfo" name="CFO" fill={T.borderHi} maxBarSize={30} radius={[2,2,0,0]} />
-                <Line type="monotone" dataKey="ceo" stroke={T.accent} strokeWidth={1.5} dot={false} />
+                <Line type="sanstone" dataKey="ceo" stroke={T.accent} strokeWidth={1.5} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </Card>
@@ -674,21 +675,21 @@ function TranscriptTab() {
           <div style={{
             display:'inline-flex', alignItems:'center', gap:8,
             padding:'10px 28px',
-            background:'linear-gradient(135deg, #0d3b3b 0%, #0a2a2a 100%)',
-            border:'1.5px solid #E669A2',
+            background:'linear-gradient(135deg, #020a0a 0%, #040808 100%)',
+            border:'1.5px solid #E88D14',
             borderRadius:4,
             boxShadow:'0 0 24px rgba(0,229,200,0.15), inset 0 0 12px rgba(0,229,200,0.05)',
           }}>
             <span style={{ fontSize:13 }}>🔴</span>
             <span style={{
               fontSize:11, fontWeight:800, letterSpacing:2,
-              color:'#E669A2', fontFamily:FONT.sans, textTransform:'uppercase',
+              color:'#E88D14', fontFamily:FONT.sans, textTransform:'uppercase',
             }}>
               PHASE 2 — COMING SOON
             </span>
           </div>
           <div style={{
-            marginTop:10, fontSize:9, color:'#E669A2',
+            marginTop:10, fontSize:9, color:'#E88D14',
             fontFamily:FONT.sans, letterSpacing:0.5,
           }}>
             유료 API 연동 후 활성화

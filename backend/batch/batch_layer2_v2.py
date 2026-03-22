@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from l2_time_decay_patch import run_news_daily_aggregate_v2
 
 import requests
+import time as _time
 import yfinance as yf
 import numpy as np
 from datetime import datetime, date, timedelta
@@ -157,9 +158,10 @@ def run_news_collection():
     from_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     to_date   = datetime.now().strftime("%Y-%m-%d")
 
-    for s in stocks:
+    for idx, s in enumerate(stocks):
         stock_id, ticker = s["stock_id"], s["ticker"]
         try:
+            _time.sleep(1.0)  # Finnhub 60/min rate limit
             resp = requests.get(
                 "https://finnhub.io/api/v1/company-news",
                 params={"symbol": ticker, "from": from_date, "to": to_date,
@@ -518,14 +520,20 @@ def run_insider_collection():
 
     ok, fail = 0, 0
 
-    for s in stocks:
+    t_start = datetime.now()
+    for idx, s in enumerate(stocks):
         stock_id, ticker = s["stock_id"], s["ticker"]
         try:
+            _time.sleep(1.0)  # Finnhub 60/min rate limit
             resp = requests.get(
                 "https://finnhub.io/api/v1/stock/insider-transactions",
                 params={"symbol": ticker, "token": FINNHUB_API_KEY},
-                timeout=10
+                timeout=5
             )
+            if resp.status_code == 429:
+                print(f"[INSIDER] ⚠️ rate limit, 10초 대기...")
+                _time.sleep(10)
+                continue
             if resp.status_code != 200:
                 continue
 
@@ -573,7 +581,7 @@ def run_insider_collection():
                         ON CONFLICT DO NOTHING
                     """, (stock_id, name, "",
                           is_c, txn_date, txn_type,
-                          abs(change), txn.get("transactionPrice"),
+                          abs(change) if change is not None else 0, txn.get("transactionPrice"),
                           round(value, 2),
                           txn.get("filingDate")))
 
@@ -624,12 +632,17 @@ def run_insider_collection():
                       large_sell_alert, signal, insider_score))
 
             ok += 1
+            if (idx + 1) % 50 == 0:
+                elapsed = (datetime.now() - t_start).total_seconds()
+                eta = elapsed / (idx + 1) * (len(stocks) - idx - 1)
+                print(f"[INSIDER]   {idx+1}/{len(stocks)} — {elapsed:.0f}초, ETA {eta:.0f}초")
         except Exception as e:
             fail += 1
-            if fail <= 5:
+            if fail <= 3:
                 print(f"[INSIDER] {ticker} 실패: {e}")
 
-    print(f"[INSIDER] ✅ 완료: {ok}성공 / {fail}실패")
+    elapsed = (datetime.now() - t_start).total_seconds()
+    print(f"[INSIDER] ✅ 완료: {ok}성공 / {fail}실패 ({elapsed:.0f}초 = {elapsed/60:.1f}분)")
 
 
 # ═══════════════════════════════════════════════════════════════

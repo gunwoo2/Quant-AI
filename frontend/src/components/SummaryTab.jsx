@@ -113,10 +113,10 @@ export default function SummaryTab() {
       </div>
 
       {/* ── 4. Signal Summary + AI Rating History */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 450px", gap: 24, alignItems: "start" }}>
         {/* 좌: Signal Summary */}
         <div style={{ padding: 24, backgroundColor: C.bgDeeper, border: `1px solid ${C.cardBg}`, borderRadius: 16 }}>
-          <h3 style={{ color: C.textPri, fontSize: 14, fontWeight: 800, marginBottom: 18, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.sans }}>
+          <h3 style={{ color: C.textPri, fontSize: 20, fontWeight: 800, marginBottom: 18, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.sans }}>
             <span style={{ width: 3, height: 14, backgroundColor: C.primary, display: "inline-block" }} />
             Signal Summary
           </h3>
@@ -124,14 +124,14 @@ export default function SummaryTab() {
             {[
               { label: "Grade",             value: realtime?.grade ?? "—",                          color: signal.color },
               { label: "Quant Score",       value: realtime?.score != null ? Number(realtime.score).toFixed(1) : "—", color: C.textPri },
-              { label: "L1 (Quant)",        value: realtime?.l1 ?? "—",                             color: C.primary },
-              { label: "L2 (NLP/AI)",       value: realtime?.l2 ?? "—",                             color: C.pink },
-              { label: "L3 (Market)",       value: realtime?.l3 ?? "—",                             color: C.cyan },
-              { label: "Strong Buy Signal", value: realtime?.strong_buy_signal ? "✅ YES" : "—",    color: C.cyan },
+              { label: "L1 (Quant)",        value: realtime?.l1 ?? "—",                             color: C.textSec },
+              { label: "L2 (NLP/AI)",       value: realtime?.l2 ?? "—",                             color: C.textSec },
+              { label: "L3 (Market)",       value: realtime?.l3 ?? "—",                             color: C.textSec },
+              { label: "Strong Buy Signal", value: realtime?.strong_buy_signal ? "✅ YES" : "—",    color: C.up },
               { label: "Strong Sell Signal",value: realtime?.strong_sell_signal ? "🔴 YES" : "—",   color: C.down },
             ].map(row => (
               <div key={row.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.cardBg}` }}>
-                <span style={{ fontSize: 12, color: C.labelColor, fontFamily: FONT.sans }}>{row.label}</span>
+                <span style={{ fontSize: 13, color: C.labelColor, fontFamily: FONT.sans }}>{row.label}</span>
                 <span style={{ fontSize: 14, fontWeight: 800, color: row.color, fontFamily: FONT.sans }}>{row.value}</span>
               </div>
             ))}
@@ -140,7 +140,7 @@ export default function SummaryTab() {
 
         {/* 우: AI Rating History */}
         <div style={{ padding: 24, backgroundColor: C.bgDeeper, border: `1px solid ${C.cardBg}`, borderRadius: 16 }}>
-          <h3 style={{ color: C.textPri, fontSize: 14, fontWeight: 800, marginBottom: 18, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.sans }}>
+          <h3 style={{ color: C.textPri, fontSize: 20, fontWeight: 800, marginBottom: 18, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.sans }}>
             <span style={{ width: 3, height: 14, backgroundColor: C.golden, display: "inline-block" }} />
             AI Rating History
           </h3>

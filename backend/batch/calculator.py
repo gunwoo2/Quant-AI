@@ -109,9 +109,12 @@ def inverse_sigmoid_score(percentile, max_points, steepness=10.0, midpoint=50.0)
 
 def zscore_to_sigmoid(value, mean, std, max_points, steepness=10.0):
     if _HAS_SE: return _se_zscore(value, mean, std, max_points, steepness)
-    if value is None or std is None: return max_points * 0.5
+    if value is None or mean is None or std is None: return max_points * 0.5
     if std == 0 or std < 1e-10: return max_points * 0.5
-    z = (float(value) - float(mean)) / float(std)
+    fval, fmean, fstd = float(value), float(mean), float(std)
+    if np.isnan(fval) or np.isinf(fval) or np.isnan(fmean) or np.isinf(fmean):
+        return max_points * 0.5
+    z = (fval - fmean) / fstd
     pct = 100.0 / (1.0 + np.exp(-1.7 * z))
     return sigmoid_score(pct, max_points, steepness)
 
@@ -333,3 +336,4 @@ def calc_layer1_score(moat, value, momentum, stability, pct, **kwargs):
         "sector_percentile_rank": _f(pct.get("overall_percentile")),
         "total_score_adj": total, "_data_quality": dq,
     }
+

@@ -106,7 +106,7 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
 
     # Circuit Breaker 평가
     cb_status = _cb.evaluate(calc_date)
-    print(f"  CB: {cb_status.level.name} | 연패={cb_status.losing_streak} | Buy={'✅' if cb_status.buy_allowed else '❌'}")
+    print(f"  CB: {cb_status.level.name} | 연패={cb_status.consecutive_losses} | Buy={'✅' if cb_status.buy_allowed else '❌'}")
 
     # DecisionAudit 초기화
     audit = DecisionAudit(calc_date=calc_date, regime=regime, dd_mode=dd_status.mode.name)
@@ -282,7 +282,7 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
             sector_invested=dict(sector_invested),
             num_positions=num_existing + len(buy_signals),
             dd_mult=dd_status.position_size_mult,
-            cb_mult=cb_status.position_size_mult,
+            cb_mult=cb_status.position_mult,
         )
 
         if ps.shares <= 0:
@@ -353,6 +353,55 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
     except Exception:
         pass
 
+
+    # ── ★ v3.6: 긴급 매도 + 반등 기회 알림 ──
+    fire_signals = [s for s in sell_signals if s.get("reason", "").startswith("HARD_STOP") 
+                    or s.get("pnl_pct", 0) < -15]
+    if fire_signals:
+        try:
+            from notifier import notify_fire_sell
+            notify_fire_sell(calc_date=calc_date, fire_signals=fire_signals, 
+                           trigger="HARD_STOP / 손실 15%+")
+        except Exception as e:
+            print(f"  ⚠️ 긴급매도 알림 실패: {e}")
+
+    # 반등 기회: 최근 5일 -10% 이상 하락 후 오늘 +2% 이상 반등
+    bounce_signals = []
+    try:
+        from db_pool import get_cursor as _gc
+        with _gc() as cur:
+            cur.execute("""
+                SELECT s.ticker, s.stock_id, spr.current_price, spr.price_change_pct,
+                       fs.weighted_score, fs.grade
+                FROM stock_prices_realtime spr
+                JOIN stocks s ON s.stock_id = spr.stock_id
+                LEFT JOIN final_scores fs ON fs.stock_id = s.stock_id AND fs.calc_date = %s
+                WHERE spr.price_change_pct > 2.0
+                AND s.stock_id IN (
+                    SELECT stock_id FROM stock_prices_daily
+                    WHERE trade_date >= %s - INTERVAL '5 days'
+                    GROUP BY stock_id
+                    HAVING MIN(close_price) / MAX(close_price) < 0.90
+                )
+            """, (calc_date, calc_date))
+            for row in cur.fetchall():
+                bounce_signals.append({
+                    "ticker": row["ticker"],
+                    "price": float(row["current_price"]),
+                    "today_change": float(row["price_change_pct"] or 0),
+                    "score": float(row["weighted_score"] or 0) if row.get("weighted_score") else 0,
+                    "grade": row.get("grade", "?"),
+                })
+    except Exception:
+        pass
+
+    if bounce_signals:
+        try:
+            from notifier import notify_bounce_opportunity
+            notify_bounce_opportunity(calc_date=calc_date, bounce_signals=bounce_signals)
+        except Exception as e:
+            print(f"  ⚠️ 반등기회 알림 실패: {e}")
+
     # 결과 요약
     print(f"\n{'='*60}")
     print(f"  ✅ v3.3 시그널 파이프라인 완료")
@@ -402,15 +451,25 @@ def _check_regime_change(calc_date: date, current_regime: str):
         """, (calc_date,))
         row = cur.fetchone()
     if row and row["regime"] != current_regime:
+        old_regime = row["regime"]
         try:
-            from notifier import notify_emergency
-            notify_emergency(
-                f"시장 국면 전환: {row['regime']} → {current_regime}",
-                f"전일 {row['regime']}에서 {current_regime}로 변경되었습니다.\n"
-                f"DynamicConfig가 자동으로 파라미터를 조정합니다."
+            from notifier import notify_regime_change
+            notify_regime_change(
+                calc_date=calc_date,
+                old_regime=old_regime,
+                new_regime=current_regime,
+                detail=f"DynamicConfig가 자동으로 파라미터를 조정합니다."
             )
         except Exception:
-            pass
+            # fallback to emergency
+            try:
+                from notifier import notify_emergency
+                notify_emergency(
+                    f"시장 국면 전환: {old_regime} → {current_regime}",
+                    f"전일 {old_regime}에서 {current_regime}로 변경"
+                )
+            except Exception:
+                pass
 
 
 # ═══════════════════════════════════════════════════════════

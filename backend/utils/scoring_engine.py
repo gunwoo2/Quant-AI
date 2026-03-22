@@ -93,13 +93,19 @@ def zscore_to_sigmoid(value: float, mean: float, std: float,
     - std=0이면 모든 종목이 같은 값 → mid-point 점수 반환
     - 섹터 내 mean/std를 사용하면 자동으로 섹터 특성 반영
     """
-    if value is None or std is None:
+    if value is None or mean is None or std is None:
         return max_points * 0.5  # 데이터 없으면 중립
     
     if std == 0 or std < 1e-10:
         return max_points * 0.5
     
-    z = (float(value) - float(mean)) / float(std)
+    fval = float(value)
+    fmean = float(mean)
+    fstd = float(std)
+    # NaN/Inf 방어
+    if np.isnan(fval) or np.isinf(fval) or np.isnan(fmean) or np.isinf(fmean):
+        return max_points * 0.5
+    z = (fval - fmean) / fstd
     # Z-score → 0~100 percentile (대략적)
     # 표준정규분포 CDF 근사: Φ(z) ≈ sigmoid(1.7*z)
     pct = 100.0 / (1.0 + np.exp(-1.7 * z))
