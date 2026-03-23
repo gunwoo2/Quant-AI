@@ -1,6 +1,8 @@
 # ── 환경/비밀 ──
 .env
 .env.*
+.end.development
+.end.production
 !.env.example
 secret_info/
 
