@@ -724,6 +724,16 @@ def run_technical_indicators(calc_date: date = None):
 run_all = run_technical_indicators
 
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# run_all() — scheduler 호환 wrapper
+# scheduler_fixed.py가 `from batch.batch_layer3_v2 import run_all` 호출
+# ═══════════════════════════════════════════════════════════════
+def run_all(calc_date=None):
+    """scheduler 호환 wrapper → run_technical_indicators 호출"""
+    run_technical_indicators(calc_date)
+
 if __name__ == "__main__":
     from db_pool import init_pool
     init_pool()
