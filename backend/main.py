@@ -1,7 +1,9 @@
 """
-main.py — QUANT AI Backend v3.3
+main.py — QUANT AI Backend v3.7
 =================================
-v3.3: DynamicConfig + DD 5단계 + CircuitBreaker + 8채널 알림 + 주간/월간 리포트
+v3.7: standalone scheduler(21:00 ET)와 역할 분리
+  - main.py: API 서버 + 모닝 브리핑만
+  - batch.scheduler: 일일 배치 + 주간/월간 리포트
 """
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +34,11 @@ logger = logging.getLogger("quant_ai")
 _scheduler = None
 
 
+# ══════════════════════════════════════════════
+#  스케줄러 (모닝 브리핑 전용)
+#  ★ 일일 배치는 standalone batch.scheduler에서 처리
+# ══════════════════════════════════════════════
+
 def _init_scheduler():
     global _scheduler
     try:
@@ -41,38 +48,21 @@ def _init_scheduler():
         et = pytz.timezone("US/Eastern")
         _scheduler = BackgroundScheduler(timezone=et)
 
-        # 일일 배치: 월~금 ET 02:00
-        _scheduler.add_job(
-            _run_daily_batch,
-            trigger=CronTrigger(day_of_week="mon-fri", hour=2, minute=0, timezone=et),
-            id="daily_batch",
-            name="Daily 10-Step Batch v3.3",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
+        # ★ daily_batch 제거 — standalone batch.scheduler (21:00 ET)에서 처리
+        # ★ earnings_call 제거 — standalone scheduler Step 5.5에서 처리
 
-        # 어닝콜: 분기별 (1,4,7,10월 15일)
-        _scheduler.add_job(
-            _run_earnings_call_batch,
-            trigger=CronTrigger(month="1,4,7,10", day=15, hour=8, minute=0, timezone=et),
-            id="earnings_call_quarterly",
-            name="Quarterly Earnings Call",
-            replace_existing=True,
-            misfire_grace_time=86400,
-        )
-
-        # 모닝 브리핑: 월~금 ET 08:30
+        # 모닝 브리핑: 월~금 ET 08:30 (KST 21:30)
         _scheduler.add_job(
             _run_morning_briefing,
             trigger=CronTrigger(day_of_week="mon-fri", hour=8, minute=30, timezone=et),
             id="morning_briefing",
-            name="Morning Briefing v3.3",
+            name="Morning Briefing",
             replace_existing=True,
             misfire_grace_time=1800,
         )
 
         _scheduler.start()
-        print("[SCHEDULER] ✅ APScheduler v3.3 시작 (일일 02:00, 모닝 08:30, 어닝콜 분기)")
+        print("[SCHEDULER] ✅ 모닝 브리핑 스케줄러 시작 (평일 08:30 ET)")
 
     except ImportError:
         print("[SCHEDULER] ⚠️  APScheduler 미설치 — pip install apscheduler")
@@ -88,26 +78,19 @@ def _shutdown_scheduler():
 
 
 def _run_daily_batch():
+    """수동 배치 실행용 (POST /api/batch/run)"""
     try:
         from batch.scheduler import run_all
-        print(f"\n[BATCH] ▶ 시작: {datetime.now()}")
+        print(f"\n[BATCH] ▶ 수동 실행 시작: {datetime.now()}")
         run_all(date.today())
-        print(f"[BATCH] ✅ 완료: {datetime.now()}")
+        print(f"[BATCH] ✅ 수동 실행 완료: {datetime.now()}")
     except Exception as e:
         print(f"[BATCH] ❌ 실패: {e}")
         try:
             from notifier import notify_emergency
-            notify_emergency("배치 실패", str(e))
+            notify_emergency("수동 배치 실패", str(e))
         except Exception:
             pass
-
-
-def _run_earnings_call_batch():
-    try:
-        from batch.batch_earnings_call import run_earnings_call_analysis
-        run_earnings_call_analysis(date.today())
-    except Exception as e:
-        print(f"[EC-BATCH] ❌ 실패: {e}")
 
 
 def _run_morning_briefing():
@@ -186,8 +169,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="QUANT AI API",
-    version="3.3",
-    description="S&P500 퀀트+NLP+기술지표+트레이딩 시그널 v3.3",
+    version="3.7",
+    description="S&P500 퀀트+NLP+기술지표+트레이딩 시그널 v3.7",
     lifespan=lifespan,
 )
 
@@ -226,7 +209,7 @@ def health_check():
     try:
         with db_pool.get_cursor() as cur:
             cur.execute("SELECT 1")
-        return {"status": "ok", "version": "3.3"}
+        return {"status": "ok", "version": "3.7"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
@@ -236,9 +219,9 @@ def system_info():
     sched_info = "OFF"
     if _scheduler and _scheduler.running:
         jobs = _scheduler.get_jobs()
-        sched_info = f"ON ({len(jobs)} jobs)"
+        sched_info = f"ON ({len(jobs)} jobs: morning briefing)"
     return {
-        "version": "3.3",
+        "version": "3.7",
         "features": [
             "DynamicConfig 국면별 파라미터",
             "Drawdown 5단계 방어",
@@ -250,8 +233,11 @@ def system_info():
             "모닝 브리핑",
             "주간/월간 리포트",
             "DecisionAudit 의사결정 기록",
+            "Layer 3 Flow/Macro (B+C)",
+            "가격 안전장치 (stale 검증)",
         ],
         "scheduler": sched_info,
+        "batch_scheduler": "standalone (21:00 ET)",
         "routers": 9 + len(_optional_routers),
         "trading_mode": "LIVE" if os.environ.get("TRADING_LIVE", "0") == "1" else "DRY_RUN",
     }

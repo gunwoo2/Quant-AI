@@ -38,6 +38,14 @@ from portfolio.correlation_filter import CorrelationFilter
 from portfolio.position_sizer import calculate_position_size
 from analytics.decision_audit import DecisionAudit
 
+# ── v4.0 Adaptive Threshold ──
+try:
+    from utils.adaptive_scoring import compute_adaptive_threshold
+    _HAS_ADAPTIVE = True
+except ImportError:
+    _HAS_ADAPTIVE = False
+    print("[WARN] adaptive_scoring 미설치 — 고정 임계값 사용")
+
 # ── signal 패키지 (Python 내장 signal 충돌 우회) ──
 def _import_signal_module(name):
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -165,6 +173,42 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
     buy_candidates = []
     held_tickers = list(current_positions.keys())
 
+    # ★ Adaptive Threshold 계산 (v4.0)
+    adaptive_buy_threshold = cfg.buy_score_min  # fallback
+    if _HAS_ADAPTIVE:
+        try:
+            all_final_scores = [s.get("final_score", 0) for s in stocks.values()]
+            # Dispersion Guard: 역사적 분산 로드
+            _hist_std = None
+            try:
+                with get_cursor() as cur:
+                    cur.execute("""
+                        SELECT AVG(score_std) as avg_std FROM daily_score_stats
+                        WHERE calc_date >= %s::date - 60 AND calc_date < %s
+                    """, (calc_date, calc_date))
+                    row = cur.fetchone()
+                    if row and row["avg_std"]:
+                        _hist_std = float(row["avg_std"])
+            except Exception:
+                pass
+
+            at_result = compute_adaptive_threshold(
+                all_final_scores, regime, historical_std=_hist_std)
+            adaptive_buy_threshold = at_result["threshold"]
+
+            print(f"  [ADAPTIVE] regime={regime} "
+                  f"threshold={at_result['threshold']:.1f} "
+                  f"(floor={at_result['absolute_floor']}, "
+                  f"P{at_result['buy_percentile']}={at_result['percentile_threshold']:.1f}, "
+                  f"disp_floor={at_result['dispersion_floor']:.1f})")
+            print(f"  [ADAPTIVE] 분산비율={at_result['dispersion_ratio']:.3f} "
+                  f"평균={at_result['score_mean']:.1f} "
+                  f"std={at_result['score_std']:.1f} "
+                  f"후보={at_result['candidates_above']}개")
+        except Exception as e:
+            print(f"  [ADAPTIVE] ⚠️ 계산 실패, fallback={cfg.buy_score_min}: {e}")
+            adaptive_buy_threshold = cfg.buy_score_min
+
     # 상관 필터용 가격 데이터
     price_df = _load_price_matrix(calc_date, list(stocks.keys()))
 
@@ -182,8 +226,8 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
         atr = stock.get("atr_14", 0)
         price = stock.get("current_price", 0)
 
-        # 점수 필터
-        rec.score_filter = final_score >= cfg.buy_score_min
+        # 점수 필터 (★ Adaptive Threshold v4.0)
+        rec.score_filter = final_score >= adaptive_buy_threshold
         if not rec.score_filter:
             rec.decision = "SKIP"
             audit.add(rec)

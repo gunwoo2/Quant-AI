@@ -1,12 +1,18 @@
 """
-batch/batch_final_score.py — 최종 점수 합산 v3.1 (Step 4: 적응형)
-================================================================
-변경:
+batch/batch_final_score.py — 최종 점수 합산 v4.0 (Adaptive Threshold)
+=====================================================================
+v4.0 변경:
+  ★ Cross-Sectional Percentile 기반 등급 (Barra USE4 방법론)
+  ★ Absolute Floor Cap (쓰레기 1등 방지)
+  ★ Rating Momentum — EMA Smoothing (Frazzini 2018)
+  ★ Dispersion Guard — Factor Compression 감지
+  ★ Conviction Score — 다차원 확신도
+  ★ 2-Pass 방식: Pass1 점수계산 → Pass2 백분위 등급부여
+
+v3.1 유지:
   - final_score_engine 적응형 합산 (동적 가중치 + Shrinkage)
-  - L2/L3 결측 시 50.0 하드코딩 → 가중치 재분배
-  - data_completeness, confidence_level DB 저장
-  - L3 컬럼 COALESCE (layer3_total_score ∥ layer3_technical_score)
-  - Strong Buy/Sell 다층 판별
+  - L2/L3 결측 시 가중치 재분배
+  - data_completeness, confidence_level
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,9 +22,20 @@ try:
 except ImportError:
     pass
 
+import numpy as np
 from datetime import datetime, date
 from db_pool import get_cursor
-from utils.grade_utils import score_to_grade, score_to_signal
+from utils.adaptive_scoring import (
+    compute_cross_sectional_percentiles,
+    percentile_to_grade,
+    apply_absolute_floor,
+    grade_to_signal,
+    smooth_percentile,
+    compute_dispersion_ratio,
+    compute_conviction,
+    calc_adaptive_conviction_signal,
+    GRADE_ORDER,
+)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -26,13 +43,10 @@ from utils.grade_utils import score_to_grade, score_to_signal
 # ═══════════════════════════════════════════════════════════
 
 try:
-    from utils.final_score_engine import calc_final_weighted_score, calc_conviction_signal
+    from utils.final_score_engine import calc_final_weighted_score
     _HAS_FSE = True
 except ImportError:
     _HAS_FSE = False
-
-
-# ── 자체 구현 (final_score_engine 없을 때 폴백) ──
 
 W_L1, W_L2, W_L3 = 0.50, 0.25, 0.25
 SHRINKAGE_ALPHA = 0.15
@@ -50,12 +64,10 @@ if not _HAS_FSE:
                 available[name] = (float(score), base_w)
             else:
                 missing_count += 1
-
         if not available:
             return {"weighted_score": 50.0, "data_completeness": 0.0,
                     "l1_weight_actual": 0.0, "l2_weight_actual": 0.0,
                     "l3_weight_actual": 0.0, "confidence_level": "LOW"}
-
         total_w = sum(w for _, w in available.values())
         actual = {n: w / total_w for n, (_, w) in available.items()}
         weighted = sum(s * actual[n] for n, (s, _) in available.items())
@@ -70,36 +82,92 @@ if not _HAS_FSE:
                 "l3_weight_actual": round(actual.get("L3", 0), 4),
                 "confidence_level": conf}
 
-    def calc_conviction_signal(weighted_score, layer1_score=None,
-                                layer2_score=None, layer3_score=None,
-                                data_completeness=1.0):
-        l1 = layer1_score or 50.0; l2 = layer2_score or 50.0; l3 = layer3_score or 50.0
-        sb, ss, reason = False, False, ""
-        if data_completeness >= 0.67 and weighted_score >= 72 and l1 >= 65:
-            if l2 >= 55 or l3 >= 55:
-                sb = True; r = []
-                if l1 >= 70: r.append("L1강세")
-                if l2 >= 60: r.append("NLP긍정")
-                if l3 >= 65: r.append("기술강세")
-                reason = "+".join(r) or "종합고점수"
-        if weighted_score <= 35 and l1 <= 40:
-            ss = True; r = []
-            if l1 <= 30: r.append("L1약세")
-            if l2 <= 35: r.append("NLP부정")
-            if l3 <= 30: r.append("기술약세")
-            reason = "+".join(r) or "종합저점수"
-        return {"strong_buy_signal": sb, "strong_sell_signal": ss, "conviction_reason": reason}
-
 
 def _f(v):
     if v is None: return None
     try: return float(v)
-    except: return None
+    except (TypeError, ValueError): return None
 
 
 def _signal_to_opinion(signal):
     return {"STRONG_BUY":"강력매수","BUY":"매수","HOLD":"보유",
             "SELL":"매도","STRONG_SELL":"강력매도"}.get(signal, "보유")
+
+
+# ═══════════════════════════════════════════════════════════
+# EMA 히스토리 조회/저장
+# ═══════════════════════════════════════════════════════════
+
+def _load_yesterday_smoothed(calc_date):
+    """어제의 smoothed percentile rank 조회."""
+    result = {}
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT stock_id, percentile_rank
+                FROM stock_final_scores
+                WHERE calc_date = (
+                    SELECT MAX(calc_date) FROM stock_final_scores
+                    WHERE calc_date < %s
+                )
+            """, (calc_date,))
+            for r in cur.fetchall():
+                result[r["stock_id"]] = float(r["percentile_rank"]) if r["percentile_rank"] else None
+    except Exception:
+        pass  # 첫 실행이면 빈 dict
+    return result
+
+
+def _get_stock_history_days(stock_id, calc_date):
+    """종목의 점수 히스토리 일수."""
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) as cnt FROM stock_final_scores
+                WHERE stock_id = %s AND calc_date < %s
+            """, (stock_id, calc_date))
+            return cur.fetchone()["cnt"]
+    except Exception:
+        return 0
+
+
+def _load_historical_std(calc_date, lookback=60):
+    """최근 N일 횡단면 분산 평균 (Dispersion Guard용)."""
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT AVG(score_std) as avg_std
+                FROM daily_score_stats
+                WHERE calc_date >= %s::date - %s AND calc_date < %s
+            """, (calc_date, lookback, calc_date))
+            row = cur.fetchone()
+            if row and row["avg_std"]:
+                return float(row["avg_std"])
+    except Exception:
+        pass
+    return None
+
+
+def _save_daily_stats(calc_date, scores):
+    """일별 점수 통계 저장 (Dispersion Guard 히스토리)."""
+    try:
+        arr = np.array(scores, dtype=float)
+        with get_cursor() as cur:
+            cur.execute("""
+                INSERT INTO daily_score_stats (calc_date, score_mean, score_std, score_median, stock_count)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (calc_date) DO UPDATE SET
+                    score_mean = EXCLUDED.score_mean,
+                    score_std = EXCLUDED.score_std,
+                    score_median = EXCLUDED.score_median,
+                    stock_count = EXCLUDED.stock_count
+            """, (calc_date,
+                  round(float(np.mean(arr)), 4),
+                  round(float(np.std(arr)), 4),
+                  round(float(np.median(arr)), 4),
+                  len(arr)))
+    except Exception as e:
+        print(f"  [STATS] daily_score_stats 저장 실패 (테이블 미생성?): {e}")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -110,8 +178,9 @@ def run_final_score(calc_date: date = None):
     if calc_date is None:
         calc_date = datetime.now().date()
 
-    print(f"[FINAL] ▶ 시작 calc_date={calc_date}")
+    print(f"[FINAL] ▶ 시작 calc_date={calc_date} (Adaptive Scoring v4.0)")
 
+    # ── DB에서 전 종목 원점수 로드 ──
     stocks = []
     with get_cursor() as cur:
         cur.execute("""
@@ -141,46 +210,117 @@ def run_final_score(calc_date: date = None):
         stocks = [dict(r) for r in cur.fetchall()]
 
     print(f"[FINAL] 대상 종목: {len(stocks)}개")
+    if not stocks:
+        print("[FINAL] ⚠️ 종목 없음 — 종료")
+        return {"ok": 0, "fail": 0}
 
-    ok, fail = 0, 0
+    # ══════════════════════════════════════════════
+    #  Pass 1: 전 종목 weighted_score 계산
+    # ══════════════════════════════════════════════
+    print("[FINAL] Pass 1: weighted_score 계산...")
 
     for s in stocks:
+        l1 = _f(s.get("layer1_score"))
+        l2 = _f(s.get("layer2_total_score"))
+        l3 = _f(s.get("layer3_score"))
+
+        result = calc_final_weighted_score(
+            layer1_score=l1, layer2_score=l2, layer3_score=l3)
+
+        s["l1_raw"] = l1
+        s["l2_raw"] = l2
+        s["l3_raw"] = l3
+        s["weighted"] = result["weighted_score"]
+        s["dc"] = result["data_completeness"]
+        s["conf"] = result["confidence_level"]
+
+    # ══════════════════════════════════════════════
+    #  Pass 2: Cross-Sectional 분석 + 등급 부여
+    # ══════════════════════════════════════════════
+    print("[FINAL] Pass 2: 횡단면 분석 + 등급 부여...")
+
+    # ① 전 종목 점수 배열
+    all_weighted = np.array([s["weighted"] for s in stocks])
+    all_l1 = np.array([s["l1_raw"] or 50.0 for s in stocks])
+    all_l2 = np.array([s["l2_raw"] or 50.0 for s in stocks])
+    all_l3 = np.array([s["l3_raw"] or 50.0 for s in stocks])
+
+    # ② Percentile Rank (Barra MAD Z-Score 기반)
+    pct_weighted = compute_cross_sectional_percentiles(all_weighted)
+    pct_l1 = compute_cross_sectional_percentiles(all_l1)
+    pct_l2 = compute_cross_sectional_percentiles(all_l2)
+    pct_l3 = compute_cross_sectional_percentiles(all_l3)
+
+    # ③ 일별 통계 저장 (Dispersion Guard 히스토리)
+    _save_daily_stats(calc_date, all_weighted)
+
+    # ④ Dispersion ratio
+    hist_std = _load_historical_std(calc_date)
+    disp_ratio = compute_dispersion_ratio(all_weighted, hist_std)
+
+    # ⑤ EMA 히스토리 로드
+    yesterday_smoothed = _load_yesterday_smoothed(calc_date)
+
+    # ⑥ 통계 출력
+    print(f"  [STATS] 평균={np.mean(all_weighted):.1f} "
+          f"표준편차={np.std(all_weighted):.1f} "
+          f"중앙값={np.median(all_weighted):.1f} "
+          f"범위=[{np.min(all_weighted):.1f}~{np.max(all_weighted):.1f}]")
+    print(f"  [STATS] 분산비율={disp_ratio:.3f} "
+          f"(역사적 std={'%.2f' % hist_std if hist_std else 'N/A'})")
+
+    # ══════════════════════════════════════════════
+    #  Pass 3: DB 저장
+    # ══════════════════════════════════════════════
+    ok, fail = 0, 0
+
+    for i, s in enumerate(stocks):
         stock_id = s["stock_id"]
-        ticker   = s["ticker"]
+        ticker = s["ticker"]
 
         try:
-            l1_raw = _f(s.get("layer1_score"))
-            l2_raw = _f(s.get("layer2_total_score"))
-            l3_raw = _f(s.get("layer3_score"))
+            weighted = s["weighted"]
+            dc = s["dc"]
+            conf = s["conf"]
+            l1_raw = s["l1_raw"]
+            l2_raw = s["l2_raw"]
+            l3_raw = s["l3_raw"]
 
-            # ── 적응형 합산 ──
-            result = calc_final_weighted_score(
-                layer1_score=l1_raw,
-                layer2_score=l2_raw,
-                layer3_score=l3_raw,
-            )
+            # ── Percentile Rank ──
+            raw_pct = float(pct_weighted[i])
 
-            weighted = result["weighted_score"]
-            dc       = result["data_completeness"]
-            conf     = result["confidence_level"]
+            # ── EMA Smoothing ──
+            prev_smoothed = yesterday_smoothed.get(stock_id)
+            hist_days = len(yesterday_smoothed)  # 대략적 추정
+            smoothed_pct = smooth_percentile(raw_pct, prev_smoothed,
+                                             hist_days if prev_smoothed else 0)
 
-            grade   = score_to_grade(weighted)
-            signal  = score_to_signal(weighted)
+            # ── 등급 산출 (smoothed percentile 기반) ──
+            pct_grade = percentile_to_grade(smoothed_pct)
+            grade = apply_absolute_floor(pct_grade, weighted)
+            signal = grade_to_signal(grade)
             opinion = _signal_to_opinion(signal)
 
-            # ── Strong Buy/Sell ──
-            conviction = calc_conviction_signal(
-                weighted, l1_raw, l2_raw, l3_raw, dc)
+            # ── Conviction Score ──
+            conv = compute_conviction(
+                smoothed_pct,
+                float(pct_l1[i]), float(pct_l2[i]), float(pct_l3[i]),
+                dc, disp_ratio)
 
+            # ── Strong Buy/Sell ──
+            conviction = calc_adaptive_conviction_signal(
+                grade, float(pct_l1[i]), float(pct_l2[i]), float(pct_l3[i]), dc)
+
+            # ── DB 저장: stock_final_scores ──
             with get_cursor() as cur:
-                # stock_final_scores
                 cur.execute("""
                     INSERT INTO stock_final_scores (
                         stock_id, calc_date,
                         layer1_score, layer2_score, layer3_score,
                         weighted_score, grade, signal, investment_opinion,
-                        strong_buy_signal, strong_sell_signal
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        strong_buy_signal, strong_sell_signal,
+                        percentile_rank, conviction_score
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (stock_id, calc_date) DO UPDATE SET
                         layer1_score       = EXCLUDED.layer1_score,
                         layer2_score       = EXCLUDED.layer2_score,
@@ -190,12 +330,16 @@ def run_final_score(calc_date: date = None):
                         signal             = EXCLUDED.signal,
                         investment_opinion = EXCLUDED.investment_opinion,
                         strong_buy_signal  = EXCLUDED.strong_buy_signal,
-                        strong_sell_signal = EXCLUDED.strong_sell_signal
+                        strong_sell_signal = EXCLUDED.strong_sell_signal,
+                        percentile_rank    = EXCLUDED.percentile_rank,
+                        conviction_score   = EXCLUDED.conviction_score
                 """, (stock_id, calc_date,
                       l1_raw or 0, l2_raw or 0, l3_raw or 0,
                       weighted, grade, signal, opinion,
                       conviction["strong_buy_signal"],
-                      conviction["strong_sell_signal"]))
+                      conviction["strong_sell_signal"],
+                      round(smoothed_pct, 2),
+                      conv["conviction_score"]))
 
                 # stock_rating_history
                 cur.execute("""
@@ -215,7 +359,7 @@ def run_final_score(calc_date: date = None):
                       l1_raw or 0, l2_raw or 0, l3_raw or 0,
                       weighted, grade, signal))
 
-                # high_conviction_signals (Strong Buy/Sell만)
+                # high_conviction_signals
                 if conviction["strong_buy_signal"] or conviction["strong_sell_signal"]:
                     cur.execute("""
                         INSERT INTO high_conviction_signals (
@@ -237,19 +381,33 @@ def run_final_score(calc_date: date = None):
                           conviction["conviction_reason"]))
 
             ok += 1
-            l1_str = f"{l1_raw:.1f}" if l1_raw else "N/A"
-            l2_str = f"{l2_raw:.1f}" if l2_raw else "N/A"
-            l3_str = f"{l3_raw:.1f}" if l3_raw else "N/A"
 
-            if ok <= 7 or ok % 50 == 0:
-                extra = f" [{conf}]" if conf != "HIGH" else ""
-                print(f"  {ticker}: L1={l1_str} L2={l2_str} L3={l3_str} "
-                      f"→ {weighted} ({grade}/{signal}){extra}")
+            if ok <= 7 or ok % 100 == 0:
+                print(f"  {ticker}: {weighted:.1f}점 P{smoothed_pct:.0f} "
+                      f"→ {grade}/{signal} conv={conv['conviction_score']:.3f}")
 
         except Exception as e:
             fail += 1
             if fail <= 3:
+                import traceback
                 print(f"[FINAL] {ticker} fail: {e}")
+                traceback.print_exc()
+
+    # ── 등급 분포 출력 ──
+    from collections import Counter
+    grade_dist = Counter()
+    for s in stocks:
+        raw_pct = float(pct_weighted[stocks.index(s)])
+        prev = yesterday_smoothed.get(s["stock_id"])
+        sp = smooth_percentile(raw_pct, prev, len(yesterday_smoothed) if prev else 0)
+        g = apply_absolute_floor(percentile_to_grade(sp), s["weighted"])
+        grade_dist[g] += 1
+
+    print(f"\n  [등급 분포]")
+    for g in ["S", "A+", "A", "B+", "B", "C", "D"]:
+        cnt = grade_dist.get(g, 0)
+        bar = "█" * min(cnt, 40)
+        print(f"    {g:3s}: {cnt:>4d} {bar}")
 
     print(f"[FINAL] ✅ 완료 성공={ok} 실패={fail}")
     return {"ok": ok, "fail": fail}
