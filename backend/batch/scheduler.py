@@ -24,7 +24,15 @@ def run_all(calc_date: date = None):
         calc_date = datetime.now().date()
     start_all = datetime.now()
     results = {}
-    print(f"\n{'='*60}\n  QUANT AI v3.4 일일 배치 — {calc_date}\n{'='*60}")
+    print(f"\n{'='*60}\n  QUANT AI v4.0 일일 배치 — {calc_date}\n{'='*60}")
+
+    # ── 배치 시작 알림 → MY_SYSTEM + PUB_REPORT ──
+    try:
+        from notifier import notify_batch_start
+        notify_batch_start(calc_date=calc_date, job_name="Daily Full Pipeline")
+        print("  ✅ 배치 시작 알림 전송")
+    except Exception as e:
+        print(f"  ⚠️ 배치 시작 알림 실패: {e}")
 
     # ── Step 1~7: 계산 전용 (알림 ZERO) ──
     results["1_price"]   = _run_step("1/10 가격 수집",        lambda: _s_price(calc_date))
