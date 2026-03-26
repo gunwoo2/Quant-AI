@@ -43,7 +43,7 @@ const Footer = () => {
           lineHeight: '1.6',
           maxWidth: '500px'
         }}>
-          © 2026 GunWoo KIM. All rights reserved. Market data is delayed by at least 15 minutes. 
+          © 2026 GunWoo KIM. All rights reserved. Market data is based on the previous trading day. Batch processing is performed daily at 10:00 AM KST.
           This platform is intended for professional investors and institutional use only.
         </div>
 
@@ -60,9 +60,9 @@ const Footer = () => {
         }}>
           <span>STATUS: <span style={{color: C.up}}>●</span> ONLINE</span>
           <span style={{color: '#222'}}>|</span>
-          <span>VERSION: 1.0.4-PRO</span>
+          <span>VERSION: 1.1.0-PRO</span>
           <span style={{color: '#222'}}>|</span>
-          <span>LAST DEPLOY: 2026-03-02</span>
+          <span>LAST DEPLOY: 2026-03-026</span>
         </div>
       </div>
     </footer>

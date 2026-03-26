@@ -548,7 +548,7 @@ def run_quant_score(calc_date: date = None):
             pct = sector_data.get(stock_id, {})
 
             # ── 점수 계산 (섹터 컨텍스트 전달) ──
-            moat_s      = _sanitize(calc_moat_scores(fin, pct, sector_code=sector))
+            moat_s      = _sanitize(calc_moat_scores(fin, pct, sector_code=sector, fin_prev=fin_prev))
             value_s     = _sanitize(calc_value_scores(fin, pct, sector_code=sector))
             momentum_s  = _sanitize(calc_momentum_scores(fin, fin_prev, pct, sector_code=sector))
             stability_s = _sanitize(calc_stability_scores(price_df, eps_hist, div_years, pct, sector_code=sector))

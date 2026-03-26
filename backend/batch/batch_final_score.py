@@ -334,7 +334,7 @@ def run_final_score(calc_date: date = None):
                         percentile_rank    = EXCLUDED.percentile_rank,
                         conviction_score   = EXCLUDED.conviction_score
                 """, (stock_id, calc_date,
-                      l1_raw or 0, l2_raw or 0, l3_raw or 0,
+                      l1_raw, l2_raw, l3_raw,
                       weighted, grade, signal, opinion,
                       conviction["strong_buy_signal"],
                       conviction["strong_sell_signal"],
@@ -356,7 +356,7 @@ def run_final_score(calc_date: date = None):
                         grade          = EXCLUDED.grade,
                         signal         = EXCLUDED.signal
                 """, (stock_id, calc_date,
-                      l1_raw or 0, l2_raw or 0, l3_raw or 0,
+                      l1_raw, l2_raw, l3_raw,
                       weighted, grade, signal))
 
                 # high_conviction_signals
@@ -375,7 +375,7 @@ def run_final_score(calc_date: date = None):
                             signal_type  = EXCLUDED.signal_type,
                             reason       = EXCLUDED.reason
                     """, (stock_id, calc_date,
-                          l1_raw or 0, l2_raw or 0, l3_raw or 0,
+                          l1_raw, l2_raw, l3_raw,
                           weighted,
                           "STRONG_BUY" if conviction["strong_buy_signal"] else "STRONG_SELL",
                           conviction["conviction_reason"]))

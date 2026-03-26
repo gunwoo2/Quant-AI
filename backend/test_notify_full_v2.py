@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-test_notify_full_v3.py — 개인/공용 전체 Discord 알림 테스트
-===========================================================
-notifier v3.6 (개인/공용 분리 + 안전장치) 전체 기능 테스트.
+test_notify_full_v4.py — QUANT AI v4.0 전체 알림 테스트
+=======================================================
+Premium 13웹훅 + Public 5웹훅 = 18개 웹훅 전체 검증.
 
 실행:
   cd ~/Quant-AI/backend
-  python test_notify_full_v3.py
-
-.env에 웹훅 URL이 설정되어 있어야 합니다.
+  python test_notify_full_v4.py
 """
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,42 +15,43 @@ load_dotenv()
 
 from datetime import date
 from notifier import (
-    _WEBHOOK_MY, _WEBHOOK_PUB, _FALLBACK_URL, _send_discord,
+    _WEBHOOK_MY, _WEBHOOK_PUB, _FALLBACK_URL,
+    notify_morning_briefing,
     notify_daily_signals,
     notify_add_position,
     notify_fire_sell,
     notify_bounce_opportunity,
-    notify_morning_briefing,
-    notify_daily_performance,
+    notify_risk_warning,
     notify_grade_changes,
+    notify_regime_change,
+    notify_weekly_report,
+    notify_batch_start,
+    notify_batch_complete,
+    notify_daily_performance,
     notify_earnings_alert,
     notify_emergency,
-    notify_risk_warning,
-    notify_regime_change,
-    notify_batch_complete,
     notify_weekly_rebalance,
-    notify_weekly_report,
     notify_backtest_result,
     notify_price_fetch_failure,
     check_price_freshness,
 )
 
 TODAY = date.today()
-DELAY = 1.5  # Discord rate limit 방지
+DELAY = 1.5
 
-print("=" * 60)
-print("  QUANT AI — 개인/공용 전체 알림 테스트 v3")
-print("=" * 60)
+print("=" * 64)
+print("  QUANT AI v4.0 — 18웹훅 전체 알림 테스트")
+print("=" * 64)
 
-# ── 웹훅 상태 확인 ──
-print("\n── 🔒 개인 채널 웹훅 ──")
+# ── 웹훅 상태 ──
+print("\n── 🔒 Premium (MY) 웹훅 ──")
 my_cnt = 0
 for key, url in _WEBHOOK_MY.items():
     status = "✅" if url else "❌"
     if url: my_cnt += 1
     print(f"  MY_{key:12s} : {status}")
 
-print(f"\n── 📢 공용 채널 웹훅 ──")
+print(f"\n── 📢 Public (PUB) 웹훅 ──")
 pub_cnt = 0
 for key, url in _WEBHOOK_PUB.items():
     status = "✅" if url else "❌"
@@ -60,347 +59,317 @@ for key, url in _WEBHOOK_PUB.items():
     print(f"  PUB_{key:12s} : {status}")
 
 print(f"\n  FALLBACK: {'✅' if _FALLBACK_URL else '❌'}")
-print(f"  개인: {my_cnt}/{len(_WEBHOOK_MY)} | 공용: {pub_cnt}/{len(_WEBHOOK_PUB)}")
+print(f"  Premium: {my_cnt}/{len(_WEBHOOK_MY)} | Public: {pub_cnt}/{len(_WEBHOOK_PUB)}")
 
 if my_cnt + pub_cnt == 0 and not _FALLBACK_URL:
-    print("\n⚠️  웹훅이 하나도 없습니다! .env를 확인하세요.")
+    print("\n⚠️  웹훅 없음! .env 확인하세요.")
     sys.exit(1)
 
-input("\n▶ Enter를 누르면 테스트 시작... (Discord 확인 준비)")
+input("\n▶ Enter 누르면 테스트 시작...")
 
 
-# ══════════════════════════════════════════════════════════
-#  1. 매수 추천 → 개인-매수 + 매수-시그널
-# ══════════════════════════════════════════════════════════
-print("\n── [1] 매수 추천 + 매도 + 익절 ──")
+# ── [1] 배치 시작 → MY_SYSTEM + PUB_REPORT ──
+print("\n── [1] 배치 시작 ──")
+try:
+    notify_batch_start(calc_date=TODAY, job_name="Daily Full Pipeline")
+    print("  ✅ → MY_SYSTEM + PUB_REPORT")
+except Exception as e:
+    print(f"  ❌ {e}")
+time.sleep(DELAY)
+
+
+# ── [2] 모닝 브리핑 → MY_MORNING + PUB_MORNING ──
+print("\n── [2] 모닝 브리핑 ──")
+try:
+    notify_morning_briefing(
+        calc_date=TODAY, regime="BULL",
+        regime_detail={"spy_price": 548.57, "vix_close": 18.3, "sma_200": 520.0,
+                       "futures_pct": 0.35, "vix_change_pct": -1.2},
+        signal_summary={"buy_count": 3, "sell_count": 1, "fire_count": 0,
+                        "add_count": 1, "bounce_count": 2},
+        regime_proba={"stay_probability": 0.82, "days_in_regime": 14},
+        ic_data={"ic": 0.068, "ic_trend": 0.005},
+        hit_rate={"hit_rate": 0.72, "hits": 36, "total": 50},
+        fear_greed={"value": 65, "label": "Greed"},
+        portfolio_summary={"total_value": 62500, "daily_return": 1.25,
+                           "num_positions": 8, "cash_pct": 22.5},
+    )
+    print("  ✅ → MY_MORNING(상세) + PUB_MORNING(국면+건수)")
+except Exception as e:
+    print(f"  ❌ {e}")
+time.sleep(DELAY)
+
+
+# ── [3] 매수/매도 → MY_BUY/SELL/PROFIT + PUB_BUY/SELL ──
+print("\n── [3] 매수/매도 시그널 ──")
 try:
     notify_daily_signals(
         calc_date=TODAY, regime="BULL",
         regime_detail={"spy_price": 548.57, "vix_close": 18.3, "sma_200": 520.0},
         buy_signals=[
-            {"ticker": "AAPL", "grade": "A+", "score": 87.5, "price": 235.50,
-             "shares": 15, "amount": 3532, "weight": 5.4, "stop_loss": 211.95,
-             "stop_pct": 10, "sector": "Technology"},
             {"ticker": "NVDA", "grade": "S", "score": 93.2, "price": 142.80,
-             "shares": 25, "amount": 3570, "weight": 5.7, "stop_loss": 128.52,
-             "stop_pct": 10, "sector": "Technology"},
+             "shares": 25, "amount": 3570, "weight": 5.7, "stop_loss": 128.52, "stop_pct": 10,
+             "sector": "Technology", "l1_score": 88, "l2_score": 92, "l3_score": 95},
+            {"ticker": "AAPL", "grade": "A+", "score": 87.5, "price": 235.50,
+             "shares": 15, "amount": 3532, "weight": 5.4, "stop_loss": 211.95, "stop_pct": 10,
+             "sector": "Technology", "l1_score": 85, "l2_score": 78, "l3_score": 90},
+            {"ticker": "JPM", "grade": "A", "score": 82.1, "price": 198.50,
+             "shares": 18, "amount": 3573, "weight": 5.5, "stop_loss": 178.65, "stop_pct": 10,
+             "sector": "Financials", "l1_score": 90, "l2_score": 72, "l3_score": 68},
         ],
         sell_signals=[
-            # 손절 (pnl_pct < 0) → 매도-시그널
             {"ticker": "NFLX", "reason": "STOP_LOSS", "price": 980.00,
-             "entry_price": 1050.00, "holding_days": 12, "pnl_pct": -6.7, "shares": 3},
-            # 익절 (pnl_pct >= 0) → 매도-시그널
+             "entry_price": 1050.00, "holding_days": 12, "pnl_pct": -6.7, "shares": 3,
+             "highest_price": 1100.00, "lowest_price": 970.00,
+             "entry_score": 78.5, "current_score": 52.3, "entry_grade": "A", "current_grade": "B"},
             {"ticker": "META", "reason": "TAKE_PROFIT", "price": 620.00,
-             "entry_price": 510.00, "holding_days": 45, "pnl_pct": 21.6, "shares": 8},
+             "entry_price": 510.00, "holding_days": 45, "pnl_pct": 21.6, "shares": 8,
+             "highest_price": 635.00, "lowest_price": 505.00,
+             "entry_score": 85.0, "current_score": 72.0, "entry_grade": "A+", "current_grade": "A"},
         ],
         portfolio_summary={"total_value": 62500, "daily_return": 1.25,
                            "num_positions": 8, "cash_pct": 22.5},
     )
-    print("  ✅ 매수(2) + 손절(1) + 익절(1) → 개인-매수/매도 + 매수/매도-시그널")
+    print("  ✅ → MY_BUY(투자근거) + PUB_BUY(종목+등급+매수가)")
+    print("       MY_SELL(MAE/MFE) + PUB_SELL(사유+매도가)")
+    print("       MY_PROFIT(익절분리) + MY_REPORT(포폴현황)")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  2. 물타기 + 불타기 → 개인-매수 + 매수-시그널
-# ══════════════════════════════════════════════════════════
-print("\n── [2] 물타기 + 불타기 ──")
+# ── [4] 추가 매수 → MY_ADD ──
+print("\n── [4] 추가 매수 ──")
 try:
-    notify_add_position(TODAY, [
-        # 물타기 (pnl < 0)
-        {"ticker": "TSLA", "pnl_pct": -8.2, "grade": "A", "score": 78.5,
-         "shares": 5, "price": 342.00, "avg_down_pct": -4.1},
-        # 불타기 (pnl > 0)
-        {"ticker": "NVDA", "pnl_pct": 15.3, "grade": "S", "score": 93.2,
-         "shares": 10, "price": 142.80, "avg_down_pct": 0},
+    notify_add_position(calc_date=TODAY, add_signals=[
+        {"ticker": "MSFT", "grade": "A", "score": 81.5, "price": 415.00,
+         "shares": 5, "pnl_pct": -3.2, "avg_down_pct": -1.5},
     ])
-    print("  ✅ 물타기(TSLA) + 불타기(NVDA) → 개인-매수 + 매수-시그널")
+    print("  ✅ → MY_ADD")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  3. 긴급 매도 → 개인-매도 + 매도-시그널
-# ══════════════════════════════════════════════════════════
-print("\n── [3] 긴급 매도 ──")
+# ── [5] 긴급 매도 → MY_FIRE ──
+print("\n── [5] 긴급 매도 ──")
 try:
-    notify_fire_sell(TODAY, [
-        {"ticker": "TSLA", "reason": "CIRCUIT_BREAKER", "pnl_pct": -12.3,
-         "price": 305.00, "entry_price": 348.00, "shares": 15},
-        {"ticker": "COIN", "reason": "DD_ALERT", "pnl_pct": -18.5,
-         "price": 195.00, "entry_price": 239.00, "shares": 10},
-    ], trigger="VIX 35 돌파 + SPY -3% 급락")
-    print("  ✅ 긴급매도(2) → 개인-매도 + 매도-시그널")
+    notify_fire_sell(calc_date=TODAY, fire_signals=[
+        {"ticker": "TSLA", "reason": "CIRCUIT_BREAKER", "price": 165.00,
+         "entry_price": 195.00, "pnl_pct": -15.4, "shares": 20},
+    ], trigger="VIX 급등 + DD LEVEL 3")
+    print("  ✅ → MY_FIRE")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  4. 반등 매수 → 개인-매수 + 매수-시그널
-# ══════════════════════════════════════════════════════════
-print("\n── [4] 반등 매수 기회 ──")
+# ── [6] 반등 기회 → MY_BOUNCE ──
+print("\n── [6] 반등 기회 ──")
 try:
-    notify_bounce_opportunity(TODAY, [
-        {"ticker": "META", "grade": "A", "score": 85.0,
-         "rsi": 25.3, "drop_7d": -12.5, "volume_ratio": 2.8, "price": 545.00},
+    notify_bounce_opportunity(calc_date=TODAY, bounce_signals=[
+        {"ticker": "AMZN", "rsi": 28.5, "price": 178.00, "grade": "B+",
+         "support_price": 175.00, "drop_pct": -12.3},
     ])
-    print("  ✅ 반등 매수(META) → 개인-매수 + 매수-시그널")
+    print("  ✅ → MY_BOUNCE")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  5. 모닝 브리핑 → 개인-모닝(포폴 포함) + 모닝-브리핑(포폴 없음)
-# ══════════════════════════════════════════════════════════
-print("\n── [5] 모닝 브리핑 ──")
-try:
-    notify_morning_briefing(
-        calc_date=TODAY, regime="BULL",
-        regime_detail={
-            "spy_price": 548.57, "vix_close": 18.3,
-            "futures_pct": 0.35, "vix_change_pct": -2.1,
-        },
-        top_buys=[
-            {"ticker": "NVDA", "grade": "S", "score": 93.2, "price": 142.80},
-            {"ticker": "AAPL", "grade": "A+", "score": 87.5, "price": 235.50},
-            {"ticker": "MSFT", "grade": "A+", "score": 86.1, "price": 442.30},
-        ],
-        grade_changes=[
-            {"ticker": "GOOGL", "direction": "UP", "old_grade": "B+",
-             "new_grade": "A", "score": 82.5},
-        ],
-        earnings_today=[
-            {"ticker": "AAPL", "time": "AMC", "eps_estimate": 2.35},
-        ],
-        portfolio_summary={
-            "total_value": 62500, "daily_return": 1.25,
-            "num_positions": 8, "cash_pct": 22.5,
-        },
-        signal_summary={"buy": 2, "sell": 1, "profit": 1},
-    )
-    print("  ✅ 모닝 → 개인-모닝(포폴 포함) + 모닝-브리핑(포폴 없음)")
-except Exception as e:
-    print(f"  ❌ 실패: {e}")
-time.sleep(DELAY)
-
-
-# ══════════════════════════════════════════════════════════
-#  6. 일일 성과 → 개인-리포트 (개인 전용)
-# ══════════════════════════════════════════════════════════
-print("\n── [6] 일일 성과 (개인 전용) ──")
-try:
-    notify_daily_performance(
-        calc_date=TODAY, portfolio_value=63280,
-        daily_return=1.25, spy_return=0.83,
-        num_positions=8, total_pnl=3280,
-        best_ticker="NVDA", best_pnl=5.2,
-        worst_ticker="NFLX", worst_pnl=-2.1,
-    )
-    print("  ✅ 일일 성과 → 개인-리포트")
-except Exception as e:
-    print(f"  ❌ 실패: {e}")
-time.sleep(DELAY)
-
-
-# ══════════════════════════════════════════════════════════
-#  7. 등급 변경 → 긴급-알림
-# ══════════════════════════════════════════════════════════
-print("\n── [7] 등급 변경 ──")
-try:
-    notify_grade_changes(TODAY,
-        upgrades=[
-            {"ticker": "GOOGL", "old_grade": "B+", "new_grade": "A",
-             "old_score": 72.0, "new_score": 82.5},
-        ],
-        downgrades=[
-            {"ticker": "NFLX", "old_grade": "A", "new_grade": "B",
-             "old_score": 80.0, "new_score": 55.3},
-        ],
-    )
-    print("  ✅ 등급 변경 → 긴급-알림")
-except Exception as e:
-    print(f"  ❌ 실패: {e}")
-time.sleep(DELAY)
-
-
-# ══════════════════════════════════════════════════════════
-#  8. 어닝 D-Day → 긴급-알림
-# ══════════════════════════════════════════════════════════
-print("\n── [8] 어닝 D-Day ──")
-try:
-    notify_earnings_alert(TODAY, [
-        {"ticker": "AAPL", "time": "AMC", "eps_estimate": 2.35,
-         "rev_estimate": 94.5e9, "grade": "A+"},
-        {"ticker": "MSFT", "time": "BMO", "eps_estimate": 3.22,
-         "rev_estimate": 68.7e9, "grade": "A+"},
-    ])
-    print("  ✅ 어닝 D-Day → 긴급-알림")
-except Exception as e:
-    print(f"  ❌ 실패: {e}")
-time.sleep(DELAY)
-
-
-# ══════════════════════════════════════════════════════════
-#  9. 리스크 경고 → 개인-리스크 (개인 전용)
-# ══════════════════════════════════════════════════════════
-print("\n── [9] 리스크 경고 (개인 전용) ──")
+# ── [7] 리스크 → MY_RISK + PUB_RISK ──
+print("\n── [7] 리스크 경고 ──")
 try:
     notify_risk_warning(
-        calc_date=TODAY,
-        dd_mode="WARNING",
-        drawdown_pct=-8.5,
-        cb_level="LEVEL_1",
-        losing_streak=3,
-        concentration_warn=[
-            {"sector": "Technology", "pct": 45},
-            {"sector": "Consumer", "pct": 28},
-        ],
+        calc_date=TODAY, risk_level="YELLOW",
+        drawdown={"current_dd": -5.2, "dd_days": 8, "mdd": -8.5},
+        var_data={"var_95_pct": -2.0, "var_99_pct": -3.6,
+                  "var_95_dollar": 1050, "var_99_dollar": 1890},
+        concentration={"top_sector": {"name": "Technology", "pct": 42, "limit": 35},
+                        "top_stock": {"ticker": "NVDA", "pct": 8.2, "limit": 10}},
+        defense_status={"dd_mode": "CAUTION", "cb_active": False, "buy_limit_pct": 3},
+        stress_test={"2020 COVID": {"impact_pct": -24.5}, "2022 금리": {"impact_pct": -13.8},
+                     "VIX 급등": {"impact_pct": -5.9}},
+        correlation={"avg_correlation": 0.65, "top_pair": "NVDA↔AMD 0.89"},
     )
-    print("  ✅ 리스크 경고 → 개인-리스크")
+    print("  ✅ → MY_RISK(풀대시보드) + PUB_RISK(시장상황)")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  10. 국면 전환 → 긴급-알림
-# ══════════════════════════════════════════════════════════
-print("\n── [10] 국면 전환 ──")
+# ── [8] 등급 변경 → MY_ALERT + PUB_REPORT ──
+print("\n── [8] 등급 변경 ──")
 try:
-    notify_regime_change(TODAY, "BULL", "NEUTRAL",
-                         detail="SPY SMA200 하향 돌파 + VIX 25 이상")
-    print("  ✅ 국면 전환 → 긴급-알림")
+    notify_grade_changes(calc_date=TODAY, changes=[
+        {"ticker": "GOOGL", "old_grade": "B+", "new_grade": "A",
+         "old_score": 74.5, "new_score": 82.0, "reason": "L2 NLP 급상승"},
+        {"ticker": "BA", "old_grade": "B", "new_grade": "C",
+         "old_score": 68.0, "new_score": 55.2, "reason": "L1 수익성 악화"},
+    ])
+    print("  ✅ → MY_ALERT(상세) + PUB_REPORT(요약)")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  11. 긴급 알림 → 개인-리스크 + 긴급-알림
-# ══════════════════════════════════════════════════════════
-print("\n── [11] 긴급 알림 ──")
+# ── [9] 국면 전환 → MY_ALERT + PUB_REPORT ──
+print("\n── [9] 국면 전환 ──")
 try:
-    notify_emergency("테스트 긴급 알림", "이것은 시스템 테스트입니다.\n실제 긴급 상황이 아닙니다.")
-    print("  ✅ 긴급 → 개인-리스크 + 긴급-알림")
-except Exception as e:
-    print(f"  ❌ 실패: {e}")
-time.sleep(DELAY)
-
-
-# ══════════════════════════════════════════════════════════
-#  12. 배치 완료 → 리포트
-# ══════════════════════════════════════════════════════════
-print("\n── [12] 배치 완료 ──")
-try:
-    notify_batch_complete(
-        calc_date=TODAY, elapsed_seconds=245.7,
-        results={
-            "1_price": "OK", "2_fin": "OK", "3_l1": "OK",
-            "4_l3": "OK", "5_l2": "OK", "5.5_ec": "SKIP",
-            "5.6_insider": "OK", "5.7_macro": "OK",
-            "6_final": "OK", "7_trading": "OK",
-        },
+    notify_regime_change(
+        calc_date=TODAY, old_regime="BULL", new_regime="NEUTRAL",
+        trigger_detail={"spy_price": 535.00, "vix_close": 25.8,
+                        "trigger_reason": "SPY SMA200 하회 + VIX 25 돌파",
+                        "impact": "신규 매수 50% 축소, 방어 모드 전환"},
     )
-    print("  ✅ 배치 완료 → 리포트")
+    print("  ✅ → MY_ALERT + PUB_REPORT")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  13. 주간 리포트 → 개인-리포트 + 리포트
-# ══════════════════════════════════════════════════════════
-print("\n── [13] 주간 리포트 ──")
+# ── [10] 주간 리포트 → MY_REPORT + PUB_REPORT ──
+print("\n── [10] 주간 리포트 ──")
 try:
     notify_weekly_report(
-        calc_date=TODAY, week_return=2.35, total_value=64175,
-        spy_return=1.10, win_rate=72, num_trades=6,
-        best_ticker="NVDA", best_pnl=12.5,
-        worst_ticker="NFLX", worst_pnl=-5.2,
+        calc_date=TODAY, week_return=2.34, mtd_return=3.82, ytd_return=12.4,
+        since_inception=18.7, sharpe=1.85, sortino=2.42,
+        alpha=0.72, beta=0.88, win_rate=68.5, num_trades=12,
+        best_ticker="NVDA", best_pnl=8.5, worst_ticker="BA", worst_pnl=-4.2,
+        brinson={"market_effect": 1.62, "selection_effect": 0.92, "cash_drag": -0.20},
     )
-    print("  ✅ 주간 리포트 → 개인-리포트 + 리포트")
+    print("  ✅ → MY_REPORT(Brinson) + PUB_REPORT(간결)")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  14. 주간 리밸런싱 → 개인-리포트 + 리포트
-# ══════════════════════════════════════════════════════════
-print("\n── [14] 주간 리밸런싱 ──")
+# ── [11] 일일 성과 → MY_PERF ──
+print("\n── [11] 일일 성과 ──")
 try:
-    notify_weekly_rebalance(
-        calc_date=TODAY,
-        buys=[{"ticker": "AMD", "shares": 20}],
-        sells=[{"ticker": "NFLX", "shares": 3}],
-        adjusts=[{"ticker": "AAPL", "shares": 5, "direction": "UP"}],
-        turnover=12.5,
+    notify_daily_performance(
+        calc_date=TODAY, daily_return=1.25, total_value=62500, spy_return=0.85,
+        num_positions=8,
+        top_gainer={"ticker": "NVDA", "pnl": 3.8},
+        top_loser={"ticker": "BA", "pnl": -1.2},
+        sector_perf={"Technology": 2.1, "Financials": 0.8, "Healthcare": -0.5},
     )
-    print("  ✅ 리밸런싱 → 개인-리포트 + 리포트")
+    print("  ✅ → MY_PERF")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  15. 백테스트 결과 → 리포트
-# ══════════════════════════════════════════════════════════
-print("\n── [15] 백테스트 결과 ──")
+# ── [12] 어닝 임박 → MY_ALERT ──
+print("\n── [12] 어닝 임박 ──")
+try:
+    notify_earnings_alert(calc_date=TODAY, tickers=[
+        {"ticker": "AAPL", "date": "2026-04-01"},
+        {"ticker": "MSFT", "date": "2026-04-02"},
+    ], days_until=3)
+    print("  ✅ → MY_ALERT")
+except Exception as e:
+    print(f"  ❌ {e}")
+time.sleep(DELAY)
+
+
+# ── [13] 리밸런싱 → MY_REPORT ──
+print("\n── [13] 리밸런싱 ──")
+try:
+    notify_weekly_rebalance(calc_date=TODAY, rebalance_data=[
+        {"ticker": "NVDA", "old_weight": 8.2, "new_weight": 6.5, "action": "REDUCE", "shares": 5},
+    ])
+    print("  ✅ → MY_REPORT")
+except Exception as e:
+    print(f"  ❌ {e}")
+time.sleep(DELAY)
+
+
+# ── [14] 백테스트 → MY_BACKTEST ──
+print("\n── [14] 백테스트 ──")
 try:
     notify_backtest_result(
-        period_start=date(2024, 1, 1), period_end=date(2025, 3, 20),
-        total_return=42.7, annual_return=38.2,
-        max_drawdown=-11.3, sharpe_ratio=1.85,
-        win_rate=68.5, spy_alpha=18.4,
-        num_trades=142, avg_holding_days=23,
+        period_start=date(2024, 1, 1), period_end=date(2024, 12, 31),
+        total_return=28.5, annual_return=28.5, max_drawdown=-12.3,
+        sharpe_ratio=1.85, win_rate=68.5, spy_alpha=5.2,
+        num_trades=156, avg_holding_days=18,
     )
-    print("  ✅ 백테스트 → 리포트")
+    print("  ✅ → MY_BACKTEST")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
 time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  16. 가격 수집 장애 → 개인-리스크 + 리포트
-# ══════════════════════════════════════════════════════════
-print("\n── [16] 가격 수집 장애 (안전장치 테스트) ──")
+# ── [15] 데이터 품질 → MY_SYSTEM ──
+print("\n── [15] 데이터 품질 ──")
 try:
-    notify_price_fetch_failure(
-        calc_date=TODAY,
-        error_msg="yfinance.download() timeout after 30s",
-        stale_tickers=["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA"],
-    )
-    print("  ✅ 가격 장애 → 개인-리스크 + 리포트")
+    notify_price_fetch_failure(tickers=["RIVN", "LCID"], source="FMP")
+    check_price_freshness(stale_tickers=["PLTR", "COIN"], threshold_hours=48)
+    print("  ✅ → MY_SYSTEM")
 except Exception as e:
-    print(f"  ❌ 실패: {e}")
+    print(f"  ❌ {e}")
+time.sleep(DELAY)
 
 
-# ══════════════════════════════════════════════════════════
-#  완료
-# ══════════════════════════════════════════════════════════
-print("\n" + "=" * 60)
-print("  🎉 전체 테스트 완료! (16개 시나리오)")
-print("=" * 60)
+# ── [16] 긴급 알림 → MY_FIRE ──
+print("\n── [16] 긴급 알림 ──")
+try:
+    notify_emergency(calc_date=TODAY, message="VIX 40 돌파!", severity="HIGH")
+    print("  ✅ → MY_FIRE")
+except Exception as e:
+    print(f"  ❌ {e}")
+time.sleep(DELAY)
+
+
+# ── [17] 배치 완료 → MY_SYSTEM + PUB_REPORT ──
+print("\n── [17] 배치 완료 ──")
+try:
+    notify_batch_complete(
+        calc_date=TODAY, duration_sec=847, job_name="Daily Full Pipeline",
+        results={
+            "success": 515, "fail": 3, "total": 518,
+            "steps": {
+                "L1 가격수집": {"ok": True, "duration": "3m 12s"},
+                "L2 NLP분석": {"ok": True, "duration": "4m 18s"},
+                "L3 기술분석": {"ok": True, "duration": "2m 30s"},
+                "최종점수": {"ok": True, "duration": "1m 02s"},
+            },
+            "errors": ["RIVN: timeout", "LCID: 데이터 없음", "HOOD: 가격 누락"],
+        },
+    )
+    print("  ✅ → MY_SYSTEM(상세) + PUB_REPORT(요약)")
+except Exception as e:
+    print(f"  ❌ {e}")
+
+
+# ── 완료 ──
+print("\n" + "=" * 64)
+print("  ✅ 전체 테스트 완료! (17개 시나리오)")
+print("=" * 64)
 print("""
-  Discord에서 확인할 채널:
+  📬 웹훅 18개 전송 요약:
 
-  📁 매매
-    #☀️ 모닝-브리핑    → [5] 모닝 (포폴 없음)
-    #🟢 매수-시그널    → [1]매수 [2]물타기/불타기 [4]반등
-    #🔴 매도-시그널    → [1]손절/익절 [3]긴급매도
+  🔒 Premium (MY)                    📢 Public (PUB)
+  ─────────────────────────          ─────────────────────
+  MY_MORNING  → 모닝 브리핑          PUB_MORNING → 국면+건수
+  MY_BUY      → 투자근거카드          PUB_BUY     → 종목+등급+매수가
+  MY_SELL     → MAE/MFE+점수변화      PUB_SELL    → 사유+매도가
+  MY_PROFIT   → 익절 분리             PUB_RISK    → 시장 상황
+  MY_ADD      → 추가 매수             PUB_REPORT  → 등급/국면/주간/배치
+  MY_FIRE     → 긴급 매도
+  MY_BOUNCE   → 반등 기회
+  MY_RISK     → VaR/Stress/집중도
+  MY_ALERT    → 등급변경/국면전환
+  MY_PERF     → 일일 성과
+  MY_SYSTEM   → 배치+데이터품질
+  MY_REPORT   → Brinson+주간
+  MY_BACKTEST → 백테스트
 
-  📁 레포트
-    #🚨 긴급-알림      → [7]등급변경 [8]어닝 [10]국면 [11]긴급
-    #📊 리포트         → [12]배치 [13]주간 [14]리밸 [15]백테 [16]장애
-
-  📁 개인용
-    #🟢 개인-매수      → [1]매수 [2]물타기/불타기 [4]반등 (수량/금액)
-    #🔴 개인-매도      → [1]손절/익절 [3]긴급매도 (수량/손익금)
-    #☀️ 개인-모닝      → [5] 모닝 (포폴 포함!)
-    #📊 개인-리포트    → [6]일일성과 [13]주간 [14]리밸 (금액)
-    #🚨 개인-리스크    → [9]리스크 [11]긴급 [16]장애
+  채널 배치 예시:
+  #프리미엄_매수  ← MY_BUY + MY_ADD + MY_BOUNCE
+  #프리미엄_매도  ← MY_SELL + MY_PROFIT + MY_FIRE
+  #프리미엄_리스크 ← MY_RISK + MY_ALERT
+  #프리미엄_리포트 ← MY_REPORT + MY_PERF + MY_BACKTEST
+  #프리미엄_시스템 ← MY_SYSTEM
+  #프리미엄_모닝  ← MY_MORNING
 """)

@@ -1,60 +1,70 @@
 """
-scheduler.py — QUANT AI v3.7
-============================
-v3.7 변경:
-  ★ _should_earnings 함수 정의 추가 (v3.6에서 누락된 버그 수정)
-  ★ Step 4.7 추가: Layer 3 Section B+C (Flow/Macro) 계산
+scheduler.py — QUANT AI v3.4 (배치 완료 후 일괄 알림)
+=====================================================
+v3.4 변경:
+  - 모닝 브리핑 스케줄 제거 → 배치 마지막 단계로 통합
+  - 배치 Step 1~7: 계산만 (알림 ZERO)
+  - Step 8: 일괄 알림 (시그널 + 모닝 + 배치완료)
+  - 모든 notify 호출은 _s_notify_all() 한 곳에서만 발생
 
-v3.6 기반:
-  ★ 안전장치 [2]: Step 1 가격 수집 실패 시 전체 중단 + 긴급 알림
-  ★ 안전장치 [1]: 가격 신선도 검증 → stale 종목 경고
-  ★ 차트패턴 + Fear&Greed 배치 포함
-
-스케줄:
-  평일 21:00 ET  — 일일 배치
-  토요일 09:00 ET — 주간 성과 리포트
-  매월 1일 09:00 ET — 월간 성과 리포트
+기존 흐름:
+  배치 02:00 → 중간중간 notify → 모닝 08:30 별도 전송
+  
+변경 흐름:
+  배치 02:00 → 계산만 수행 → Step 8에서 한방에 전부 전송
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from datetime import datetime, date
 import traceback
-import logging
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
-logger = logging.getLogger("scheduler")
-
-PRICE_FAIL_THRESHOLD_PCT = int(os.environ.get("PRICE_FAIL_THRESHOLD_PCT", "10"))
 
 
-# ══════════════════════════════════════════════
-#  유틸리티 + 판정 함수 (호출 전 정의)
-# ══════════════════════════════════════════════
+def run_all(calc_date: date = None):
+    if calc_date is None:
+        calc_date = datetime.now().date()
+    start_all = datetime.now()
+    results = {}
+    print(f"\n{'='*60}\n  QUANT AI v3.4 일일 배치 — {calc_date}\n{'='*60}")
 
-def _run_step(name, func):
-    print(f"\n── {name} ──")
-    t = datetime.now()
-    try:
-        func()
-        print(f"✅ {name} ({(datetime.now()-t).total_seconds():.1f}초)")
-        return "OK"
-    except Exception as e:
-        print(f"❌ {name} ({(datetime.now()-t).total_seconds():.1f}초): {e}")
-        traceback.print_exc()
-        return f"FAIL: {e}"
+    # ── Step 1~7: 계산 전용 (알림 ZERO) ──
+    results["1_price"]   = _run_step("1/10 가격 수집",        lambda: _s_price(calc_date))
+    results["2_fin"]     = _run_step("2/10 파생 재무",        lambda: _s_fin(calc_date))
+    results["3_l1"]      = _run_step("3/10 Layer 1",          lambda: _s_l1(calc_date))
+    results["4_l3"]      = _run_step("4/10 Layer 3",          lambda: _s_l3(calc_date))
+    results["5_l2"]      = _run_step("5/10 Layer 2",          lambda: _s_l2(calc_date))
+
+    if _should_earnings(calc_date):
+        results["5.5_ec"] = _run_step("5.5 어닝콜",           lambda: _s_ec(calc_date))
+    else:
+        results["5.5_ec"] = "SKIP"
+
+    results["6_final"]   = _run_step("6/10 최종 합산",        lambda: _s_final(calc_date))
+    results["7_trading"] = _run_step("7/10 트레이딩 시그널",   lambda: _s_trading(calc_date))
+
+    # ── Step 8: 일괄 알림 (모든 알림을 여기서 한 번에) ──
+    results["8_notify"]  = _run_step("8/10 일괄 알림 전송",    lambda: _s_notify_all(calc_date, results, start_all))
+
+    # Step 9: 주간 성과 리포트 (토요일)
+    if calc_date.weekday() == 5:  # Saturday
+        results["9_weekly"] = _run_step("9/10 주간 성과",     lambda: _s_weekly(calc_date))
+    else:
+        results["9_weekly"] = "SKIP"
+
+    # Step 10: 월간 성과 리포트 (매월 1일)
+    if calc_date.day == 1:
+        results["10_monthly"] = _run_step("10/10 월간 성과",   lambda: _s_monthly(calc_date))
+    else:
+        results["10_monthly"] = "SKIP"
+
+    elapsed = datetime.now() - start_all
+    ok   = sum(1 for v in results.values() if v == "OK")
+    fail = sum(1 for v in results.values() if isinstance(v, str) and v.startswith("FAIL"))
+    skip = sum(1 for v in results.values() if v == "SKIP")
+    print(f"\n{'='*60}\n  결과: 성공={ok} 실패={fail} 스킵={skip} | 소요: {elapsed}\n{'='*60}")
+    return results
 
 
-def _should_earnings(d):
-    """어닝콜 분석 실행 여부 — v3.6에서 누락된 함수"""
-    if os.environ.get("FORCE_EARNINGS") == "1":
-        return True
-    return d.month in (1, 4, 7, 10) and 10 <= d.day <= 20
-
-
-# ══════════════════════════════════════════════
-#  Step 함수
-# ══════════════════════════════════════════════
+# ── Step 함수 ──
 
 def _s_price(d):
     from batch.batch_ticker_item_daily import run_daily_price; run_daily_price(d)
@@ -66,16 +76,7 @@ def _s_l1(d):
     from batch.batch_ticker_item_daily import run_quant_score; run_quant_score(d)
 
 def _s_l3(d):
-    from batch.batch_layer3_v2 import run_technical_indicators; run_technical_indicators(d)
-
-def _s_l3bc(d):
-    from batch.batch_layer3_flow_macro import run_flow_macro; run_flow_macro(d)
-
-def _s_chart_patterns(d):
-    from batch.batch_chart_patterns import run_chart_patterns; run_chart_patterns(d)
-
-def _s_fear_greed(d):
-    from batch.batch_fear_greed import run_fear_greed; run_fear_greed(d)
+    from batch.batch_layer3_v2 import run_all as r; r(d)
 
 def _s_l2(d):
     from batch.batch_layer2_v2 import run_all as r; r()
@@ -83,198 +84,421 @@ def _s_l2(d):
 def _s_ec(d):
     from batch.batch_earnings_call import run_earnings_call_analysis; run_earnings_call_analysis(d)
 
-def _s_insider():
-    print('[INSIDER] L2 GroupB에서 처리 완료 → skip')
-
-def _s_macro():
-    from batch.batch_macro import run_macro; run_macro()
-
 def _s_final(d):
     from batch.batch_final_score import run_final_score; run_final_score(d)
 
 def _s_trading(d):
+    """트레이딩 시그널 계산 (알림 없이 DB 저장만)"""
     live = os.environ.get("TRADING_LIVE", "0") == "1"
     from batch.batch_trading_signals import run_trading_signals
-    run_trading_signals(calc_date=d, dry_run=not live)
+    run_trading_signals(calc_date=d, dry_run=not live, silent=True)
+
+
+# ═══════════════════════════════════════════════════════════
+#  Step 8: 일괄 알림 — 배치 완료 후 한 번에 전부 전송
+# ═══════════════════════════════════════════════════════════
 
 def _s_notify_all(calc_date, results, start_time):
-    """Step 8: 배치 완료 후 알림 발송"""
-    elapsed = (datetime.now() - start_time).total_seconds()
-    sent = 0
-    # 8a: 배치 완료
+    """
+    v4.0 — 모든 알림을 일괄 발송 (notify_data_builder + notifier_v4)
+    
+    scheduler → notify_data_builder (계산) → notifier (전송)
+    
+    1) IC/적중률/국면확률 계산
+    2) 매수 근거 카드 보강 (Goldman Conviction + Bridgewater Because)
+    3) 매도 분석 보강 (MAE/MFE + 점수변화 + 역대성과)
+    4) 리스크 대시보드 (VaR + Stress + 집중도)
+    5) 모닝/시그널/리스크/등급변경/국면전환/배치완료 알림
+    """
+    from db_pool import get_cursor
+    from datetime import timedelta
+
+    # ═══════════════════════════════════════════════════════
+    #  Phase 1: DB에서 기본 데이터 로드
+    # ═══════════════════════════════════════════════════════
+    regime = None
+    regime_detail = {}
+    buy_signals_raw = []
+    sell_signals_raw = []
+    fire_signals = []
+    bounce_signals = []
+    regime_changed = False
+    prev_regime = None
+    portfolio_summary = {}
+    grade_changes = []
+
     try:
-        from notifier import notify_batch_complete
-        notify_batch_complete(calc_date, elapsed, results)
-        sent += 1
-        print(f"  [8a] ✅ 배치 완료 알림")
-    except Exception as e:
-        print(f"  [8a] ⚠️ {e}")
-    # 8b: 등급 변동
-    try:
-        from db_pool import get_cursor
-        GRADE_ORDER = {"S":7,"A+":6,"A":5,"B+":4,"B":3,"C":2,"D":1}
+        # ── 시장 국면 ──
         with get_cursor() as cur:
-            cur.execute("""SELECT t.stock_id, s.ticker, t.grade AS tg, y.grade AS pg
-                FROM final_scores t JOIN stocks s ON s.stock_id=t.stock_id
-                LEFT JOIN final_scores y ON y.stock_id=t.stock_id
-                    AND y.calc_date=(SELECT MAX(calc_date) FROM final_scores WHERE stock_id=t.stock_id AND calc_date<%s)
-                WHERE t.calc_date=%s AND y.grade IS NOT NULL AND t.grade!=y.grade""", (calc_date, calc_date))
+            cur.execute("""
+                SELECT regime, spy_price, spy_ma50, spy_ma200, vix_close,
+                       futures_pct, vix_change_pct, sma_200
+                FROM market_regime
+                ORDER BY regime_date DESC LIMIT 2
+            """)
             rows = cur.fetchall()
-        up = [r for r in rows if GRADE_ORDER.get(r["tg"],0)-GRADE_ORDER.get(r["pg"],0)>=2]
-        dn = [r for r in rows if GRADE_ORDER.get(r["pg"],0)-GRADE_ORDER.get(r["tg"],0)>=2]
-        if up or dn:
-            from notifier import notify_grade_changes
-            notify_grade_changes(calc_date,
-                [{"ticker":r["ticker"],"prev_grade":r["pg"],"new_grade":r["tg"]} for r in up],
-                [{"ticker":r["ticker"],"prev_grade":r["pg"],"new_grade":r["tg"]} for r in dn])
-            sent += 1
-            print(f"  [8b] ✅ 등급 변동 (↑{len(up)} ↓{len(dn)})")
-        else:
-            print(f"  [8b] ─ 등급 변동 없음")
+
+        if rows:
+            latest = rows[0]
+            regime = latest["regime"]
+            regime_detail = {
+                "spy_price": float(latest["spy_price"] or 0),
+                "sma_200": float(latest.get("sma_200") or latest.get("spy_ma200") or 0),
+                "vix_close": float(latest["vix_close"] or 0),
+                "futures_pct": float(latest.get("futures_pct") or 0),
+                "vix_change_pct": float(latest.get("vix_change_pct") or 0),
+            }
+            if len(rows) >= 2:
+                prev_regime = rows[1]["regime"]
+                if prev_regime != regime:
+                    regime_changed = True
+
+        # ── 매수 시그널 ──
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT ts.*, s.ticker, s.sector, s.stock_id
+                FROM trading_signals ts
+                JOIN stocks s ON ts.stock_id = s.stock_id
+                WHERE ts.calc_date = %s AND ts.signal_type = 'BUY'
+                ORDER BY ts.score DESC
+            """, (calc_date,))
+            for row in cur.fetchall():
+                buy_signals_raw.append({
+                    "stock_id": row["stock_id"],
+                    "ticker": row["ticker"],
+                    "score": float(row.get("score") or 0),
+                    "grade": row.get("grade", ""),
+                    "price": float(row.get("price") or 0),
+                    "shares": int(row.get("shares") or 0),
+                    "amount": float(row.get("amount") or 0),
+                    "weight": float(row.get("weight_pct") or 0),
+                    "stop_loss": float(row.get("stop_loss") or 0),
+                    "stop_pct": float(row.get("stop_pct") or 10),
+                    "sector": row.get("sector", ""),
+                })
+
+        # ── 매도 시그널 ──
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT ts.*, s.ticker, s.sector, s.stock_id
+                FROM trading_signals ts
+                JOIN stocks s ON ts.stock_id = s.stock_id
+                WHERE ts.calc_date = %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                ORDER BY ts.pnl_pct
+            """, (calc_date,))
+            for row in cur.fetchall():
+                sig = {
+                    "stock_id": row["stock_id"],
+                    "ticker": row["ticker"],
+                    "price": float(row.get("price") or 0),
+                    "entry_price": float(row.get("entry_price") or 0),
+                    "pnl_pct": float(row.get("pnl_pct") or 0),
+                    "reason": row.get("reason", row.get("signal_type", "SELL")),
+                    "shares": int(row.get("shares") or 0),
+                    "holding_days": int(row.get("holding_days") or 0),
+                }
+                if row.get("signal_type") == 'STOP_LOSS' and float(row.get("pnl_pct") or 0) < -15:
+                    fire_signals.append(sig)
+                else:
+                    sell_signals_raw.append(sig)
+
+        # ── 바닥 반등 ──
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT ts.*, s.ticker, ti.rsi_14
+                FROM trading_signals ts
+                JOIN stocks s ON ts.stock_id = s.stock_id
+                LEFT JOIN LATERAL (
+                    SELECT rsi_14 FROM technical_indicators
+                    WHERE stock_id = ts.stock_id ORDER BY calc_date DESC LIMIT 1
+                ) ti ON TRUE
+                WHERE ts.calc_date = %s AND ts.signal_type = 'BOUNCE'
+                ORDER BY ts.score DESC
+            """, (calc_date,))
+            for row in cur.fetchall():
+                bounce_signals.append({
+                    "ticker": row["ticker"],
+                    "score": float(row.get("score") or 0),
+                    "grade": row.get("grade", ""),
+                    "price": float(row.get("price") or 0),
+                    "drop_pct": float(row.get("drop_pct") or 0),
+                    "rsi": float(row.get("rsi_14") or 30),
+                })
+
+        # ── 포트폴리오 현황 ──
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT total_value, cash_balance, daily_return_pct
+                FROM portfolio_daily_snapshot
+                WHERE portfolio_id = 1
+                ORDER BY snapshot_date DESC LIMIT 1
+            """)
+            snap = cur.fetchone()
+            if snap:
+                tv = float(snap["total_value"] or 0)
+                cash = float(snap["cash_balance"] or 0)
+                portfolio_summary = {
+                    "total_value": tv,
+                    "daily_return": float(snap.get("daily_return_pct") or 0),
+                    "cash_pct": (cash / tv * 100) if tv > 0 else 100,
+                }
+            cur.execute("""
+                SELECT COUNT(*) as cnt FROM portfolio_positions
+                WHERE status = 'OPEN' AND portfolio_id = 1
+            """)
+            portfolio_summary["num_positions"] = cur.fetchone()["cnt"]
+
+        # ── 등급 변경 ──
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT s.ticker,
+                       f1.grade AS new_grade, f1.weighted_score AS new_score,
+                       f0.grade AS old_grade, f0.weighted_score AS old_score
+                FROM stock_final_scores f1
+                JOIN stock_final_scores f0
+                  ON f1.stock_id = f0.stock_id AND f0.calc_date = (
+                     SELECT MAX(calc_date) FROM stock_final_scores
+                     WHERE stock_id = f1.stock_id AND calc_date < %s
+                  )
+                JOIN stocks s ON f1.stock_id = s.stock_id
+                WHERE f1.calc_date = %s AND f1.grade != f0.grade
+                ORDER BY f1.weighted_score DESC
+            """, (calc_date, calc_date))
+            for row in cur.fetchall():
+                grade_changes.append({
+                    "ticker": row["ticker"],
+                    "old_grade": row["old_grade"],
+                    "new_grade": row["new_grade"],
+                    "old_score": float(row.get("old_score") or 0),
+                    "new_score": float(row.get("new_score") or 0),
+                })
+
     except Exception as e:
-        print(f"  [8b] ⚠️ {e}")
-    print(f"\n  📨 알림: {sent}건 발송")
+        print(f"  [NOTIFY] DB 로드 실패: {e}")
+        traceback.print_exc()
 
+    # ═══════════════════════════════════════════════════════
+    #  Phase 2: v4 계산 엔진으로 데이터 보강
+    # ═══════════════════════════════════════════════════════
+    print(f"\n  ── Phase 2: v4 데이터 보강 ──")
 
-# ══════════════════════════════════════════════
-#  ★ 안전장치 함수
-# ══════════════════════════════════════════════
-
-def _check_price_health(calc_date):
     try:
-        from notifier import check_price_freshness
-        info = check_price_freshness()
-        total = info.get("total", 0)
-        stale_count = info.get("stale_count", 0)
-        if total == 0:
-            return {"abort": True, "stale_count": 0, "stale_pct": 100,
-                    "message": "realtime 가격 데이터 0건"}
-        stale_pct = (stale_count / total) * 100
-        if stale_count > 0:
-            stale_tickers = [s["ticker"] for s in info.get("stale", [])[:10]]
-            print(f"  [HEALTH] 미갱신 종목: {stale_count}/{total} ({stale_pct:.1f}%)")
-            print(f"  [HEALTH] 예시: {', '.join(stale_tickers)}")
-        return {
-            "abort": stale_pct >= PRICE_FAIL_THRESHOLD_PCT,
-            "stale_count": stale_count,
-            "stale_pct": stale_pct,
-            "stale_tickers": [s["ticker"] for s in info.get("stale", [])],
-        }
-    except Exception as e:
-        print(f"  [HEALTH] 신선도 검증 실패: {e}")
-        return None
+        from notify_data_builder import (
+            build_buy_rationale, build_sell_analysis,
+            calc_signal_ic, calc_hit_rate, calc_regime_probability,
+            build_risk_dashboard, get_fear_greed,
+        )
+        _HAS_BUILDER = True
+    except ImportError:
+        print("  ⚠️ notify_data_builder 없음 → 기본 모드")
+        _HAS_BUILDER = False
 
+    # ── 매수 시그널 보강 ──
+    buy_signals = []
+    if _HAS_BUILDER:
+        for sig in buy_signals_raw:
+            enriched = build_buy_rationale(
+                sig["stock_id"], sig["ticker"], calc_date, sig)
+            buy_signals.append(enriched)
+        print(f"  ✅ BUY 보강 완료 ({len(buy_signals)}건)")
+    else:
+        buy_signals = buy_signals_raw
 
-def _emergency_abort(calc_date, results, start_time, error_msg):
-    elapsed = (datetime.now() - start_time).total_seconds()
-    try:
-        from notifier import notify_price_fetch_failure, notify_batch_complete
-        stale_tickers = []
+    # ── 매도 시그널 보강 ──
+    sell_signals = []
+    if _HAS_BUILDER:
+        for sig in sell_signals_raw:
+            enriched = build_sell_analysis(
+                sig["stock_id"], sig["ticker"], calc_date, sig)
+            sell_signals.append(enriched)
+        print(f"  ✅ SELL 보강 완료 ({len(sell_signals)}건)")
+    else:
+        sell_signals = sell_signals_raw
+
+    # ── IC / 적중률 / 국면확률 / Fear&Greed ──
+    ic_data = None
+    hit_rate = None
+    regime_proba = None
+    fear_greed = None
+    risk_data = {}
+
+    if _HAS_BUILDER:
         try:
-            from notifier import check_price_freshness
-            info = check_price_freshness()
-            stale_tickers = [s["ticker"] for s in info.get("stale", [])[:20]]
+            ic_data = calc_signal_ic()
+            print(f"  ✅ IC 계산: {ic_data.get('ic', 0):.4f}")
+        except Exception as e:
+            print(f"  ⚠️ IC 계산 실패: {e}")
+
+        try:
+            hit_rate = calc_hit_rate()
+            print(f"  ✅ 적중률: {hit_rate.get('hit_rate', 0):.1%}")
+        except Exception as e:
+            print(f"  ⚠️ 적중률 실패: {e}")
+
+        try:
+            regime_proba = calc_regime_probability()
+            print(f"  ✅ 국면확률: {regime_proba.get('stay_probability', 0):.0%}")
+        except Exception as e:
+            print(f"  ⚠️ 국면확률 실패: {e}")
+
+        try:
+            fear_greed = get_fear_greed()
         except Exception:
             pass
-        notify_price_fetch_failure(calc_date, str(error_msg), stale_tickers)
-        results["ABORT"] = f"FAIL: {error_msg}"
-        notify_batch_complete(calc_date, elapsed, results)
-    except Exception as e:
-        print(f"  [ABORT] 긴급 알림 발송 실패: {e}")
+
         try:
-            from notifier import send_message
-            send_message(
-                f"🚨 배치 긴급 중단 ({calc_date})\n사유: {error_msg}\n⛔ 수동 확인 필요",
-                channel_key="SYSTEM", private=False
+            risk_data = build_risk_dashboard(calc_date)
+            print(f"  ✅ 리스크 대시보드: {risk_data.get('risk_level', '?')}")
+        except Exception as e:
+            print(f"  ⚠️ 리스크 대시보드 실패: {e}")
+
+    # ═══════════════════════════════════════════════════════
+    #  Phase 3: 일괄 알림 발송
+    # ═══════════════════════════════════════════════════════
+    print(f"\n  ── Phase 3: 알림 발송 ──")
+
+    from notifier import (
+        notify_morning_briefing,
+        notify_daily_signals,
+        notify_add_position,
+        notify_fire_sell,
+        notify_bounce_opportunity,
+        notify_risk_warning,
+        notify_grade_changes as notify_grades,
+        notify_regime_change,
+        notify_batch_complete,
+        notify_batch_start,
+    )
+
+    # (A) 모닝 브리핑 → MY_MORNING + PUB_MORNING
+    if regime:
+        try:
+            signal_summary = {
+                "buy_count": len(buy_signals),
+                "sell_count": len(sell_signals),
+                "fire_count": len(fire_signals),
+                "add_count": 0,
+                "bounce_count": len(bounce_signals),
+            }
+            notify_morning_briefing(
+                calc_date=calc_date,
+                regime=regime,
+                regime_detail=regime_detail,
+                signal_summary=signal_summary,
+                regime_proba=regime_proba,
+                ic_data=ic_data,
+                hit_rate=hit_rate,
+                fear_greed=fear_greed,
+                portfolio_summary=portfolio_summary,
             )
-        except Exception:
-            print(f"  [ABORT] 모든 알림 실패!")
+            print(f"  ✅ 모닝 브리핑 → MY_MORNING + PUB_MORNING")
+        except Exception as e:
+            print(f"  ⚠️ 모닝 브리핑 실패: {e}")
 
+    # (B) 매수/매도 시그널 → BUY/SELL/PROFIT + PUB
+    if buy_signals or sell_signals:
+        try:
+            notify_daily_signals(
+                calc_date=calc_date,
+                regime=regime or "NEUTRAL",
+                regime_detail=regime_detail,
+                buy_signals=buy_signals,
+                sell_signals=sell_signals,
+                portfolio_summary=portfolio_summary,
+            )
+            print(f"  ✅ 시그널 → MY_BUY/SELL/PROFIT + PUB_BUY/SELL")
+        except Exception as e:
+            print(f"  ⚠️ 시그널 실패: {e}")
 
-# ══════════════════════════════════════════════
-#  메인 파이프라인
-# ══════════════════════════════════════════════
+    # (C) 긴급 매도 → MY_FIRE
+    if fire_signals:
+        try:
+            notify_fire_sell(calc_date=calc_date, fire_signals=fire_signals)
+            print(f"  ✅ 긴급 매도 → MY_FIRE ({len(fire_signals)}건)")
+        except Exception as e:
+            print(f"  ⚠️ FIRE 실패: {e}")
 
-def run_all(calc_date=None):
-    if calc_date is None:
-        calc_date = datetime.now().date()
-    start_all = datetime.now()
-    results = {}
-    print(f"\n{'='*60}\n  QUANT AI v3.7 일일 배치 — {calc_date}\n{'='*60}")
+    # (D) 반등 기회 → MY_BOUNCE
+    if bounce_signals:
+        try:
+            notify_bounce_opportunity(calc_date=calc_date, bounce_signals=bounce_signals)
+            print(f"  ✅ 반등 기회 → MY_BOUNCE ({len(bounce_signals)}건)")
+        except Exception as e:
+            print(f"  ⚠️ BOUNCE 실패: {e}")
 
-    # ━━ Step 1: 가격 수집 (★ 안전장치) ━━
-    results["1_price"] = _run_step("1 가격 수집", lambda: _s_price(calc_date))
+    # (E) 리스크 경고 → MY_RISK + PUB_RISK
+    if risk_data:
+        try:
+            notify_risk_warning(
+                calc_date=calc_date,
+                risk_level=risk_data.get("risk_level", "GREEN"),
+                drawdown=risk_data.get("drawdown"),
+                var_data=risk_data.get("var"),
+                concentration=risk_data.get("concentration"),
+                defense_status=risk_data.get("defense"),
+                stress_test=risk_data.get("stress_test"),
+                correlation=risk_data.get("correlation"),
+            )
+            print(f"  ✅ 리스크 → MY_RISK + PUB_RISK ({risk_data.get('risk_level', '?')})")
+        except Exception as e:
+            print(f"  ⚠️ RISK 실패: {e}")
 
-    if results["1_price"].startswith("FAIL"):
-        print(f"\n🚨 Step 1 가격 수집 실패 — 이후 배치 중단!")
-        _emergency_abort(calc_date, results, start_all, results["1_price"])
-        return results
+    # (F) 등급 변경 → MY_ALERT + PUB_REPORT
+    if grade_changes:
+        try:
+            notify_grades(calc_date=calc_date, changes=grade_changes)
+            print(f"  ✅ 등급 변경 → MY_ALERT + PUB_REPORT ({len(grade_changes)}건)")
+        except Exception as e:
+            print(f"  ⚠️ 등급변경 실패: {e}")
 
-    stale_info = _check_price_health(calc_date)
-    if stale_info and stale_info.get("abort"):
-        pct = stale_info["stale_pct"]
-        cnt = stale_info["stale_count"]
-        print(f"\n🚨 가격 데이터 {pct:.0f}% 미갱신 — 이후 배치 중단!")
-        results["1_price_health"] = f"FAIL: stale {pct:.0f}%"
-        _emergency_abort(calc_date, results, start_all, f"미갱신 종목 {cnt}개 ({pct:.0f}%)")
-        return results
-    elif stale_info and stale_info.get("stale_count", 0) > 0:
-        results["1_price_health"] = f"WARN: stale {stale_info['stale_count']}개"
-        print(f"  ⚠️ 미갱신 종목 {stale_info['stale_count']}개 (임계 미만 → 계속 진행)")
-    else:
-        results["1_price_health"] = "OK"
+    # (G) 국면 전환 → MY_ALERT + PUB_REPORT
+    if regime_changed:
+        try:
+            notify_regime_change(
+                calc_date=calc_date,
+                old_regime=prev_regime,
+                new_regime=regime,
+                trigger_detail=regime_detail,
+            )
+            print(f"  ✅ 국면 전환 → MY_ALERT + PUB_REPORT ({prev_regime}→{regime})")
+        except Exception as e:
+            print(f"  ⚠️ 국면전환 실패: {e}")
 
-    # ━━ Step 2~6: 점수 계산 ━━
-    results["2_fin"]        = _run_step("2 파생 재무",            lambda: _s_fin(calc_date))
-    results["3_l1"]         = _run_step("3 Layer 1",              lambda: _s_l1(calc_date))
-    results["4_l3"]         = _run_step("4 Layer 3 (A)",          lambda: _s_l3(calc_date))
-    results["4.5_pattern"]  = _run_step("4.5 차트패턴",           lambda: _s_chart_patterns(calc_date))
-    results["4.6_fg"]       = _run_step("4.6 Fear&Greed",         lambda: _s_fear_greed(calc_date))
-    results["4.7_l3bc"]     = _run_step("4.7 Layer 3 (B+C)",     lambda: _s_l3bc(calc_date))
-    results["5_l2"]         = _run_step("5 Layer 2",              lambda: _s_l2(calc_date))
+    # (H) 배치 완료 → MY_SYSTEM + PUB_REPORT
+    try:
+        elapsed = (datetime.now() - start_time).total_seconds()
+        ok_cnt = sum(1 for v in results.values() if v == "OK")
+        fail_cnt = sum(1 for v in results.values() if isinstance(v, str) and v.startswith("FAIL"))
 
-    if _should_earnings(calc_date):
-        results["5.5_ec"]   = _run_step("5.5 어닝콜",            lambda: _s_ec(calc_date))
-    else:
-        results["5.5_ec"]   = "SKIP"
+        step_results = {}
+        for k, v in results.items():
+            step_name = k.split("_", 1)[1] if "_" in k else k
+            step_results[step_name] = {"ok": v == "OK", "duration": ""}
 
-    results["5.6_insider"]  = _run_step("5.6 내부자거래",         lambda: _s_insider())
-    results["5.7_macro"]    = _run_step("5.7 거시지표",           lambda: _s_macro())
-    results["6_final"]      = _run_step("6 최종 합산",            lambda: _s_final(calc_date))
+        notify_batch_complete(
+            calc_date=calc_date,
+            duration_sec=elapsed,
+            job_name="Daily Full Pipeline",
+            results={
+                "success": ok_cnt,
+                "fail": fail_cnt,
+                "total": ok_cnt + fail_cnt,
+                "steps": step_results,
+            },
+        )
+        print(f"  ✅ 배치 완료 → MY_SYSTEM + PUB_REPORT")
+    except Exception as e:
+        print(f"  ⚠️ 배치완료 알림 실패: {e}")
 
-    # ━━ Step 7~8: 트레이딩 + 알림 ━━
-    results["7_trading"]    = _run_step("7 트레이딩 시그널",      lambda: _s_trading(calc_date))
-    results["8_notify"]     = _run_step("8 알림 발송",            lambda: _s_notify_all(calc_date, results, start_all))
+    print(f"\n  ── 알림 발송 완료 ──")
 
-    # Step 9: 주간 (토요일)
-    if calc_date.weekday() == 5:
-        results["9_weekly"] = _run_step("9 주간 성과",            lambda: _s_weekly(calc_date))
-    else:
-        results["9_weekly"] = "SKIP"
-
-    # Step 10: 월간 (매월 1일)
-    if calc_date.day == 1:
-        results["10_monthly"] = _run_step("10 월간 성과",         lambda: _s_monthly(calc_date))
-    else:
-        results["10_monthly"] = "SKIP"
-
-    elapsed = datetime.now() - start_all
-    ok   = sum(1 for v in results.values() if v == "OK")
-    fail = sum(1 for v in results.values() if isinstance(v, str) and v.startswith("FAIL"))
-    skip = sum(1 for v in results.values() if v == "SKIP")
-    warn = sum(1 for v in results.values() if isinstance(v, str) and v.startswith("WARN"))
-    print(f"\n{'='*60}\n  결과: 성공={ok} 실패={fail} 경고={warn} 스킵={skip} | 소요: {elapsed}\n{'='*60}")
-    return results
-
-
-# ══════════════════════════════════════════════
-#  주간/월간 리포트
-# ══════════════════════════════════════════════
 
 def _s_weekly(d):
+    """주간 성과 리포트 → Discord REPORT 채널"""
     from db_pool import get_cursor
     from datetime import timedelta
     week_start = d - timedelta(days=7)
+
     with get_cursor() as cur:
         cur.execute("""
             SELECT total_value FROM portfolio_daily_snapshot
@@ -282,135 +506,109 @@ def _s_weekly(d):
             ORDER BY snapshot_date
         """, (week_start,))
         rows = cur.fetchall()
+
     if len(rows) < 2:
         print("  주간 데이터 부족 — 스킵")
         return
+
     start_val = float(rows[0]["total_value"])
     end_val = float(rows[-1]["total_value"])
-    week_return = (end_val - start_val) / start_val * 100 if start_val > 0 else 0
+    week_return = (end_val - start_val) / start_val * 100
+
+    # 주간 트레이드 통계
     with get_cursor() as cur:
         cur.execute("""
-            SELECT trade_type, COUNT(*) as cnt
-            FROM trade_history WHERE trade_date >= %s AND trade_date <= %s
-            GROUP BY trade_type
-        """, (week_start, d))
-        trades = {r["trade_type"]: r["cnt"] for r in cur.fetchall()}
-    try:
-        from notifier import notify_weekly_report
-        notify_weekly_report(calc_date=d, week_return=week_return, total_value=end_val,
-                             spy_return=0, win_rate=0, num_trades=sum(trades.values()))
-        print(f"  ✅ 주간 리포트 발송 (수익률: {week_return:+.2f}%)")
-    except Exception as e:
-        print(f"  ⚠️ 주간 리포트 실패: {e}")
+            SELECT signal_type, COUNT(*) as cnt
+            FROM trading_signals
+            WHERE calc_date >= %s
+            GROUP BY signal_type
+        """, (week_start,))
+        trade_stats = {r["signal_type"]: r["cnt"] for r in cur.fetchall()}
 
+    from notifier import notify_weekly_report
+    notify_weekly_report(
+        calc_date=d,
+        week_return=week_return,
+        start_value=start_val,
+        end_value=end_val,
+        trade_stats=trade_stats,
+    )
 
 def _s_monthly(d):
+    """월간 성과 리포트 → Discord REPORT 채널"""
     from db_pool import get_cursor
     from datetime import timedelta
-    month_start = (d.replace(day=1) - timedelta(days=1)).replace(day=1)
+    month_start = d.replace(day=1) - timedelta(days=1)
+    month_start = month_start.replace(day=1)
+
     with get_cursor() as cur:
         cur.execute("""
-            SELECT MIN(total_value) as min_val, MAX(total_value) as max_val,
-                   (array_agg(total_value ORDER BY snapshot_date))[1] as first_val,
-                   (array_agg(total_value ORDER BY snapshot_date DESC))[1] as last_val
-            FROM portfolio_daily_snapshot
-            WHERE portfolio_id = 1 AND snapshot_date >= %s AND snapshot_date < %s
-        """, (month_start, d))
-        row = cur.fetchone()
-    if not row or not row["first_val"]:
+            SELECT total_value FROM portfolio_daily_snapshot
+            WHERE portfolio_id = 1 AND snapshot_date >= %s
+            ORDER BY snapshot_date
+        """, (month_start,))
+        rows = cur.fetchall()
+
+    if len(rows) < 2:
         print("  월간 데이터 부족 — 스킵")
         return
-    first_v = float(row["first_val"])
-    last_v = float(row["last_val"])
-    month_return = (last_v - first_v) / first_v * 100 if first_v > 0 else 0
+
+    start_val = float(rows[0]["total_value"])
+    end_val = float(rows[-1]["total_value"])
+    month_return = (end_val - start_val) / start_val * 100
+
+    from notifier import notify_weekly_report
+    notify_weekly_report(
+        calc_date=d,
+        week_return=month_return,
+        start_value=start_val,
+        end_value=end_val,
+        trade_stats={},
+        title_prefix="📅 월간",
+    )
+
+
+# ── 유틸 ──
+
+def _run_step(name: str, fn):
+    print(f"\n▶ {name}")
+    t0 = datetime.now()
     try:
-        from notifier import notify_weekly_report
-        notify_weekly_report(calc_date=d, week_return=month_return, total_value=last_v)
-        print(f"  ✅ 월간 리포트 발송 (수익률: {month_return:+.2f}%)")
+        fn()
+        elapsed = datetime.now() - t0
+        print(f"  ✅ {elapsed}")
+        return "OK"
     except Exception as e:
-        print(f"  ⚠️ 월간 리포트 실패: {e}")
+        elapsed = datetime.now() - t0
+        print(f"  ❌ {e} ({elapsed})")
+        traceback.print_exc()
+        return f"FAIL: {e}"
 
 
-# ══════════════════════════════════════════════
-#  ★ APScheduler
-# ══════════════════════════════════════════════
-
-def start_scheduler():
+def _should_earnings(d):
+    """어닝콜 분석 대상일인지 판단"""
     try:
-        from apscheduler.schedulers.blocking import BlockingScheduler
-        from apscheduler.triggers.cron import CronTrigger
-    except ImportError:
-        print("=" * 60)
-        print("  ⚠ APScheduler 미설치! pip install apscheduler")
-        print("=" * 60)
-        print("\n  APScheduler 없이 1회 실행합니다...")
-        run_all()
-        return
-
-    from dotenv import load_dotenv
-    load_dotenv()
-    from db_pool import init_pool
-    init_pool()
-
-    sched = BlockingScheduler(timezone="US/Eastern")
-
-    sched.add_job(
-        run_all,
-        CronTrigger(day_of_week="mon-fri", hour=21, minute=0, timezone="US/Eastern"),
-        id="daily_batch",
-        name="일일 배치 (21:00 ET)",
-        misfire_grace_time=3600,
-    )
-
-    sched.add_job(
-        lambda: _s_weekly(datetime.now().date()),
-        CronTrigger(day_of_week="sat", hour=9, minute=0, timezone="US/Eastern"),
-        id="weekly_report",
-        name="주간 성과 리포트",
-    )
-
-    sched.add_job(
-        lambda: _s_monthly(datetime.now().date()),
-        CronTrigger(day=1, hour=9, minute=0, timezone="US/Eastern"),
-        id="monthly_report",
-        name="월간 성과 리포트",
-    )
-
-    print("=" * 60)
-    print("  🤖 QUANT AI v3.7 Scheduler 시작")
-    print("=" * 60)
-    print(f"  일일 배치:   평일 21:00 ET")
-    print(f"  주간 리포트: 토요일 09:00 ET")
-    print(f"  월간 리포트: 매월 1일 09:00 ET")
-    print(f"  현재 시각:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  안전장치:    가격실패 {PRICE_FAIL_THRESHOLD_PCT}%↑ 시 중단")
-    print("=" * 60)
-
-    try:
-        from notifier import send_message
-        send_message("🤖 QUANT AI v3.7 Scheduler 시작", channel_key="SYSTEM", private=False)
+        from db_pool import get_cursor
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) as cnt FROM earnings_calendar
+                WHERE report_date = %s
+            """, (d,))
+            return cur.fetchone()["cnt"] > 0
     except Exception:
-        pass
-
-    try:
-        sched.start()
-    except (KeyboardInterrupt, SystemExit):
-        print("\n[Scheduler] 종료됨")
-        try:
-            from notifier import send_message
-            send_message("🔧 QUANT AI Scheduler 종료됨", channel_key="SYSTEM", private=False)
-        except Exception:
-            pass
+        return False
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-    from db_pool import init_pool
-    init_pool()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--date", type=str, default=None, help="YYYY-MM-DD")
+    args = parser.parse_args()
 
-    if "--now" in sys.argv:
-        print("▶ 즉시 실행 모드")
-        run_all()
+    if args.date:
+        from datetime import datetime as dt
+        calc_date = dt.strptime(args.date, "%Y-%m-%d").date()
     else:
-        start_scheduler()
+        calc_date = None
+
+    run_all(calc_date)

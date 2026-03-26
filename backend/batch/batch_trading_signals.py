@@ -38,14 +38,6 @@ from portfolio.correlation_filter import CorrelationFilter
 from portfolio.position_sizer import calculate_position_size
 from analytics.decision_audit import DecisionAudit
 
-# ── v4.0 Adaptive Threshold ──
-try:
-    from utils.adaptive_scoring import compute_adaptive_threshold
-    _HAS_ADAPTIVE = True
-except ImportError:
-    _HAS_ADAPTIVE = False
-    print("[WARN] adaptive_scoring 미설치 — 고정 임계값 사용")
-
 # ── signal 패키지 (Python 내장 signal 충돌 우회) ──
 def _import_signal_module(name):
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -73,6 +65,66 @@ _corr_filter = CorrelationFilter(threshold=0.80)
 # ═══════════════════════════════════════════════════════════
 #  메인 파이프라인
 # ═══════════════════════════════════════════════════════════
+
+
+
+def _build_buy_reason(c: dict) -> str:
+    """매수 추천 사유 문자열 생성.
+    
+    L1/L2/L3 점수 + 기술 시그널을 기반으로
+    핵심 매수 근거를 2~3줄로 요약.
+    """
+    reasons = []
+    
+    # ── 등급/순위 ──
+    pct = c.get("percentile_rank", 0)
+    if pct >= 97:
+        reasons.append(f"상위 {100-pct:.0f}% (S등급)")
+    elif pct >= 92:
+        reasons.append(f"상위 {100-pct:.0f}% (A+등급)")
+    elif pct >= 82:
+        reasons.append(f"상위 {100-pct:.0f}%")
+
+    # ── L1 재무 ──
+    l1 = c.get("layer1_score", 0)
+    if l1 >= 60:
+        reasons.append("재무 우수")
+    elif l1 >= 50:
+        reasons.append("재무 양호")
+
+    # ── L2 NLP/뉴스 ──
+    l2 = c.get("layer2_score", 0)
+    if l2 >= 60:
+        reasons.append("뉴스 강세")
+
+    # ── 기술 시그널 ──
+    if c.get("golden_cross"):
+        reasons.append("골든크로스")
+    if c.get("breakout_52w"):
+        reasons.append("52주 신고가")
+    if c.get("bb_squeeze"):
+        reasons.append("BB스퀴즈(돌파임박)")
+    
+    macd = c.get("macd_histogram", 0)
+    if macd > 0:
+        reasons.append("MACD 매수구간")
+    
+    obv = c.get("obv_trend", "")
+    if obv == "UP":
+        reasons.append("거래량 매집")
+    
+    surge = c.get("volume_surge", 0)
+    if surge >= 2.0:
+        reasons.append(f"거래량 급증({surge:.1f}x)")
+
+    # ── RSI ──
+    rsi = c.get("rsi_14", 50)
+    if 40 <= rsi <= 60:
+        reasons.append(f"RSI {rsi:.0f} (건강)")
+    elif rsi < 35:
+        reasons.append(f"RSI {rsi:.0f} (과매도)")
+
+    return " · ".join(reasons[:4]) if reasons else "종합점수 상위"
 
 def run_trading_signals(calc_date: date = None, dry_run: bool = True):
     if calc_date is None:
@@ -148,7 +200,9 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
             pnl_pct = (stock["current_price"] - pos["entry_price"]) / pos["entry_price"] * 100
             sell_signals.append({
                 "ticker": ticker,
+                "company_name": stock.get("company_name", ""),
                 "stock_id": pos["stock_id"],
+                "sector": stock.get("sector", ""),
                 "reason": risk.reason,
                 "price": stock["current_price"],
                 "entry_price": pos["entry_price"],
@@ -173,42 +227,6 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
     buy_candidates = []
     held_tickers = list(current_positions.keys())
 
-    # ★ Adaptive Threshold 계산 (v4.0)
-    adaptive_buy_threshold = cfg.buy_score_min  # fallback
-    if _HAS_ADAPTIVE:
-        try:
-            all_final_scores = [s.get("final_score", 0) for s in stocks.values()]
-            # Dispersion Guard: 역사적 분산 로드
-            _hist_std = None
-            try:
-                with get_cursor() as cur:
-                    cur.execute("""
-                        SELECT AVG(score_std) as avg_std FROM daily_score_stats
-                        WHERE calc_date >= %s::date - 60 AND calc_date < %s
-                    """, (calc_date, calc_date))
-                    row = cur.fetchone()
-                    if row and row["avg_std"]:
-                        _hist_std = float(row["avg_std"])
-            except Exception:
-                pass
-
-            at_result = compute_adaptive_threshold(
-                all_final_scores, regime, historical_std=_hist_std)
-            adaptive_buy_threshold = at_result["threshold"]
-
-            print(f"  [ADAPTIVE] regime={regime} "
-                  f"threshold={at_result['threshold']:.1f} "
-                  f"(floor={at_result['absolute_floor']}, "
-                  f"P{at_result['buy_percentile']}={at_result['percentile_threshold']:.1f}, "
-                  f"disp_floor={at_result['dispersion_floor']:.1f})")
-            print(f"  [ADAPTIVE] 분산비율={at_result['dispersion_ratio']:.3f} "
-                  f"평균={at_result['score_mean']:.1f} "
-                  f"std={at_result['score_std']:.1f} "
-                  f"후보={at_result['candidates_above']}개")
-        except Exception as e:
-            print(f"  [ADAPTIVE] ⚠️ 계산 실패, fallback={cfg.buy_score_min}: {e}")
-            adaptive_buy_threshold = cfg.buy_score_min
-
     # 상관 필터용 가격 데이터
     price_df = _load_price_matrix(calc_date, list(stocks.keys()))
 
@@ -226,8 +244,8 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
         atr = stock.get("atr_14", 0)
         price = stock.get("current_price", 0)
 
-        # 점수 필터 (★ Adaptive Threshold v4.0)
-        rec.score_filter = final_score >= adaptive_buy_threshold
+        # 점수 필터
+        rec.score_filter = final_score >= cfg.buy_score_min
         if not rec.score_filter:
             rec.decision = "SKIP"
             audit.add(rec)
@@ -334,6 +352,7 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
 
         buy_signals.append({
             "ticker": c["ticker"],
+            "company_name": c.get("company_name", ""),
             "stock_id": c["stock_id"],
             "score": c["final_score"],
             "grade": c["grade"],
@@ -343,6 +362,7 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
             "weight": ps.weight_pct,
             "stop_loss": ps.stop_loss_price,
             "sector": c["sector"],
+            "reason": _build_buy_reason(c),
         })
         current_invested += ps.position_value
         sector_invested[c["sector"]] += ps.position_value
@@ -593,11 +613,11 @@ def _load_stock_data(calc_date: date) -> dict:
         # Final Score + 가격 + 기술지표 조인
         cur.execute("""
             SELECT
-                s.stock_id, s.ticker,
+                s.stock_id, s.ticker, s.company_name,
                 COALESCE(sec.sector_code, '99') AS sector,
                 f.weighted_score AS final_score,
                 f.layer1_score, f.layer2_score, f.layer3_score,
-                f.grade, f.signal,
+                f.grade, f.signal, f.percentile_rank,
                 p.close_price AS current_price,
                 p.open_price,
                 t.rsi_14,
@@ -612,7 +632,10 @@ def _load_stock_data(calc_date: date) -> dict:
                 ORDER BY trade_date DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN LATERAL (
-                SELECT rsi_14, volume_20d_avg
+                SELECT rsi_14, volume_20d_avg,
+                       golden_cross, obv_trend, bb_squeeze,
+                       macd_histogram, volume_surge_ratio,
+                       breakout_52w, relative_momentum_score
                 FROM technical_indicators
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
@@ -627,14 +650,24 @@ def _load_stock_data(calc_date: date) -> dict:
             stocks[ticker] = {
                 "stock_id": r["stock_id"],
                 "ticker": ticker,
+                "company_name": r.get("company_name", ""),
                 "sector": r.get("sector", "99"),
                 "final_score": float(r["final_score"]) if r["final_score"] else 0,
-                "layer3_score": float(r["layer3_score"]) if r["layer3_score"] else 0,
+                "layer1_score": float(r["layer1_score"] or 0),
+                "layer2_score": float(r["layer2_score"] or 0),
+                "layer3_score": float(r["layer3_score"] or 0),
                 "grade": r.get("grade", ""),
                 "signal": r.get("signal", "HOLD"),
+                "percentile_rank": float(r["percentile_rank"] or 0),
                 "current_price": float(r["current_price"]) if r["current_price"] else 0,
                 "rsi_14": float(r["rsi_14"]) if r["rsi_14"] else 50,
-                "atr_14": 0,  # 아래에서 별도 계산
+                "golden_cross": bool(r.get("golden_cross")),
+                "obv_trend": r.get("obv_trend") or "",
+                "bb_squeeze": bool(r.get("bb_squeeze")),
+                "macd_histogram": float(r.get("macd_histogram") or 0),
+                "volume_surge": float(r.get("volume_surge_ratio") or 0),
+                "breakout_52w": bool(r.get("breakout_52w")),
+                "atr_14": 0,
                 "recent_scores": [],
             }
 
