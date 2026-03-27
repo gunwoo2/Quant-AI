@@ -1,23 +1,33 @@
 """
-scheduler.py — QUANT AI v3.4 (배치 완료 후 일괄 알림)
+scheduler.py — QUANT AI v4.0 (배치 완료 후 일괄 알림)
 =====================================================
-v3.4 변경:
-  - 모닝 브리핑 스케줄 제거 → 배치 마지막 단계로 통합
-  - 배치 Step 1~7: 계산만 (알림 ZERO)
-  - Step 8: 일괄 알림 (시그널 + 모닝 + 배치완료)
+v4.0 변경 (v3.4 → v4.0):
+  - APScheduler 자체 cron 탑재: 평일 ET 20:30 (애프터마켓 20:00 + 30분)
+  - main.py에서 모닝 브리핑 스케줄 제거 → 배치 Step 8에서 통합
+  - _s_weekly/_s_monthly → notifier 시그니처 정합성 수정
   - 모든 notify 호출은 _s_notify_all() 한 곳에서만 발생
 
-기존 흐름:
-  배치 02:00 → 중간중간 notify → 모닝 08:30 별도 전송
-  
-변경 흐름:
-  배치 02:00 → 계산만 수행 → Step 8에서 한방에 전부 전송
+타임라인:
+  미국 정규장 마감  ET 16:00
+  애프터마켓 마감   ET 20:00
+  배치 시작         ET 20:30 (KST 09:30) ← 여기서 run_all()
+  배치 완료         약 ET 21:00~21:30
+  Step 8            → 디코 일괄 알림 (배치 끝나자마자)
+
+실행 방법:
+  1) standalone: python -m batch.scheduler          (APScheduler 대기)
+  2) 수동:       python -m batch.scheduler --now     (즉시 1회 실행)
+  3) 날짜 지정:  python -m batch.scheduler --date 2026-03-25
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import traceback
 
+
+# ═══════════════════════════════════════════════════════════
+#  배치 파이프라인 메인
+# ═══════════════════════════════════════════════════════════
 
 def run_all(calc_date: date = None):
     if calc_date is None:
@@ -26,20 +36,12 @@ def run_all(calc_date: date = None):
     results = {}
     print(f"\n{'='*60}\n  QUANT AI v4.0 일일 배치 — {calc_date}\n{'='*60}")
 
-    # ── 배치 시작 알림 → MY_SYSTEM + PUB_REPORT ──
-    try:
-        from notifier import notify_batch_start
-        notify_batch_start(calc_date=calc_date, job_name="Daily Full Pipeline")
-        print("  ✅ 배치 시작 알림 전송")
-    except Exception as e:
-        print(f"  ⚠️ 배치 시작 알림 실패: {e}")
-
     # ── Step 1~7: 계산 전용 (알림 ZERO) ──
     results["1_price"]   = _run_step("1/10 가격 수집",        lambda: _s_price(calc_date))
-    results["2_fin"]     = _run_step("2/10 파생 재무",        lambda: _s_fin(calc_date))
+    results["2_fin"]     = _run_step("2/10 파생 재무",        lambda: _s_fin())
     results["3_l1"]      = _run_step("3/10 Layer 1",          lambda: _s_l1(calc_date))
     results["4_l3"]      = _run_step("4/10 Layer 3",          lambda: _s_l3(calc_date))
-    results["5_l2"]      = _run_step("5/10 Layer 2",          lambda: _s_l2(calc_date))
+    results["5_l2"]      = _run_step("5/10 Layer 2",          lambda: _s_l2())
 
     if _should_earnings(calc_date):
         results["5.5_ec"] = _run_step("5.5 어닝콜",           lambda: _s_ec(calc_date))
@@ -72,28 +74,40 @@ def run_all(calc_date: date = None):
     return results
 
 
-# ── Step 함수 ──
+# ═══════════════════════════════════════════════════════════
+#  Step 1~7: 계산 함수 (알림 ZERO)
+# ═══════════════════════════════════════════════════════════
 
 def _s_price(d):
-    from batch.batch_ticker_item_daily import run_daily_price; run_daily_price(d)
+    from batch.batch_ticker_item_daily import run_daily_price
+    run_daily_price(d)
 
-def _s_fin(d):
-    from batch.batch_ticker_item_daily import run_supplement_financials; run_supplement_financials()
+def _s_fin():
+    """오답노트 #6: run_supplement_financials()는 인자 없음"""
+    from batch.batch_ticker_item_daily import run_supplement_financials
+    run_supplement_financials()
 
 def _s_l1(d):
-    from batch.batch_ticker_item_daily import run_quant_score; run_quant_score(d)
+    from batch.batch_ticker_item_daily import run_quant_score
+    run_quant_score(d)
 
 def _s_l3(d):
-    from batch.batch_layer3_v2 import run_all as r; r(d)
+    """오답노트 #5: batch_layer3_v2.run_all(d)"""
+    from batch.batch_layer3_v2 import run_all as r
+    r(d)
 
-def _s_l2(d):
-    from batch.batch_layer2_v2 import run_all as r; r()
+def _s_l2():
+    """오답노트 #7: batch_layer2_v2.run_all()은 인자 없음"""
+    from batch.batch_layer2_v2 import run_all as r
+    r()
 
 def _s_ec(d):
-    from batch.batch_earnings_call import run_earnings_call_analysis; run_earnings_call_analysis(d)
+    from batch.batch_earnings_call import run_earnings_call_analysis
+    run_earnings_call_analysis(d)
 
 def _s_final(d):
-    from batch.batch_final_score import run_final_score; run_final_score(d)
+    from batch.batch_final_score import run_final_score
+    run_final_score(d)
 
 def _s_trading(d):
     """트레이딩 시그널 계산 (알림 없이 DB 저장만)"""
@@ -108,10 +122,10 @@ def _s_trading(d):
 
 def _s_notify_all(calc_date, results, start_time):
     """
-    v4.0 — 모든 알림을 일괄 발송 (notify_data_builder + notifier_v4)
-    
+    v4.0 — 모든 알림을 일괄 발송 (notify_data_builder + notifier)
+
     scheduler → notify_data_builder (계산) → notifier (전송)
-    
+
     1) IC/적중률/국면확률 계산
     2) 매수 근거 카드 보강 (Goldman Conviction + Bridgewater Because)
     3) 매도 분석 보강 (MAE/MFE + 점수변화 + 역대성과)
@@ -119,7 +133,6 @@ def _s_notify_all(calc_date, results, start_time):
     5) 모닝/시그널/리스크/등급변경/국면전환/배치완료 알림
     """
     from db_pool import get_cursor
-    from datetime import timedelta
 
     # ═══════════════════════════════════════════════════════
     #  Phase 1: DB에서 기본 데이터 로드
@@ -339,13 +352,13 @@ def _s_notify_all(calc_date, results, start_time):
 
         try:
             hit_rate = calc_hit_rate()
-            print(f"  ✅ 적중률: {hit_rate.get('hit_rate', 0):.1%}")
+            print(f"  ✅ 적중률: {hit_rate.get('hit_rate', 0):.1f}%")
         except Exception as e:
             print(f"  ⚠️ 적중률 실패: {e}")
 
         try:
             regime_proba = calc_regime_probability()
-            print(f"  ✅ 국면확률: {regime_proba.get('stay_probability', 0):.0%}")
+            print(f"  ✅ 국면확률: {regime_proba}")
         except Exception as e:
             print(f"  ⚠️ 국면확률 실패: {e}")
 
@@ -375,7 +388,6 @@ def _s_notify_all(calc_date, results, start_time):
         notify_grade_changes as notify_grades,
         notify_regime_change,
         notify_batch_complete,
-        notify_batch_start,
     )
 
     # (A) 모닝 브리핑 → MY_MORNING + PUB_MORNING
@@ -501,15 +513,22 @@ def _s_notify_all(calc_date, results, start_time):
     print(f"\n  ── 알림 발송 완료 ──")
 
 
+# ═══════════════════════════════════════════════════════════
+#  Step 9: 주간 리포트 (토요일)
+#  ★ notifier.notify_weekly_report 시그니처에 맞춰 호출
+# ═══════════════════════════════════════════════════════════
+
 def _s_weekly(d):
     """주간 성과 리포트 → Discord REPORT 채널"""
     from db_pool import get_cursor
-    from datetime import timedelta
+
     week_start = d - timedelta(days=7)
 
+    # ── 주간 수익률 ──
     with get_cursor() as cur:
         cur.execute("""
-            SELECT total_value FROM portfolio_daily_snapshot
+            SELECT total_value, snapshot_date
+            FROM portfolio_daily_snapshot
             WHERE portfolio_id = 1 AND snapshot_date >= %s
             ORDER BY snapshot_date
         """, (week_start,))
@@ -521,40 +540,151 @@ def _s_weekly(d):
 
     start_val = float(rows[0]["total_value"])
     end_val = float(rows[-1]["total_value"])
-    week_return = (end_val - start_val) / start_val * 100
+    week_return = (end_val - start_val) / start_val * 100 if start_val > 0 else 0
 
-    # 주간 트레이드 통계
-    with get_cursor() as cur:
-        cur.execute("""
-            SELECT signal_type, COUNT(*) as cnt
-            FROM trading_signals
-            WHERE calc_date >= %s
-            GROUP BY signal_type
-        """, (week_start,))
-        trade_stats = {r["signal_type"]: r["cnt"] for r in cur.fetchall()}
+    # ── MTD / YTD / Inception ──
+    mtd_return = 0
+    ytd_return = 0
+    since_inception = 0
+    try:
+        with get_cursor() as cur:
+            # MTD: 이번 달 1일부터
+            month_start = d.replace(day=1)
+            cur.execute("""
+                SELECT total_value FROM portfolio_daily_snapshot
+                WHERE portfolio_id = 1 AND snapshot_date >= %s
+                ORDER BY snapshot_date LIMIT 1
+            """, (month_start,))
+            row = cur.fetchone()
+            if row:
+                mtd_start = float(row["total_value"])
+                mtd_return = (end_val - mtd_start) / mtd_start * 100 if mtd_start > 0 else 0
 
+            # YTD: 올해 1월 1일부터
+            year_start = d.replace(month=1, day=1)
+            cur.execute("""
+                SELECT total_value FROM portfolio_daily_snapshot
+                WHERE portfolio_id = 1 AND snapshot_date >= %s
+                ORDER BY snapshot_date LIMIT 1
+            """, (year_start,))
+            row = cur.fetchone()
+            if row:
+                ytd_start = float(row["total_value"])
+                ytd_return = (end_val - ytd_start) / ytd_start * 100 if ytd_start > 0 else 0
+
+            # Since Inception: 가장 오래된 스냅샷
+            cur.execute("""
+                SELECT total_value FROM portfolio_daily_snapshot
+                WHERE portfolio_id = 1
+                ORDER BY snapshot_date LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row:
+                inception_val = float(row["total_value"])
+                since_inception = (end_val - inception_val) / inception_val * 100 if inception_val > 0 else 0
+    except Exception as e:
+        print(f"  ⚠️ MTD/YTD 계산 실패: {e}")
+
+    # ── 트레이드 통계 ──
+    num_trades = 0
+    win_rate = 0
+    best_ticker = ""
+    best_pnl = 0
+    worst_ticker = ""
+    worst_pnl = 0
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) as cnt
+                FROM trading_signals
+                WHERE calc_date >= %s AND signal_type IN ('BUY', 'SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+            """, (week_start,))
+            num_trades = cur.fetchone()["cnt"]
+
+            # 승률: 매도 중 수익 비율
+            cur.execute("""
+                SELECT COUNT(*) FILTER (WHERE pnl_pct > 0) as wins,
+                       COUNT(*) as total
+                FROM trading_signals
+                WHERE calc_date >= %s AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+            """, (week_start,))
+            row = cur.fetchone()
+            if row and row["total"] > 0:
+                win_rate = row["wins"] / row["total"] * 100
+
+            # Best / Worst
+            cur.execute("""
+                SELECT s.ticker, ts.pnl_pct
+                FROM trading_signals ts
+                JOIN stocks s ON ts.stock_id = s.stock_id
+                WHERE ts.calc_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                ORDER BY ts.pnl_pct DESC LIMIT 1
+            """, (week_start,))
+            row = cur.fetchone()
+            if row:
+                best_ticker = row["ticker"]
+                best_pnl = float(row["pnl_pct"] or 0)
+
+            cur.execute("""
+                SELECT s.ticker, ts.pnl_pct
+                FROM trading_signals ts
+                JOIN stocks s ON ts.stock_id = s.stock_id
+                WHERE ts.calc_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                ORDER BY ts.pnl_pct ASC LIMIT 1
+            """, (week_start,))
+            row = cur.fetchone()
+            if row:
+                worst_ticker = row["ticker"]
+                worst_pnl = float(row["pnl_pct"] or 0)
+    except Exception as e:
+        print(f"  ⚠️ 트레이드 통계 실패: {e}")
+
+    # ── Brinson Attribution (옵션) ──
+    brinson = None
+    try:
+        from notify_data_builder import build_weekly_brinson
+        brinson = build_weekly_brinson(d)
+    except Exception:
+        pass
+
+    # ── 알림 발송 (notifier 시그니처 정합) ──
     from notifier import notify_weekly_report
     notify_weekly_report(
         calc_date=d,
         week_return=week_return,
-        start_value=start_val,
-        end_value=end_val,
-        trade_stats=trade_stats,
+        mtd_return=mtd_return,
+        ytd_return=ytd_return,
+        since_inception=since_inception,
+        win_rate=win_rate,
+        num_trades=num_trades,
+        best_ticker=best_ticker,
+        best_pnl=best_pnl,
+        worst_ticker=worst_ticker,
+        worst_pnl=worst_pnl,
+        brinson=brinson,
     )
+
+
+# ═══════════════════════════════════════════════════════════
+#  Step 10: 월간 리포트 (매월 1일)
+#  ★ 주간과 동일 구조, 기간만 다름
+# ═══════════════════════════════════════════════════════════
 
 def _s_monthly(d):
     """월간 성과 리포트 → Discord REPORT 채널"""
     from db_pool import get_cursor
-    from datetime import timedelta
-    month_start = d.replace(day=1) - timedelta(days=1)
-    month_start = month_start.replace(day=1)
+
+    # 전월 1일 ~ 전월 말일
+    prev_month_end = d.replace(day=1) - timedelta(days=1)
+    month_start = prev_month_end.replace(day=1)
 
     with get_cursor() as cur:
         cur.execute("""
-            SELECT total_value FROM portfolio_daily_snapshot
-            WHERE portfolio_id = 1 AND snapshot_date >= %s
+            SELECT total_value, snapshot_date
+            FROM portfolio_daily_snapshot
+            WHERE portfolio_id = 1 AND snapshot_date >= %s AND snapshot_date <= %s
             ORDER BY snapshot_date
-        """, (month_start,))
+        """, (month_start, prev_month_end))
         rows = cur.fetchall()
 
     if len(rows) < 2:
@@ -563,20 +693,120 @@ def _s_monthly(d):
 
     start_val = float(rows[0]["total_value"])
     end_val = float(rows[-1]["total_value"])
-    month_return = (end_val - start_val) / start_val * 100
+    month_return = (end_val - start_val) / start_val * 100 if start_val > 0 else 0
 
+    # ── YTD / Inception ──
+    ytd_return = 0
+    since_inception = 0
+    try:
+        with get_cursor() as cur:
+            year_start = d.replace(month=1, day=1)
+            cur.execute("""
+                SELECT total_value FROM portfolio_daily_snapshot
+                WHERE portfolio_id = 1 AND snapshot_date >= %s
+                ORDER BY snapshot_date LIMIT 1
+            """, (year_start,))
+            row = cur.fetchone()
+            if row:
+                ytd_start = float(row["total_value"])
+                ytd_return = (end_val - ytd_start) / ytd_start * 100 if ytd_start > 0 else 0
+
+            cur.execute("""
+                SELECT total_value FROM portfolio_daily_snapshot
+                WHERE portfolio_id = 1
+                ORDER BY snapshot_date LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row:
+                inception_val = float(row["total_value"])
+                since_inception = (end_val - inception_val) / inception_val * 100 if inception_val > 0 else 0
+    except Exception as e:
+        print(f"  ⚠️ YTD 계산 실패: {e}")
+
+    # ── 트레이드 통계 ──
+    num_trades = 0
+    win_rate = 0
+    best_ticker = ""
+    best_pnl = 0
+    worst_ticker = ""
+    worst_pnl = 0
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) as cnt
+                FROM trading_signals
+                WHERE calc_date >= %s AND calc_date <= %s
+                  AND signal_type IN ('BUY', 'SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+            """, (month_start, prev_month_end))
+            num_trades = cur.fetchone()["cnt"]
+
+            cur.execute("""
+                SELECT COUNT(*) FILTER (WHERE pnl_pct > 0) as wins,
+                       COUNT(*) as total
+                FROM trading_signals
+                WHERE calc_date >= %s AND calc_date <= %s
+                  AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+            """, (month_start, prev_month_end))
+            row = cur.fetchone()
+            if row and row["total"] > 0:
+                win_rate = row["wins"] / row["total"] * 100
+
+            cur.execute("""
+                SELECT s.ticker, ts.pnl_pct
+                FROM trading_signals ts
+                JOIN stocks s ON ts.stock_id = s.stock_id
+                WHERE ts.calc_date >= %s AND ts.calc_date <= %s
+                  AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                ORDER BY ts.pnl_pct DESC LIMIT 1
+            """, (month_start, prev_month_end))
+            row = cur.fetchone()
+            if row:
+                best_ticker = row["ticker"]
+                best_pnl = float(row["pnl_pct"] or 0)
+
+            cur.execute("""
+                SELECT s.ticker, ts.pnl_pct
+                FROM trading_signals ts
+                JOIN stocks s ON ts.stock_id = s.stock_id
+                WHERE ts.calc_date >= %s AND ts.calc_date <= %s
+                  AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                ORDER BY ts.pnl_pct ASC LIMIT 1
+            """, (month_start, prev_month_end))
+            row = cur.fetchone()
+            if row:
+                worst_ticker = row["ticker"]
+                worst_pnl = float(row["pnl_pct"] or 0)
+    except Exception as e:
+        print(f"  ⚠️ 월간 트레이드 통계 실패: {e}")
+
+    # ── Brinson (옵션) ──
+    brinson = None
+    try:
+        from notify_data_builder import build_weekly_brinson
+        brinson = build_weekly_brinson(d)
+    except Exception:
+        pass
+
+    # ── 알림 발송 (notifier 시그니처 정합) ──
     from notifier import notify_weekly_report
     notify_weekly_report(
         calc_date=d,
         week_return=month_return,
-        start_value=start_val,
-        end_value=end_val,
-        trade_stats={},
-        title_prefix="📅 월간",
+        ytd_return=ytd_return,
+        since_inception=since_inception,
+        win_rate=win_rate,
+        num_trades=num_trades,
+        best_ticker=best_ticker,
+        best_pnl=best_pnl,
+        worst_ticker=worst_ticker,
+        worst_pnl=worst_pnl,
+        brinson=brinson,
     )
 
 
-# ── 유틸 ──
+# ═══════════════════════════════════════════════════════════
+#  유틸
+# ═══════════════════════════════════════════════════════════
 
 def _run_step(name: str, fn):
     print(f"\n▶ {name}")
@@ -607,16 +837,65 @@ def _should_earnings(d):
         return False
 
 
+# ═══════════════════════════════════════════════════════════
+#  APScheduler — 평일 ET 20:30 자동 실행
+#  (애프터마켓 20:00 마감 + 30분 = KST 09:30)
+# ═══════════════════════════════════════════════════════════
+
+def start_scheduler():
+    """standalone 모드: APScheduler로 평일 ET 20:30 자동 실행"""
+    from apscheduler.schedulers.blocking import BlockingScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    import pytz
+
+    et = pytz.timezone("US/Eastern")
+    scheduler = BlockingScheduler(timezone=et)
+
+    scheduler.add_job(
+        run_all,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour=20,
+            minute=30,
+            timezone=et,
+        ),
+        id="daily_batch",
+        name="Daily Batch Pipeline (ET 20:30)",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    print("=" * 60)
+    print("  QUANT AI v4.0 — Batch Scheduler")
+    print("  평일 ET 20:30 (KST 09:30) 자동 실행")
+    print("  애프터마켓 마감(20:00) + 30분 → 배치 → 디코 알림")
+    print("=" * 60)
+    print(f"  다음 실행: {scheduler.get_jobs()[0].next_run_time}")
+    print("  Ctrl+C로 종료")
+    print("=" * 60)
+
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("\n[SCHEDULER] 🛑 종료")
+
+
+# ═══════════════════════════════════════════════════════════
+#  CLI
+# ═══════════════════════════════════════════════════════════
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--date", type=str, default=None, help="YYYY-MM-DD")
+    parser = argparse.ArgumentParser(description="QUANT AI Batch Scheduler")
+    parser.add_argument("--date", type=str, default=None, help="YYYY-MM-DD (수동 실행)")
+    parser.add_argument("--now", action="store_true", help="즉시 1회 실행")
     args = parser.parse_args()
 
     if args.date:
-        from datetime import datetime as dt
-        calc_date = dt.strptime(args.date, "%Y-%m-%d").date()
+        calc_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        run_all(calc_date)
+    elif args.now:
+        run_all()
     else:
-        calc_date = None
-
-    run_all(calc_date)
+        # 기본: APScheduler 대기 모드
+        start_scheduler()
