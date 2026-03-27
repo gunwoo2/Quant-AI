@@ -176,9 +176,10 @@ def _s_notify_all(calc_date, results, start_time):
         # ── 매수 시그널 ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.*, s.ticker, s.sector, s.stock_id
+                SELECT ts.*, s.ticker, COALESCE(sec.sector_code, '99') AS sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
+                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE ts.signal_date = %s AND ts.signal_type = 'BUY'
                 ORDER BY ts.final_score DESC
             """, (calc_date,))
@@ -200,11 +201,12 @@ def _s_notify_all(calc_date, results, start_time):
         # ── 매도 시그널 ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.*, s.ticker, s.sector, s.stock_id
+                SELECT ts.*, s.ticker, COALESCE(sec.sector_code, '99') AS sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
+                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE ts.signal_date = %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
-                ORDER BY ts.pnl_pct
+                ORDER BY ts.final_score
             """, (calc_date,))
             for row in cur.fetchall():
                 sig = {
@@ -238,8 +240,8 @@ def _s_notify_all(calc_date, results, start_time):
             for row in cur.fetchall():
                 bounce_signals.append({
                     "ticker": row["ticker"],
-                    "score": float(row.get("score") or 0),
-                    "grade": row.get("grade", ""),
+                    "score": float(row.get("final_score") or 0),
+                    "grade": row.get("grade", row.get("signal_strength", "")),
                     "price": float(row.get("price") or 0),
                     "drop_pct": float(row.get("drop_pct") or 0),
                     "rsi": float(row.get("rsi_14") or 30),
@@ -602,7 +604,7 @@ def _s_weekly(d):
 
             # 승률: 매도 중 수익 비율
             cur.execute("""
-                SELECT COUNT(*) FILTER (WHERE pnl_pct > 0) as wins,
+                SELECT COUNT(*) FILTER (WHERE final_score > 50) as wins,
                        COUNT(*) as total
                 FROM trading_signals
                 WHERE calc_date >= %s AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
@@ -613,28 +615,28 @@ def _s_weekly(d):
 
             # Best / Worst
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
-                ORDER BY ts.pnl_pct DESC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                ORDER BY ts.final_score DESC LIMIT 1
             """, (week_start,))
             row = cur.fetchone()
             if row:
                 best_ticker = row["ticker"]
-                best_pnl = float(row["pnl_pct"] or 0)
+                best_pnl = float(row.get("final_score", 0) or 0)
 
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
-                ORDER BY ts.pnl_pct ASC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                ORDER BY ts.final_score ASC LIMIT 1
             """, (week_start,))
             row = cur.fetchone()
             if row:
                 worst_ticker = row["ticker"]
-                worst_pnl = float(row["pnl_pct"] or 0)
+                worst_pnl = float(row.get("final_score", 0) or 0)
     except Exception as e:
         print(f"  ⚠️ 트레이드 통계 실패: {e}")
 
@@ -740,7 +742,7 @@ def _s_monthly(d):
             num_trades = cur.fetchone()["cnt"]
 
             cur.execute("""
-                SELECT COUNT(*) FILTER (WHERE pnl_pct > 0) as wins,
+                SELECT COUNT(*) FILTER (WHERE final_score > 50) as wins,
                        COUNT(*) as total
                 FROM trading_signals
                 WHERE calc_date >= %s AND calc_date <= %s
@@ -751,30 +753,30 @@ def _s_monthly(d):
                 win_rate = row["wins"] / row["total"] * 100
 
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date >= %s AND ts.calc_date <= %s
+                WHERE ts.signal_date >= %s AND ts.signal_date <= %s
                   AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
-                ORDER BY ts.pnl_pct DESC LIMIT 1
+                ORDER BY ts.final_score DESC LIMIT 1
             """, (month_start, prev_month_end))
             row = cur.fetchone()
             if row:
                 best_ticker = row["ticker"]
-                best_pnl = float(row["pnl_pct"] or 0)
+                best_pnl = float(row.get("final_score", 0) or 0)
 
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date >= %s AND ts.calc_date <= %s
+                WHERE ts.signal_date >= %s AND ts.signal_date <= %s
                   AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
-                ORDER BY ts.pnl_pct ASC LIMIT 1
+                ORDER BY ts.final_score ASC LIMIT 1
             """, (month_start, prev_month_end))
             row = cur.fetchone()
             if row:
                 worst_ticker = row["ticker"]
-                worst_pnl = float(row["pnl_pct"] or 0)
+                worst_pnl = float(row.get("final_score", 0) or 0)
     except Exception as e:
         print(f"  ⚠️ 월간 트레이드 통계 실패: {e}")
 
