@@ -113,7 +113,7 @@ def _s_trading(d):
     """트레이딩 시그널 계산 (알림 없이 DB 저장만)"""
     live = os.environ.get("TRADING_LIVE", "0") == "1"
     from batch.batch_trading_signals import run_trading_signals
-    run_trading_signals(calc_date=d, dry_run=not live, silent=True)
+    run_trading_signals(calc_date=d, dry_run=not live)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -153,7 +153,7 @@ def _s_notify_all(calc_date, results, start_time):
         with get_cursor() as cur:
             cur.execute("""
                 SELECT regime, spy_price, spy_ma50, spy_ma200, vix_close,
-                       futures_pct, vix_change_pct, sma_200
+                       regime_multiplier
                 FROM market_regime
                 ORDER BY regime_date DESC LIMIT 2
             """)
@@ -164,10 +164,9 @@ def _s_notify_all(calc_date, results, start_time):
             regime = latest["regime"]
             regime_detail = {
                 "spy_price": float(latest["spy_price"] or 0),
-                "sma_200": float(latest.get("sma_200") or latest.get("spy_ma200") or 0),
+                "sma_200": float(latest.get("spy_ma200") or 0),
                 "vix_close": float(latest["vix_close"] or 0),
-                "futures_pct": float(latest.get("futures_pct") or 0),
-                "vix_change_pct": float(latest.get("vix_change_pct") or 0),
+                "regime_multiplier": float(latest.get("regime_multiplier") or 1.0),
             }
             if len(rows) >= 2:
                 prev_regime = rows[1]["regime"]
@@ -180,16 +179,16 @@ def _s_notify_all(calc_date, results, start_time):
                 SELECT ts.*, s.ticker, s.sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date = %s AND ts.signal_type = 'BUY'
-                ORDER BY ts.score DESC
+                WHERE ts.signal_date = %s AND ts.signal_type = 'BUY'
+                ORDER BY ts.final_score DESC
             """, (calc_date,))
             for row in cur.fetchall():
                 buy_signals_raw.append({
                     "stock_id": row["stock_id"],
                     "ticker": row["ticker"],
-                    "score": float(row.get("score") or 0),
-                    "grade": row.get("grade", ""),
-                    "price": float(row.get("price") or 0),
+                    "score": float(row.get("final_score") or 0),
+                    "grade": row.get("grade", row.get("signal_strength", "")),
+                    "price": float(row.get("current_price") or 0),
                     "shares": int(row.get("shares") or 0),
                     "amount": float(row.get("amount") or 0),
                     "weight": float(row.get("weight_pct") or 0),
@@ -204,17 +203,17 @@ def _s_notify_all(calc_date, results, start_time):
                 SELECT ts.*, s.ticker, s.sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date = %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                WHERE ts.signal_date = %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
                 ORDER BY ts.pnl_pct
             """, (calc_date,))
             for row in cur.fetchall():
                 sig = {
                     "stock_id": row["stock_id"],
                     "ticker": row["ticker"],
-                    "price": float(row.get("price") or 0),
+                    "price": float(row.get("current_price") or 0),
                     "entry_price": float(row.get("entry_price") or 0),
                     "pnl_pct": float(row.get("pnl_pct") or 0),
-                    "reason": row.get("reason", row.get("signal_type", "SELL")),
+                    "reason": row.get("sell_reason", row.get("signal_type", "SELL")),
                     "shares": int(row.get("shares") or 0),
                     "holding_days": int(row.get("holding_days") or 0),
                 }
@@ -233,8 +232,8 @@ def _s_notify_all(calc_date, results, start_time):
                     SELECT rsi_14 FROM technical_indicators
                     WHERE stock_id = ts.stock_id ORDER BY calc_date DESC LIMIT 1
                 ) ti ON TRUE
-                WHERE ts.calc_date = %s AND ts.signal_type = 'BOUNCE'
-                ORDER BY ts.score DESC
+                WHERE ts.signal_date = %s AND ts.signal_type = 'BOUNCE'
+                ORDER BY ts.final_score DESC
             """, (calc_date,))
             for row in cur.fetchall():
                 bounce_signals.append({
