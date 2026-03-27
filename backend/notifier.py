@@ -234,7 +234,9 @@ def _send_discord(embeds: list, tier: str = "MY", ch: str = "REPORT") -> bool:
 def _score_bar(score: float, width: int = 10) -> str:
     filled = round(score / 100 * width)
     empty = width - filled
-    return f"{'\u2588' * filled}{'\u2591' * empty} {score:.1f}"
+    block = '\u2588' * filled
+    light = '\u2591' * empty
+    return f"{block}{light} {score:.1f}"
 
 
 def _layer_breakdown(l1: float, l2: float, l3: float) -> str:
@@ -504,9 +506,10 @@ def _send_buy_premium(today_str: str, regime: str, buy_signals: list):
             {"name": "섹터", "value": s.get("sector", "N/A"), "inline": True},
         ]
 
+        because_text = '\n'.join(because_lines)
         embeds.append({
             "title": f"■ {_tn(ticker)}",
-            "description": f"**투자 근거 (Because...)**\n{'\n'.join(because_lines)}",
+            "description": f"**투자 근거 (Because...)**\n{because_text}",
             "color": color,
             "fields": fields,
         })
