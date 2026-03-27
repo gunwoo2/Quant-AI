@@ -567,7 +567,7 @@ def calc_hit_rate(lookback_count: int = 50, forward_days: int = 5) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.stock_id, ts.price AS signal_price, ts.calc_date,
+                SELECT ts.stock_id, ts.current_price AS signal_price, ts.signal_date AS calc_date,
                        (SELECT close_price FROM stock_prices_daily
                         WHERE stock_id = ts.stock_id 
                           AND trade_date >= ts.calc_date + %s
@@ -725,7 +725,7 @@ def build_risk_dashboard(calc_date: date) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT stock_id, market_value, s.ticker, s.sector
+                SELECT pp.stock_id, pp.market_value, s.ticker, s.sector
                 FROM portfolio_positions pp
                 JOIN stocks s ON pp.stock_id = s.stock_id
                 WHERE pp.status = 'OPEN' AND pp.portfolio_id = 1
@@ -1072,4 +1072,3 @@ def _get_prices(stock_id: int, days: int = 60) -> list:
             return [float(r["close_price"]) for r in cur.fetchall() if r["close_price"]]
     except Exception:
         return []
-
