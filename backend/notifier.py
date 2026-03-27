@@ -1326,4 +1326,3 @@ def send_message(text: str, signal_type: str = "REPORT"):
 def send_discord_embed(embeds: list, signal_type: str = "REPORT"):
     """v3 호환: 직접 embed 전송"""
     _send_discord(embeds, "MY", signal_type)
-
