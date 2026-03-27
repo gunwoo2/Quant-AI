@@ -176,10 +176,9 @@ def _s_notify_all(calc_date, results, start_time):
         # ── 매수 시그널 ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.*, s.ticker, COALESCE(sec.sector_code, '99') AS sector, s.stock_id
+                SELECT ts.*, s.ticker, s.sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE ts.signal_date = %s AND ts.signal_type = 'BUY'
                 ORDER BY ts.final_score DESC
             """, (calc_date,))
@@ -201,12 +200,11 @@ def _s_notify_all(calc_date, results, start_time):
         # ── 매도 시그널 ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.*, s.ticker, COALESCE(sec.sector_code, '99') AS sector, s.stock_id
+                SELECT ts.*, s.ticker, s.sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE ts.signal_date = %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
-                ORDER BY ts.final_score
+                ORDER BY ts.pnl_pct
             """, (calc_date,))
             for row in cur.fetchall():
                 sig = {
@@ -250,7 +248,7 @@ def _s_notify_all(calc_date, results, start_time):
         # ── 포트폴리오 현황 ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT total_value, cash_balance, daily_return_pct
+                SELECT total_value, cash_balance
                 FROM portfolio_daily_snapshot
                 WHERE portfolio_id = 1
                 ORDER BY snapshot_date DESC LIMIT 1
@@ -261,7 +259,7 @@ def _s_notify_all(calc_date, results, start_time):
                 cash = float(snap["cash_balance"] or 0)
                 portfolio_summary = {
                     "total_value": tv,
-                    "daily_return": float(snap.get("daily_return_pct") or 0),
+                    "daily_return": 0,
                     "cash_pct": (cash / tv * 100) if tv > 0 else 100,
                 }
             cur.execute("""
