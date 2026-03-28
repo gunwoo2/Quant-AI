@@ -248,6 +248,7 @@ def _s_notify_all(calc_date, results, start_time):
                 })
 
         # ── 포트폴리오 현황 ──
+        # daily_return_pct 컬럼 미존재 시 안전 처리,
         with get_cursor() as cur:
             cur.execute("""
                 SELECT total_value, cash_balance
@@ -261,7 +262,7 @@ def _s_notify_all(calc_date, results, start_time):
                 cash = float(snap["cash_balance"] or 0)
                 portfolio_summary = {
                     "total_value": tv,
-                    "daily_return": 0.0  # daily_return_pct 컬럼 미존재 시 안전 처리,
+                    "daily_return": 0.0,
                     "cash_pct": (cash / tv * 100) if tv > 0 else 100,
                 }
             cur.execute("""
