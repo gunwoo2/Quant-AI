@@ -111,10 +111,25 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
     if (selGrade   !== "ALL") data = data.filter(s => s.grade   === selGrade);
 
     if (sort.key && sort.dir) {
+      // Grade/Signal 커스텀 정렬 순서
+      const GRADE_ORDER = { "S": 7, "A+": 6, "A": 5, "B+": 4, "B": 3, "C": 2, "D": 1 };
+      const SIGNAL_ORDER = { "강력매수": 5, "매수": 4, "보유": 3, "매도": 2, "강력매도": 1 };
+
       data.sort((a, b) => {
-        let av = a[sort.key] ?? -Infinity;
-        let bv = b[sort.key] ?? -Infinity;
-        if (typeof av === "string") { av = av.toLowerCase(); bv = String(bv).toLowerCase(); }
+        let av, bv;
+
+        if (sort.key === "grade") {
+          av = GRADE_ORDER[a.grade] ?? 0;
+          bv = GRADE_ORDER[b.grade] ?? 0;
+        } else if (sort.key === "signal") {
+          av = SIGNAL_ORDER[a.signal] ?? 0;
+          bv = SIGNAL_ORDER[b.signal] ?? 0;
+        } else {
+          av = a[sort.key] ?? -Infinity;
+          bv = b[sort.key] ?? -Infinity;
+          if (typeof av === "string") { av = av.toLowerCase(); bv = String(bv).toLowerCase(); }
+        }
+
         if (av < bv) return sort.dir === "desc" ?  1 : -1;
         if (av > bv) return sort.dir === "desc" ? -1 :  1;
         return 0;
