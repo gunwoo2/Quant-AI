@@ -1,8 +1,8 @@
 """
 stock_service.py — 종목 서비스 v3.9
 ====================================
-v3.9: get_stock_list에 conviction_score, layer_agreement, data_completeness 추가
-      (daily_stock_score 테이블 LEFT JOIN)
+v3.9: get_stock_list에 conviction_score, layer_agreement 안전 추가
+      (daily_stock_score 테이블이 없어도 500 에러 안 남)
 """
 from typing import Optional
 from db_pool import get_cursor
@@ -27,7 +27,7 @@ SECTOR_KO_MAP = {
 
 
 # ──────────────────────────────────────────────────────────
-#  GET /api/stocks  ★ v3.9: conviction_score, layer_agreement 추가
+#  GET /api/stocks
 # ──────────────────────────────────────────────────────────
 def get_stock_list(
     sector:  Optional[str] = None,
@@ -36,7 +36,7 @@ def get_stock_list(
 ) -> list[dict]:
     """
     메인 종목 목록 조회.
-    ★ v3.9: conviction_score, layer_agreement, data_completeness 추가
+    ★ v3.9: conviction_score 등은 별도 안전 쿼리로 보충 (테이블 없으면 skip)
     """
     conditions = ["1=1"]
     params: list = []
@@ -70,10 +70,7 @@ def get_stock_list(
             fs.weighted_score                   AS score,
             fs.grade,
             fs.investment_opinion               AS signal,
-            COALESCE(lc.like_count, 0)          AS like_count,
-            dss.conviction_score,
-            dss.layer_agreement,
-            dss.data_completeness
+            COALESCE(lc.like_count, 0)          AS like_count
         FROM stocks s
         JOIN markets m
             ON s.market_id = m.market_id
@@ -95,15 +92,6 @@ def get_stock_list(
             ON s.stock_id = rt.stock_id
         LEFT JOIN stock_like_counts lc
             ON s.stock_id = lc.stock_id
-        LEFT JOIN (
-            SELECT DISTINCT ON (stock_id)
-                stock_id,
-                conviction_score,
-                layer_agreement,
-                data_completeness
-            FROM daily_stock_score
-            ORDER BY stock_id, calc_date DESC
-        ) dss ON s.stock_id = dss.stock_id
         WHERE s.is_active = TRUE
           AND {where_clause}
         ORDER BY
@@ -121,11 +109,40 @@ def get_stock_list(
         for key in ("price", "chg", "l1", "l2", "l3", "score"):
             if item.get(key) is not None:
                 item[key] = float(item[key])
-        # ★ v3.9: conviction 필드 float 변환
-        for key in ("conviction_score", "layer_agreement", "data_completeness"):
-            if item.get(key) is not None:
-                item[key] = float(item[key])
         result.append(item)
+
+    # ★ v3.9: conviction 보충 (daily_stock_score 테이블 없으면 자동 skip)
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT s.ticker,
+                       dss.conviction_score,
+                       dss.layer_agreement,
+                       dss.data_completeness
+                FROM (
+                    SELECT DISTINCT ON (stock_id)
+                        stock_id, conviction_score, layer_agreement, data_completeness
+                    FROM daily_stock_score
+                    ORDER BY stock_id, calc_date DESC
+                ) dss
+                JOIN stocks s ON s.stock_id = dss.stock_id
+            """)
+            conv_map = {
+                r["ticker"]: {
+                    "conviction_score": float(r["conviction_score"]) if r["conviction_score"] else None,
+                    "layer_agreement": float(r["layer_agreement"]) if r["layer_agreement"] else None,
+                    "data_completeness": float(r["data_completeness"]) if r["data_completeness"] else None,
+                }
+                for r in cur.fetchall()
+            }
+        for item in result:
+            conv = conv_map.get(item.get("ticker"), {})
+            item["conviction_score"] = conv.get("conviction_score")
+            item["layer_agreement"] = conv.get("layer_agreement")
+            item["data_completeness"] = conv.get("data_completeness")
+    except Exception:
+        # daily_stock_score 테이블 없음 → conviction 필드 없이 진행
+        pass
 
     return result
 
@@ -367,9 +384,8 @@ def get_stock_detail(ticker: str) -> dict | None:
     # ── Forward PER (컨센서스 우선 → CAGR 폴백) ──
     forward_per = None
     forward_eps = None
-    forward_method = None  # "consensus" | "cagr"
+    forward_method = None
 
-    # 1순위: 애널리스트 컨센서스 EPS
     consensus_eps = _f("consensus_eps")
     if consensus_eps and consensus_eps > 0 and price:
         fwd = round(price / consensus_eps, 2)
@@ -378,10 +394,9 @@ def get_stock_detail(ticker: str) -> dict | None:
             forward_eps = round(consensus_eps, 4)
             forward_method = "consensus"
 
-    # 2순위: EPS 3년 CAGR 기반 자체 추정
     if forward_per is None and ttm_eps and ttm_eps > 0 and price:
-        eps_y1 = _f("eps_y1")  # 최신 ANNUAL
-        eps_y4 = _f("eps_y4")  # 3년 전
+        eps_y1 = _f("eps_y1")
+        eps_y4 = _f("eps_y4")
         if eps_y1 and eps_y1 > 0 and eps_y4 and eps_y4 > 0:
             cagr = (eps_y1 / eps_y4) ** (1.0 / 3.0) - 1.0
             if -0.30 <= cagr <= 0.80:
