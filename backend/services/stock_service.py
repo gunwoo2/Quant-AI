@@ -1,3 +1,9 @@
+"""
+stock_service.py — 종목 서비스 v3.9
+====================================
+v3.9: get_stock_list에 conviction_score, layer_agreement, data_completeness 추가
+      (daily_stock_score 테이블 LEFT JOIN)
+"""
 from typing import Optional
 from db_pool import get_cursor
 
@@ -21,7 +27,7 @@ SECTOR_KO_MAP = {
 
 
 # ──────────────────────────────────────────────────────────
-#  GET /api/stocks
+#  GET /api/stocks  ★ v3.9: conviction_score, layer_agreement 추가
 # ──────────────────────────────────────────────────────────
 def get_stock_list(
     sector:  Optional[str] = None,
@@ -30,6 +36,7 @@ def get_stock_list(
 ) -> list[dict]:
     """
     메인 종목 목록 조회.
+    ★ v3.9: conviction_score, layer_agreement, data_completeness 추가
     """
     conditions = ["1=1"]
     params: list = []
@@ -63,7 +70,10 @@ def get_stock_list(
             fs.weighted_score                   AS score,
             fs.grade,
             fs.investment_opinion               AS signal,
-            COALESCE(lc.like_count, 0)          AS like_count
+            COALESCE(lc.like_count, 0)          AS like_count,
+            dss.conviction_score,
+            dss.layer_agreement,
+            dss.data_completeness
         FROM stocks s
         JOIN markets m
             ON s.market_id = m.market_id
@@ -85,6 +95,15 @@ def get_stock_list(
             ON s.stock_id = rt.stock_id
         LEFT JOIN stock_like_counts lc
             ON s.stock_id = lc.stock_id
+        LEFT JOIN (
+            SELECT DISTINCT ON (stock_id)
+                stock_id,
+                conviction_score,
+                layer_agreement,
+                data_completeness
+            FROM daily_stock_score
+            ORDER BY stock_id, calc_date DESC
+        ) dss ON s.stock_id = dss.stock_id
         WHERE s.is_active = TRUE
           AND {where_clause}
         ORDER BY
@@ -100,6 +119,10 @@ def get_stock_list(
     for row in rows:
         item = dict(row)
         for key in ("price", "chg", "l1", "l2", "l3", "score"):
+            if item.get(key) is not None:
+                item[key] = float(item[key])
+        # ★ v3.9: conviction 필드 float 변환
+        for key in ("conviction_score", "layer_agreement", "data_completeness"):
             if item.get(key) is not None:
                 item[key] = float(item[key])
         result.append(item)

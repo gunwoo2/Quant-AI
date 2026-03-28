@@ -1,12 +1,7 @@
 """
-main.py — QUANT AI Backend v3.8
+main.py — QUANT AI Backend v3.9
 =================================
-v3.8: API 서버 전용 — 스케줄러 완전 분리
-  - main.py: FastAPI 서버 + 라우터만
-  - batch/scheduler.py: 일일 배치 + 알림 + 주간/월간 (standalone)
-
-  ★ 모든 스케줄(배치/모닝브리핑/주간/월간)은 scheduler에서 처리
-  ★ main.py에는 스케줄러 없음 (중복 방지)
+v3.9: v3.8 + Explain/CrossAsset 라우터 + Conviction/LayerAgreement
 """
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +27,18 @@ except ImportError:
 try:
     from routers import rating_history
     _optional_routers["rating_history"] = rating_history
+except ImportError:
+    pass
+
+# ★ v3.9 신규 라우터
+try:
+    from routers import explain
+    _optional_routers["explain"] = explain
+except ImportError:
+    pass
+try:
+    from routers import cross_asset
+    _optional_routers["cross_asset"] = cross_asset
 except ImportError:
     pass
 
@@ -79,8 +86,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="QUANT AI API",
-    version="3.8",
-    description="S&P500 퀀트+NLP+기술지표+트레이딩 시그널 v3.8",
+    version="3.9",
+    description="S&P500 퀀트+NLP+기술지표+트레이딩 시그널 v3.9",
     lifespan=lifespan,
 )
 
@@ -118,6 +125,14 @@ if "rating_history" in _optional_routers:
     app.include_router(_optional_routers["rating_history"].router, prefix="/api", tags=["Rating History"])
     print("[ROUTER] ✅ Rating History 라우터 등록")
 
+# ★ v3.9 신규 라우터 등록
+if "explain" in _optional_routers:
+    app.include_router(_optional_routers["explain"].router, prefix="/api", tags=["AI Explain"])
+    print("[ROUTER] ✅ AI Explain 라우터 등록")
+if "cross_asset" in _optional_routers:
+    app.include_router(_optional_routers["cross_asset"].router, prefix="/api", tags=["Cross-Asset"])
+    print("[ROUTER] ✅ Cross-Asset 라우터 등록")
+
 
 # ══════════════════════════════════════════════
 #  엔드포인트
@@ -128,7 +143,7 @@ def health_check():
     try:
         with db_pool.get_cursor() as cur:
             cur.execute("SELECT 1")
-        return {"status": "ok", "version": "3.8"}
+        return {"status": "ok", "version": "3.9"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
@@ -136,7 +151,7 @@ def health_check():
 @app.get("/api/system/info")
 def system_info():
     return {
-        "version": "3.8",
+        "version": "3.9",
         "features": [
             "DynamicConfig 국면별 파라미터",
             "Drawdown 5단계 방어",
@@ -150,6 +165,9 @@ def system_info():
             "DecisionAudit 의사결정 기록",
             "Layer 3 Flow/Macro (B+C)",
             "가격 안전장치 (stale 검증)",
+            "★ AI Explainability (XGBoost+SHAP)",
+            "★ Cross-Asset Intelligence (15 Assets)",
+            "★ Conviction Score + Layer Agreement",
         ],
         "scheduler": "OFF (main.py는 API 전용)",
         "batch_scheduler": "standalone batch/scheduler.py (평일 ET 20:30 = KST 09:30)",

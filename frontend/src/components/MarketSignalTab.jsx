@@ -118,6 +118,8 @@ export default function MarketSignalTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const [crossAsset, setCrossAsset] = useState(null);
+
   useEffect(() => {
     if (!ticker) return;
     setLoading(true);
@@ -125,6 +127,11 @@ export default function MarketSignalTab() {
     api.get(`/api/stock/layer3/${ticker}`)
       .then(res => { setData(res.data); setLoading(false); })
       .catch(err => { setError(err.response?.data?.detail || '데이터 로드 실패'); setLoading(false); });
+
+    /* Cross-Asset 별도 로드 (실패해도 무시) */
+    api.get('/api/market/cross-asset')
+      .then(res => setCrossAsset(res.data))
+      .catch(() => setCrossAsset(null));
   }, [ticker]);
 
   if (loading) return (
@@ -172,7 +179,7 @@ export default function MarketSignalTab() {
       {tab==='OVERVIEW'  && <OverviewTab data={data} />}
       {tab==='TECHNICAL' && <TechnicalTab data={data} />}
       {tab==='FLOW'      && <FlowTab data={data} />}
-      {tab==='MACRO'     && <MacroTab data={data} />}
+      {tab==='MACRO'     && <MacroTab data={data} crossAsset={crossAsset} />}
       {tab==='PHASE2'    && <Phase2Tab />}
     </div>
   );
@@ -658,7 +665,7 @@ function FlowTab({ data }) {
 /* ════════════════════════════════════════════════════════════ */
 /*  4. MACRO TAB — 시장환경 (VIX + SPY + Sector ETF + F&G)    */
 /* ════════════════════════════════════════════════════════════ */
-function MacroTab({ data }) {
+function MacroTab({ data, crossAsset }) {
   const macro = data.macro || {};
   const vix = macro.vix || {};
   const spy = macro.spy || {};
@@ -870,6 +877,67 @@ function MacroTab({ data }) {
               })}
             </tbody>
           </table>
+        </Card>
+      )}
+
+      {/* ★ Cross-Asset Intelligence */}
+      {crossAsset && crossAsset.signals && (
+        <Card>
+          <SL right={crossAsset.calcDate || ''}>CROSS-ASSET INTELLIGENCE (글로벌 자산 시그널)</SL>
+          
+          {/* 총점 + 데이터 품질 */}
+          <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:16 }}>
+            <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+              <span style={{ fontSize:36, fontWeight:900, color:scoreColor(crossAsset.totalScore, 100), fontFamily:FONT.sans, lineHeight:1 }}>
+                {crossAsset.totalScore != null ? crossAsset.totalScore.toFixed(1) : '—'}
+              </span>
+              <span style={{ fontSize:11, color:T.textMuted }}>/ 100</span>
+            </div>
+            <Badge color={crossAsset.totalScore >= 60 ? T.up : crossAsset.totalScore >= 40 ? T.warn : T.down}>
+              {crossAsset.totalScore >= 70 ? 'RISK-ON' : crossAsset.totalScore >= 50 ? 'NEUTRAL' : crossAsset.totalScore >= 30 ? 'CAUTIOUS' : 'RISK-OFF'}
+            </Badge>
+            <span style={{ fontSize:8, color:T.borderHi, marginLeft:'auto' }}>
+              DATA: {crossAsset.dataQuality}
+            </span>
+          </div>
+
+          {/* 8개 시그널 그리드 */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:16 }}>
+            {crossAsset.signals.map((sig, i) => {
+              const sigColor = sig.signal === 'BULLISH' ? T.up : sig.signal === 'BEARISH' ? T.down : T.neutral;
+              return (
+                <div key={i} style={{ padding:'10px 12px', background:T.surface, border:`1px solid ${sigColor}20`, borderLeft:`3px solid ${sigColor}`, borderRadius:2 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                    <span style={{ fontSize:9, fontWeight:700, color:T.text }}>{sig.nameKr || sig.name}</span>
+                    <Badge color={sigColor}>{sig.signal}</Badge>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'baseline', gap:4, marginBottom:4 }}>
+                    <span style={{ fontSize:20, fontWeight:900, color:sigColor, fontFamily:FONT.sans }}>{sig.score != null ? sig.score.toFixed(1) : '—'}</span>
+                    <span style={{ fontSize:9, color:T.textMuted }}>/{sig.max || 10}</span>
+                  </div>
+                  <GaugeBar val={sig.score} max={sig.max || 10} color={sigColor} height={3} />
+                  {sig.zscore != null && (
+                    <div style={{ fontSize:8, color:T.borderHi, marginTop:4 }}>z={sig.zscore}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 주요 자산 가격 */}
+          {crossAsset.assets && (
+            <div style={{ paddingTop:12, borderTop:`1px solid ${T.border}` }}>
+              <div style={{ fontSize:9, color:T.borderHi, marginBottom:8 }}>ASSET PRICES (주요 자산 가격)</div>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                {Object.entries(crossAsset.assets).filter(([,v]) => v != null).map(([sym, price]) => (
+                  <span key={sym} style={{ fontSize:9, padding:'3px 8px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, fontFamily:FONT.sans }}>
+                    <span style={{ color:T.l3, fontWeight:600 }}>{sym}</span>
+                    <span style={{ color:T.textMuted, marginLeft:4 }}>${price}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
       )}
     </div>
