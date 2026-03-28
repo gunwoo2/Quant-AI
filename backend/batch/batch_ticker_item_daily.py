@@ -502,7 +502,7 @@ def run_quant_score(calc_date: date = None):
             fin      = fins[0]
             fin_prev = fins[1] if len(fins) > 1 else {}
 
-            # ── EPS 이력 (3개년) ──
+            # ── EPS 이력 (3개년, 연간) ──
             eps_hist = []
             with get_cursor() as cur:
                 cur.execute("""
@@ -512,6 +512,18 @@ def run_quant_score(calc_date: date = None):
                     ORDER BY fiscal_year DESC LIMIT 3
                 """, (stock_id,))
                 eps_hist = [_f(r["eps_actual"]) for r in cur.fetchall()]
+
+            # ── 분기 EPS 이력 (최근 5분기, Earnings Surprise/Revision용) ──
+            qtr_eps_hist = []
+            with get_cursor() as cur:
+                cur.execute("""
+                    SELECT eps_actual FROM stock_financials
+                    WHERE stock_id = %s AND report_type = 'QUARTERLY'
+                      AND eps_actual IS NOT NULL
+                    ORDER BY fiscal_year DESC, fiscal_quarter DESC
+                    LIMIT 5
+                """, (stock_id,))
+                qtr_eps_hist = [_f(r["eps_actual"]) for r in cur.fetchall()]
 
             # ── 가격 데이터 (250일) ──
             price_rows = []
@@ -548,9 +560,9 @@ def run_quant_score(calc_date: date = None):
             pct = sector_data.get(stock_id, {})
 
             # ── 점수 계산 (섹터 컨텍스트 전달) ──
-            moat_s      = _sanitize(calc_moat_scores(fin, pct, sector_code=sector, fin_prev=fin_prev))
+            moat_s      = _sanitize(calc_moat_scores(fin, pct, sector_code=sector))
             value_s     = _sanitize(calc_value_scores(fin, pct, sector_code=sector))
-            momentum_s  = _sanitize(calc_momentum_scores(fin, fin_prev, pct, sector_code=sector))
+            momentum_s  = _sanitize(calc_momentum_scores(fin, fin_prev, pct, qtr_eps_hist=qtr_eps_hist, sector_code=sector))
             stability_s = _sanitize(calc_stability_scores(price_df, eps_hist, div_years, pct, sector_code=sector))
             layer1_s    = _sanitize(calc_layer1_score(moat_s, value_s, momentum_s, stability_s, pct, sector_code=sector))
 

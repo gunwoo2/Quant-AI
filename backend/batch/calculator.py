@@ -205,6 +205,9 @@ def calc_value_scores(fin: dict, pct: dict, **kwargs) -> dict:
 
 def calc_momentum_scores(fin: dict, fin_prev: dict, pct: dict,
                          qtr_eps_hist: list = None, **kwargs) -> dict:
+    # F-Score (raw 값은 UI 표시용, 점수는 moat에서 반영)
+    f_raw = _calc_f_score(fin, fin_prev) if fin_prev else 0
+
     surprise_pct, surprise_score = None, 15.0
     if qtr_eps_hist and len(qtr_eps_hist) >= 5:
         le, ye = _f(qtr_eps_hist[0]), _f(qtr_eps_hist[4])
@@ -241,13 +244,9 @@ def calc_momentum_scores(fin: dict, fin_prev: dict, pct: dict,
                 corr = float(np.corrcoef(x, y)[0, 1])
                 trend_score = sigmoid_score((corr*abs(corr)+1)/2*100, 15.0)
 
-    # ── F-Score: Piotroski (v4.0 fix) ──
-    f_raw = _calc_f_score(fin, fin_prev) if fin_prev else 0
-    f_pts = linear_interp_score(f_raw, 9, 15.0, 1.5)   # 0~9 → 1.5~15점
-
-    total = round(surprise_score + revision_score + ato_score + oplev_score + trend_score + f_pts, 2)
+    total = round(surprise_score + revision_score + ato_score + oplev_score + trend_score, 2)
     return {
-        "f_score_raw": f_raw, "f_score_points": round(f_pts, 2),
+        "f_score_raw": f_raw, "f_score_points": 0.0,
         "earnings_surprise_pct": surprise_pct, "earnings_surprise_score": round(surprise_score, 2),
         "earnings_revision_ratio": revision_ratio, "earnings_revision_score": round(revision_score, 2),
         "ato_acceleration_score": round(ato_score, 2), "op_leverage_score": round(oplev_score, 2),

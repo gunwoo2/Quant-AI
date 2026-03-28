@@ -3,7 +3,7 @@ services/layer3_service.py — Layer 3 Market Signal 데이터 조회
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 GET /api/stock/layer3/{ticker} 에서 호출
-MarketSignalTab.jsx의 Overview / Technical / Flow / Macro 탭에 실데이터 공급
+MarketSignalTab.jsx의 Overview / Technical / Flow / Macro / Phase2 탭에 실데이터 공급
 """
 from db_pool import get_cursor
 from datetime import date, timedelta
@@ -44,14 +44,10 @@ def get_layer3_data(ticker: str) -> dict | None:
 
     today = date.today()
 
-    overview = _get_overview(stock_id, today)
+    overview  = _get_overview(stock_id, today)
     technical = _get_technical(stock_id, today)
-    flow = _get_flow(stock_id, today)
-    macro = _get_macro(today, sector_code)
-
-    # Phase 2: Chart Patterns + Fear & Greed
-    patterns = _get_patterns(stock_id, today)
-    fear_greed = _get_fear_greed(today)
+    flow      = _get_flow(stock_id, today)
+    macro     = _get_macro(today, sector_code)
 
     return {
         "ticker": ticker.upper(),
@@ -60,8 +56,8 @@ def get_layer3_data(ticker: str) -> dict | None:
         "technical": technical,
         "flow": flow,
         "macro": macro,
-        "patterns": patterns,
-        "fearGreed": fear_greed,
+        "patterns": _get_patterns(stock_id, today),
+        "fearGreed": _get_fear_greed(today),
     }
 
 
@@ -105,7 +101,6 @@ def _get_overview(stock_id: int, today: date) -> dict:
         {"subject": "거래량급증 (VolSurge)",   "score": _f(row["volume_surge_score"]),    "max": 5},
     ]
 
-    # 레이더차트용 정규화 (0~100)
     for r in radar:
         r["pct"] = round(r["score"] / r["max"] * 100, 1) if r["score"] is not None and r["max"] > 0 else 0
 
@@ -162,35 +157,27 @@ def _get_technical(stock_id: int, today: date) -> dict:
 
     return {
         "calcDate": str(row["calc_date"]),
-        # ① 상대 모멘텀
         "relativeMomentum": _f(row["relative_momentum_12_1"], 4),
         "relativeMomentumScore": _f(row["relative_momentum_score"]),
-        # ② 52주 고가
         "high52w": _f(row["high_52w"]),
         "high52wRatio": _f(row["high_52w_position_ratio"], 4),
         "high52wScore": _f(row["high_52w_score"]),
-        # ③ 추세 안정성
         "trendR2": _f(row["trend_r2_90d"], 4),
         "trendSlope": _f(row["trend_slope_90d"], 6),
         "trendScore": _f(row["trend_stability_score"]),
-        # ④ RSI
         "rsi14": _f(row["rsi_14"]),
         "rsiScore": _f(row["rsi_score"]),
-        # ⑤ MACD
         "macdLine": _f(row["macd_line"], 4),
         "macdSignal": _f(row["macd_signal"], 4),
         "macdHistogram": _f(row["macd_histogram"], 4),
         "macdScore": _f(row["macd_score"]),
-        # ⑥ OBV
         "obvCurrent": _f(row["obv_current"], 0),
         "obvMa20": _f(row["obv_ma20"], 0),
         "obvTrend": row["obv_trend"],
         "obvScore": _f(row["obv_score"]),
-        # ⑦ 거래량
         "volume20dAvg": _f(row["volume_20d_avg"], 0),
         "volumeSurgeRatio": _f(row["volume_surge_ratio"]),
         "volumeSurgeScore": _f(row["volume_surge_score"]),
-        # 구조적 시그널
         "goldenCross": row["golden_cross"],
         "deathCross": row["death_cross"],
         "ma50": _f(row["ma_50"]),
@@ -213,7 +200,6 @@ def _get_technical(stock_id: int, today: date) -> dict:
 #  3. Flow (공매도 + P/C)
 # ═══════════════════════════════════════════════════════════════
 def _get_flow(stock_id: int, today: date) -> dict:
-    # 최근 10일 short volume 트렌드
     with get_cursor() as cur:
         cur.execute("""
             SELECT trade_date, short_volume, total_volume,
@@ -242,7 +228,6 @@ def _get_flow(stock_id: int, today: date) -> dict:
             "score": _f(latest["short_volume_score"]),
         }
 
-    # P/C 점수 (technical_indicators에 저장됨)
     with get_cursor() as cur:
         cur.execute("""
             SELECT put_call_score FROM technical_indicators
@@ -263,7 +248,6 @@ def _get_flow(stock_id: int, today: date) -> dict:
 #  4. Macro (VIX + SPY + 섹터 ETF)
 # ═══════════════════════════════════════════════════════════════
 def _get_macro(today: date, sector_code: str) -> dict:
-    # VIX + SPY
     with get_cursor() as cur:
         cur.execute("""
             SELECT calc_date, vix_close, vix_score,
@@ -287,7 +271,6 @@ def _get_macro(today: date, sector_code: str) -> dict:
             "ma200": _f(mrow["spy_ma200"]),
         }
 
-    # 전체 섹터 ETF
     etf_list = []
     with get_cursor() as cur:
         cur.execute("""
@@ -306,7 +289,6 @@ def _get_macro(today: date, sector_code: str) -> dict:
                 "score": _f(r["sector_etf_score"]),
             })
 
-    # 현재 종목의 섹터 ETF 점수
     my_etf_score = None
     for e in etf_list:
         if e["sectorCode"] == sector_code:
@@ -320,11 +302,12 @@ def _get_macro(today: date, sector_code: str) -> dict:
         "mySectorScore": my_etf_score,
     }
 
+
 # ═══════════════════════════════════════════════════════════════
 #  5. Chart Patterns (차트 패턴)
 # ═══════════════════════════════════════════════════════════════
 def _get_patterns(stock_id: int, today: date) -> list:
-    """chart_patterns 테이블에서 종목별 패턴 조회."""
+    """chart_patterns 테이블에서 종목별 패턴 조회"""
     try:
         with get_cursor() as cur:
             cur.execute("""
@@ -352,29 +335,58 @@ def _get_patterns(stock_id: int, today: date) -> list:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  6. Fear & Greed Index
+#  6. Fear & Greed Index (공포탐욕지수)
 # ═══════════════════════════════════════════════════════════════
+def _classify_fg(score):
+    """점수 → 레이팅 자동 분류 (fallback)"""
+    if score is None:
+        return "N/A"
+    if score <= 25:
+        return "Extreme Fear"
+    elif score <= 45:
+        return "Fear"
+    elif score <= 55:
+        return "Neutral"
+    elif score <= 75:
+        return "Greed"
+    else:
+        return "Extreme Greed"
+
+
 def _get_fear_greed(today: date) -> dict:
-    """market_fear_greed 테이블에서 최신 공포/탐욕 지수 조회."""
+    """
+    market_fear_greed 테이블에서 최신 공포/탐욕 지수 조회.
+
+    ★ 주의: 테이블 컬럼은 'rating' (not 'classification'), 'source' 없음
+    """
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT calc_date, score, rating, previous_close
+                SELECT score, rating, calc_date,
+                       previous_close, one_week_ago, one_month_ago, one_year_ago
                 FROM market_fear_greed
-                WHERE calc_date <= %s
-                ORDER BY calc_date DESC
-                LIMIT 1
-            """, (today,))
-            row = cur.fetchone()
+                ORDER BY calc_date DESC LIMIT 2
+            """)
+            rows = cur.fetchall()
 
-        if not row:
+        if not rows:
             return {"value": None, "label": "N/A", "prev": None}
 
+        current = rows[0]
+        prev_row = rows[1] if len(rows) > 1 else None
+
+        score_val = float(current["score"]) if current["score"] is not None else None
+        label = current.get("rating") or _classify_fg(score_val)
+
         return {
-            "value": float(row["score"]) if row["score"] is not None else None,
-            "label": row["rating"] or "N/A",
-            "prev": float(row["previous_close"]) if row["previous_close"] is not None else None,
-            "date": str(row["calc_date"]),
+            "value": score_val,
+            "label": label,
+            "prev": float(current["previous_close"]) if current.get("previous_close") else (
+                     float(prev_row["score"]) if prev_row and prev_row["score"] else None),
+            "oneWeek": float(current["one_week_ago"]) if current.get("one_week_ago") else None,
+            "oneMonth": float(current["one_month_ago"]) if current.get("one_month_ago") else None,
+            "oneYear": float(current["one_year_ago"]) if current.get("one_year_ago") else None,
+            "date": str(current["calc_date"]),
         }
     except Exception as e:
         print(f"[L3-SVC] _get_fear_greed 에러: {e}")

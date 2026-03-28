@@ -166,10 +166,14 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
         if sector:
             with get_cursor() as cur:
                 cur.execute("""
-                    SELECT SUM(market_value) as sector_val
-                    FROM portfolio_positions
-                    WHERE status = 'OPEN' AND portfolio_id = 1
-                      AND stock_id IN (SELECT stock_id FROM stocks WHERE sector = %s)
+                    SELECT SUM(pp2.shares * pp2.entry_price) as sector_val
+                    FROM portfolio_positions pp2
+                    WHERE pp2.status = 'OPEN' AND pp2.portfolio_id = 1
+                      AND pp2.stock_id IN (
+                          SELECT s2.stock_id FROM stocks s2 
+                          JOIN sectors sec2 ON s2.sector_id = sec2.sector_id 
+                          WHERE sec2.sector_code = %s
+                      )
                 """, (sector,))
                 row = cur.fetchone()
                 sector_val = float(row["sector_val"] or 0) if row else 0
@@ -438,12 +442,12 @@ def _calc_historical_reason_stats(reason: str) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.stock_id, ts.price AS sell_price, ts.calc_date AS sell_date
+                SELECT ts.stock_id, ts.current_price AS sell_price, ts.signal_date AS sell_date
                 FROM trading_signals ts
                 WHERE ts.reason = %s
                   AND ts.signal_type IN ('SELL', 'STOP_LOSS', 'PROFIT_TAKE')
-                  AND ts.calc_date >= CURRENT_DATE - INTERVAL '180 days'
-                ORDER BY ts.calc_date DESC LIMIT 30
+                  AND ts.signal_date >= CURRENT_DATE - INTERVAL '180 days'
+                ORDER BY ts.signal_date DESC LIMIT 30
             """, (reason,))
             sells = cur.fetchall()
 
@@ -567,14 +571,14 @@ def calc_hit_rate(lookback_count: int = 50, forward_days: int = 5) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.stock_id, ts.price AS signal_price, ts.calc_date,
+                SELECT ts.stock_id, ts.current_price AS signal_price, ts.signal_date,
                        (SELECT close_price FROM stock_prices_daily
                         WHERE stock_id = ts.stock_id 
-                          AND trade_date >= ts.calc_date + %s
+                          AND trade_date >= ts.signal_date + %s
                         ORDER BY trade_date LIMIT 1) AS price_5d
                 FROM trading_signals ts
                 WHERE ts.signal_type = 'BUY'
-                ORDER BY ts.calc_date DESC
+                ORDER BY ts.signal_date DESC
                 LIMIT %s
             """, (forward_days, lookback_count))
             rows = cur.fetchall()
@@ -725,9 +729,18 @@ def build_risk_dashboard(calc_date: date) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT stock_id, market_value, s.ticker, s.sector
+                SELECT pp.stock_id,
+                       (pp.shares * COALESCE(
+                           (SELECT close_price FROM stock_prices_daily 
+                            WHERE stock_id = pp.stock_id 
+                            ORDER BY trade_date DESC LIMIT 1),
+                           pp.entry_price
+                       )) AS market_value,
+                       s.ticker,
+                       COALESCE(sec.sector_code, 'Other') AS sector
                 FROM portfolio_positions pp
                 JOIN stocks s ON pp.stock_id = s.stock_id
+                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE pp.status = 'OPEN' AND pp.portfolio_id = 1
             """)
             positions = cur.fetchall()
@@ -961,10 +974,10 @@ def build_weekly_brinson(calc_date: date) -> dict:
         # Best / Worst
         with get_cursor() as cur:
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date >= %s AND ts.pnl_pct IS NOT NULL
-                ORDER BY ts.pnl_pct DESC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.final_score IS NOT NULL
+                ORDER BY ts.final_score DESC LIMIT 1
             """, (week_ago,))
             best = cur.fetchone()
             if best:
@@ -972,10 +985,10 @@ def build_weekly_brinson(calc_date: date) -> dict:
                 result["best_pnl"] = round(float(best["pnl_pct"]), 1)
 
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.calc_date >= %s AND ts.pnl_pct IS NOT NULL
-                ORDER BY ts.pnl_pct ASC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.final_score IS NOT NULL
+                ORDER BY ts.final_score ASC LIMIT 1
             """, (week_ago,))
             worst = cur.fetchone()
             if worst:
@@ -1072,4 +1085,3 @@ def _get_prices(stock_id: int, days: int = 60) -> list:
             return [float(r["close_price"]) for r in cur.fetchall() if r["close_price"]]
     except Exception:
         return []
-
