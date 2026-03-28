@@ -127,8 +127,22 @@ def calc_section_b(stock_id: int, calc_date: date) -> dict:
         print(f"  [WARN] 공매도 조회 실패 (stock_id={stock_id}): {e}")
         short_score = 5.0
 
-    # 2. 풋콜 비율 점수 (7점) — 현재 데이터 소스 없음 → 중립
-    put_call_score = 3.5  # 중립 (7점 만점의 50%)
+    # 2. 풋콜 비율 점수 (7점) — put_call_daily 테이블에서 조회
+    put_call_score = 3.5  # 기본값 (데이터 없을 때)
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT pc_score, pc_ratio_oi, source
+                FROM put_call_daily
+                WHERE stock_id = %s
+                ORDER BY calc_date DESC LIMIT 1
+            """, (stock_id,))
+            pc_row = cur.fetchone()
+        if pc_row and pc_row["pc_score"] is not None:
+            put_call_score = min(float(pc_row["pc_score"]), 7.0)
+    except Exception as e:
+        print(f"  [WARN] P/C 조회 실패 (stock_id={stock_id}): {e}")
+        put_call_score = 3.5  # fallback
 
     # 3. 구조적 시그널 점수 (8점) — technical_indicators에서 이미 계산됨
     struct_score = 0.0
@@ -301,121 +315,6 @@ def _fetch_etf_score_fdr(symbol: str) -> float:
 # 섹터 ETF 일별 수집 + 저장 (sector_etf_daily)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-
-# ═══════════════════════════════════════════════════════════════
-#  공매도 데이터 수집 (FINRA RegSHO Short Volume)
-# ═══════════════════════════════════════════════════════════════
-def collect_short_volume_daily(calc_date: date):
-    """
-    FINRA RegSHO Short Volume 수집 → short_volume_daily
-    무료 소스: https://cdn.finra.org/equity/regsho/daily/
-    """
-    import time as _time
-    
-    # FINRA는 T+1 데이터 — 전일자 파일 다운로드
-    from datetime import timedelta
-    target_date = calc_date - timedelta(days=1)
-    
-    # 주말 보정
-    if target_date.weekday() >= 5:  # Sat/Sun
-        target_date -= timedelta(days=target_date.weekday() - 4)
-    
-    date_str = target_date.strftime("%Y%m%d")
-    
-    # FINRA RegSHO consolidated short volume
-    urls = [
-        f"https://cdn.finra.org/equity/regsho/daily/CNMSshvol{date_str}.txt",
-        f"https://cdn.finra.org/equity/regsho/daily/FNSQshvol{date_str}.txt",
-    ]
-    
-    with get_cursor() as cur:
-        cur.execute("SELECT stock_id, ticker FROM stocks WHERE is_active = TRUE")
-        ticker_map = {r["ticker"]: r["stock_id"] for r in cur.fetchall()}
-    
-    collected = {}  # ticker → {short_volume, total_volume}
-    
-    for url in urls:
-        try:
-            resp = requests.get(url, timeout=15)
-            if resp.status_code != 200:
-                print(f"[SHORT] ⚠ {url} → {resp.status_code}")
-                continue
-            
-            for line in resp.text.strip().split("\n"):
-                parts = line.split("|")
-                if len(parts) < 5 or parts[0] == "Date":
-                    continue
-                
-                ticker = parts[1].strip()
-                if ticker not in ticker_map:
-                    continue
-                
-                try:
-                    short_vol = int(parts[2])
-                    total_vol = int(parts[4])
-                except (ValueError, IndexError):
-                    continue
-                
-                if ticker in collected:
-                    collected[ticker]["short_volume"] += short_vol
-                    collected[ticker]["total_volume"] += total_vol
-                else:
-                    collected[ticker] = {
-                        "stock_id": ticker_map[ticker],
-                        "short_volume": short_vol,
-                        "total_volume": total_vol,
-                    }
-        except Exception as e:
-            print(f"[SHORT] ⚠ {url} 에러: {e}")
-    
-    if not collected:
-        print(f"[SHORT] ⚠ {target_date} 데이터 없음 (공휴일?)")
-        return
-    
-    ok = 0
-    for ticker, d in collected.items():
-        stock_id = d["stock_id"]
-        sv = d["short_volume"]
-        tv = d["total_volume"]
-        svr = sv / tv if tv > 0 else 0
-        
-        # 5일 이동평균 계산
-        try:
-            with get_cursor() as cur:
-                cur.execute("""
-                    SELECT short_volume_ratio FROM short_volume_daily
-                    WHERE stock_id = %s ORDER BY trade_date DESC LIMIT 4
-                """, (stock_id,))
-                prev = [float(r["short_volume_ratio"]) for r in cur.fetchall() if r["short_volume_ratio"]]
-        except Exception:
-            prev = []
-        
-        all_svr = prev + [svr]
-        svr_5d = sum(all_svr[-5:]) / len(all_svr[-5:]) if all_svr else svr
-        sv_score = score_short_volume(svr_5d)
-        
-        try:
-            with get_cursor() as cur:
-                cur.execute("""
-                    INSERT INTO short_volume_daily 
-                        (stock_id, trade_date, short_volume, total_volume, 
-                         short_volume_ratio, svr_5d_avg, short_volume_score)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (stock_id, trade_date) DO UPDATE SET
-                        short_volume = EXCLUDED.short_volume,
-                        total_volume = EXCLUDED.total_volume,
-                        short_volume_ratio = EXCLUDED.short_volume_ratio,
-                        svr_5d_avg = EXCLUDED.svr_5d_avg,
-                        short_volume_score = EXCLUDED.short_volume_score
-                """, (stock_id, target_date, sv, tv, 
-                      round(svr, 6), round(svr_5d, 6), round(sv_score, 2)))
-            ok += 1
-        except Exception as e:
-            pass
-    
-    print(f"[SHORT] ✅ {target_date} 공매도 수집 완료: {ok}/{len(collected)}종목")
-
-
 def collect_sector_etf_daily(calc_date: date):
     """모든 섹터 ETF 가격 + MA + 점수를 sector_etf_daily에 저장"""
     print(f"\n── 섹터 ETF 수집 ──")
@@ -532,7 +431,6 @@ def run_flow_macro(calc_date: date = None):
     print(f"{'='*60}")
 
     # Step 1: 시장 데이터 수집 (VIX/SPY + 섹터 ETF)
-    collect_short_volume_daily(calc_date)
     collect_market_signal_daily(calc_date)
     collect_sector_etf_daily(calc_date)
 
