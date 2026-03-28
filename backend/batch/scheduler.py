@@ -38,8 +38,10 @@ def run_all(calc_date: date = None):
 
     # ── Step 1~7: 계산 전용 (알림 ZERO) ──
     results["1_price"]   = _run_step("1/10 가격 수집",        lambda: _s_price(calc_date))
+    results["1.5_ca"]    = _run_step("1.5 Cross-Asset",        lambda: _s_cross_asset(calc_date))
     results["2_fin"]     = _run_step("2/10 파생 재무",        lambda: _s_fin())
     results["3_l1"]      = _run_step("3/10 Layer 1",          lambda: _s_l1(calc_date))
+    results["3.5_pc"]    = _run_step("3.5 Put/Call Ratio",    lambda: _s_put_call(calc_date))
     results["4_l3"]      = _run_step("4/10 Layer 3",          lambda: _s_l3(calc_date))
     results["5_l2"]      = _run_step("5/10 Layer 2",          lambda: _s_l2())
 
@@ -90,6 +92,18 @@ def _s_fin():
 def _s_l1(d):
     from batch.batch_ticker_item_daily import run_quant_score
     run_quant_score(d)
+
+def _s_cross_asset(d):
+    """Step 1.5: Cross-Asset Intelligence — 글로벌 자산 시그널 수집"""
+    from batch.batch_cross_asset import run_cross_asset
+    run_cross_asset(d)
+
+
+def _s_put_call(d):
+    """Step 3.5: Put/Call Ratio 수집 (yfinance options)"""
+    from batch.batch_put_call import run_put_call
+    run_put_call(d)
+
 
 def _s_l3(d):
     """오답노트 #5: batch_layer3_v2.run_all(d)"""
@@ -176,10 +190,9 @@ def _s_notify_all(calc_date, results, start_time):
         # ── 매수 시그널 ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.*, s.ticker, COALESCE(sec.sector_name, '') as sector, s.stock_id
+                SELECT ts.*, s.ticker, s.sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE ts.signal_date = %s AND ts.signal_type = 'BUY'
                 ORDER BY ts.final_score DESC
             """, (calc_date,))
@@ -201,10 +214,9 @@ def _s_notify_all(calc_date, results, start_time):
         # ── 매도 시그널 ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ts.*, s.ticker, COALESCE(sec.sector_name, '') as sector, s.stock_id
+                SELECT ts.*, s.ticker, s.sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE ts.signal_date = %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
                 ORDER BY ts.pnl_pct
             """, (calc_date,))
@@ -248,10 +260,9 @@ def _s_notify_all(calc_date, results, start_time):
                 })
 
         # ── 포트폴리오 현황 ──
-        # daily_return_pct 컬럼 미존재 시 안전 처리,
         with get_cursor() as cur:
             cur.execute("""
-                SELECT total_value, cash_balance
+                SELECT total_value, cash_balance, daily_return_pct
                 FROM portfolio_daily_snapshot
                 WHERE portfolio_id = 1
                 ORDER BY snapshot_date DESC LIMIT 1
@@ -262,7 +273,7 @@ def _s_notify_all(calc_date, results, start_time):
                 cash = float(snap["cash_balance"] or 0)
                 portfolio_summary = {
                     "total_value": tv,
-                    "daily_return": 0.0,
+                    "daily_return": float(snap.get("daily_return_pct") or 0),
                     "cash_pct": (cash / tv * 100) if tv > 0 else 100,
                 }
             cur.execute("""
@@ -599,7 +610,7 @@ def _s_weekly(d):
             cur.execute("""
                 SELECT COUNT(*) as cnt
                 FROM trading_signals
-                WHERE signal_date >= %s AND signal_type IN ('BUY', 'SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                WHERE calc_date >= %s AND signal_type IN ('BUY', 'SELL', 'PROFIT_TAKE', 'STOP_LOSS')
             """, (week_start,))
             num_trades = cur.fetchone()["cnt"]
 
@@ -608,7 +619,7 @@ def _s_weekly(d):
                 SELECT COUNT(*) FILTER (WHERE pnl_pct > 0) as wins,
                        COUNT(*) as total
                 FROM trading_signals
-                WHERE signal_date >= %s AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                WHERE calc_date >= %s AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
             """, (week_start,))
             row = cur.fetchone()
             if row and row["total"] > 0:
@@ -619,7 +630,7 @@ def _s_weekly(d):
                 SELECT s.ticker, ts.pnl_pct
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                WHERE ts.calc_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
                 ORDER BY ts.pnl_pct DESC LIMIT 1
             """, (week_start,))
             row = cur.fetchone()
@@ -631,7 +642,7 @@ def _s_weekly(d):
                 SELECT s.ticker, ts.pnl_pct
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                WHERE ts.calc_date >= %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
                 ORDER BY ts.pnl_pct ASC LIMIT 1
             """, (week_start,))
             row = cur.fetchone()
@@ -737,7 +748,7 @@ def _s_monthly(d):
             cur.execute("""
                 SELECT COUNT(*) as cnt
                 FROM trading_signals
-                WHERE signal_date >= %s AND calc_date <= %s
+                WHERE calc_date >= %s AND calc_date <= %s
                   AND signal_type IN ('BUY', 'SELL', 'PROFIT_TAKE', 'STOP_LOSS')
             """, (month_start, prev_month_end))
             num_trades = cur.fetchone()["cnt"]
@@ -746,7 +757,7 @@ def _s_monthly(d):
                 SELECT COUNT(*) FILTER (WHERE pnl_pct > 0) as wins,
                        COUNT(*) as total
                 FROM trading_signals
-                WHERE signal_date >= %s AND calc_date <= %s
+                WHERE calc_date >= %s AND calc_date <= %s
                   AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
             """, (month_start, prev_month_end))
             row = cur.fetchone()
@@ -757,7 +768,7 @@ def _s_monthly(d):
                 SELECT s.ticker, ts.pnl_pct
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.calc_date <= %s
+                WHERE ts.calc_date >= %s AND ts.calc_date <= %s
                   AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
                 ORDER BY ts.pnl_pct DESC LIMIT 1
             """, (month_start, prev_month_end))
@@ -770,7 +781,7 @@ def _s_monthly(d):
                 SELECT s.ticker, ts.pnl_pct
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.calc_date <= %s
+                WHERE ts.calc_date >= %s AND ts.calc_date <= %s
                   AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
                 ORDER BY ts.pnl_pct ASC LIMIT 1
             """, (month_start, prev_month_end))

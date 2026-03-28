@@ -127,22 +127,8 @@ def calc_section_b(stock_id: int, calc_date: date) -> dict:
         print(f"  [WARN] 공매도 조회 실패 (stock_id={stock_id}): {e}")
         short_score = 5.0
 
-    # 2. 풋콜 비율 점수 (7점) — put_call_daily 테이블에서 조회
-    put_call_score = 3.5  # 기본값 (데이터 없을 때)
-    try:
-        with get_cursor() as cur:
-            cur.execute("""
-                SELECT pc_score, pc_ratio_oi, source
-                FROM put_call_daily
-                WHERE stock_id = %s
-                ORDER BY calc_date DESC LIMIT 1
-            """, (stock_id,))
-            pc_row = cur.fetchone()
-        if pc_row and pc_row["pc_score"] is not None:
-            put_call_score = min(float(pc_row["pc_score"]), 7.0)
-    except Exception as e:
-        print(f"  [WARN] P/C 조회 실패 (stock_id={stock_id}): {e}")
-        put_call_score = 3.5  # fallback
+    # 2. 풋콜 비율 점수 (7점) — 현재 데이터 소스 없음 → 중립
+    put_call_score = 3.5  # 중립 (7점 만점의 50%)
 
     # 3. 구조적 시그널 점수 (8점) — technical_indicators에서 이미 계산됨
     struct_score = 0.0
@@ -237,11 +223,42 @@ def score_sector_etf(close: float, ma20: float, ma50: float) -> float:
 
 
 def calc_section_c(sector_code: str, calc_date: date) -> dict:
-    """Section C 계산: VIX(10) + 섹터ETF(10) = 20점"""
+    """
+    Section C 계산 (개선): VIX(6) + 섹터ETF(6) + Cross-Asset(8) = 20점
 
-    # 1. VIX 점수 (10점)
+    변경: 기존 VIX(10)+ETF(10) → VIX(6)+ETF(6)+CrossAsset(8)
+    Cross-Asset이 없으면 기존 비율(VIX 10 + ETF 10)로 fallback.
+    """
+
+    # Cross-Asset 점수 조회 (8점 만점)
+    cross_score = None
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT cross_asset_total, data_quality
+                FROM cross_asset_daily
+                WHERE calc_date <= %s
+                ORDER BY calc_date DESC LIMIT 1
+            """, (calc_date,))
+            ca_row = cur.fetchone()
+        if ca_row and ca_row["cross_asset_total"] is not None:
+            # cross_asset_total은 이미 20점 만점 → 8점으로 리스케일
+            cross_score = round(float(ca_row["cross_asset_total"]) / 20.0 * 8.0, 2)
+    except Exception as e:
+        print(f"  [WARN] Cross-Asset 조회 실패: {e}")
+
+    # Cross-Asset 유무에 따라 VIX/ETF 배점 조정
+    if cross_score is not None:
+        vix_max = 6.0   # VIX 6점 만점
+        etf_max = 6.0   # 섹터 ETF 6점 만점
+    else:
+        vix_max = 10.0   # fallback: 기존 배점
+        etf_max = 10.0
+        cross_score = 0.0
+
+    # 1. VIX 점수
     vix_close = None
-    vix_s = 5.0
+    vix_s = vix_max / 2  # 기본 중립
 
     try:
         with get_cursor() as cur:
@@ -288,12 +305,17 @@ def calc_section_c(sector_code: str, calc_date: date) -> dict:
             print(f"  [WARN] 섹터 ETF 조회 실패 ({etf_symbol}): {e2}")
             etf_s = 5.0
 
-    section_c = round(min(vix_s + etf_s, 20.0), 2)
+    # VIX/ETF 리스케일 (원래 10점 만점 → vix_max/etf_max로)
+    vix_s = round(min(vix_s / 10.0 * vix_max, vix_max), 2)
+    etf_s = round(min(etf_s / 10.0 * etf_max, etf_max), 2)
+
+    section_c = round(min(vix_s + etf_s + cross_score, 20.0), 2)
 
     return {
         "vix_close": vix_close,
         "vix_score": round(vix_s, 2),
         "sector_etf_score": round(etf_s, 2),
+        "cross_asset_score": round(cross_score, 2),
         "section_c_macro": section_c,
     }
 
