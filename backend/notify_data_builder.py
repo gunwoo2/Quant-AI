@@ -1085,3 +1085,4 @@ def _get_prices(stock_id: int, days: int = 60) -> list:
             return [float(r["close_price"]) for r in cur.fetchall() if r["close_price"]]
     except Exception:
         return []
+
