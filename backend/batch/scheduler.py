@@ -38,10 +38,8 @@ def run_all(calc_date: date = None):
 
     # ── Step 1~7: 계산 전용 (알림 ZERO) ──
     results["1_price"]   = _run_step("1/10 가격 수집",        lambda: _s_price(calc_date))
-    results["1.5_ca"]    = _run_step("1.5 Cross-Asset",        lambda: _s_cross_asset(calc_date))
     results["2_fin"]     = _run_step("2/10 파생 재무",        lambda: _s_fin())
     results["3_l1"]      = _run_step("3/10 Layer 1",          lambda: _s_l1(calc_date))
-    results["3.5_pc"]    = _run_step("3.5 Put/Call Ratio",    lambda: _s_put_call(calc_date))
     results["4_l3"]      = _run_step("4/10 Layer 3",          lambda: _s_l3(calc_date))
     results["5_l2"]      = _run_step("5/10 Layer 2",          lambda: _s_l2())
 
@@ -51,6 +49,9 @@ def run_all(calc_date: date = None):
         results["5.5_ec"] = "SKIP"
 
     results["6_final"]   = _run_step("6/10 최종 합산",        lambda: _s_final(calc_date))
+    results["6.5_ic"]    = _run_step("6.5 팩터 IC 모니터",    lambda: _s_factor_monitor(calc_date))
+    results["6.7_decay"] = _run_step("6.7 Alpha Decay",      lambda: _s_alpha_decay(calc_date))
+    results["6.8_xgb"]  = _run_step("6.8 XGBoost+SHAP",     lambda: _s_xgboost(calc_date))
     results["7_trading"] = _run_step("7/10 트레이딩 시그널",   lambda: _s_trading(calc_date))
 
     # ── Step 8: 일괄 알림 (모든 알림을 여기서 한 번에) ──
@@ -93,18 +94,6 @@ def _s_l1(d):
     from batch.batch_ticker_item_daily import run_quant_score
     run_quant_score(d)
 
-def _s_cross_asset(d):
-    """Step 1.5: Cross-Asset Intelligence — 글로벌 자산 시그널 수집"""
-    from batch.batch_cross_asset import run_cross_asset
-    run_cross_asset(d)
-
-
-def _s_put_call(d):
-    """Step 3.5: Put/Call Ratio 수집 (yfinance options)"""
-    from batch.batch_put_call import run_put_call
-    run_put_call(d)
-
-
 def _s_l3(d):
     """오답노트 #5: batch_layer3_v2.run_all(d)"""
     from batch.batch_layer3_v2 import run_all as r
@@ -122,6 +111,25 @@ def _s_ec(d):
 def _s_final(d):
     from batch.batch_final_score import run_final_score
     run_final_score(d)
+
+
+
+
+
+def _s_xgboost(d):
+    """XGBoost Factor Interaction + SHAP Explainability"""
+    from batch.batch_xgboost import run_xgboost
+    run_xgboost(d)
+
+def _s_alpha_decay(d):
+    """Alpha Decay Tracker: 시그널 유효기간 측정 + 주간 리포트"""
+    from batch.batch_alpha_decay import run_alpha_decay
+    run_alpha_decay(d)
+
+def _s_factor_monitor(d):
+    """Self-Improving Engine: IC 계산 + (월초) 가중치 최적화"""
+    from batch.batch_factor_monitor import run_factor_monitor
+    run_factor_monitor(d)
 
 def _s_trading(d):
     """트레이딩 시그널 계산 (알림 없이 DB 저장만)"""

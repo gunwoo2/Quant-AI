@@ -372,6 +372,18 @@ def notify_morning_briefing(
             f"현금 {ps.get('cash_pct', 0):.1f}%"
         )
 
+    
+    # v5.0: AI 모듈 데이터 → 모닝 브리핑 추가
+    try:
+        from notify_ai_patch import enrich_morning_with_ai, format_ai_morning_fields
+        ai_morning = enrich_morning_with_ai(calc_date)
+        ai_morning_fields = format_ai_morning_fields(ai_morning)
+        my_fields.extend(ai_morning_fields)
+    except ImportError:
+        pass
+    except Exception as e_am:
+        print(f"  [WARN] Morning AI enrich 실패: {e_am}")
+
     my_embeds = [{
         "title": f"☀️ 모닝 브리핑 — {today_str}",
         "description": (
@@ -504,6 +516,14 @@ def _send_buy_premium(today_str: str, regime: str, buy_signals: list):
             {"name": "투자금", "value": f"${s.get('amount', 0):,.0f} ({s.get('weight', 0):.1f}%)", "inline": True},
             {"name": "손절가", "value": f"${s.get('stop_loss', 0):,.2f} (-{s.get('stop_pct', 10)}%)", "inline": True},
             {"name": "섹터", "value": s.get("sector", "N/A"), "inline": True},
+
+        # v5.0: AI 모듈 필드 추가
+        try:
+            from notify_ai_patch import format_ai_buy_fields
+            ai_fields = format_ai_buy_fields(s)
+            fields.extend(ai_fields)
+        except Exception:
+            pass
         ]
 
         because_text = '\n'.join(because_lines)
@@ -1326,4 +1346,3 @@ def send_message(text: str, signal_type: str = "REPORT"):
 def send_discord_embed(embeds: list, signal_type: str = "REPORT"):
     """v3 호환: 직접 embed 전송"""
     _send_discord(embeds, "MY", signal_type)
-

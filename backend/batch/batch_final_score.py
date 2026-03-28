@@ -1,5 +1,5 @@
 """
-batch/batch_final_score.py — 최종 점수 합산 v4.0 (Adaptive Threshold)
+batch/batch_final_score.py — 최종 점수 합산 v4.1 (Adaptive Threshold + Self-Improving Weights)
 =====================================================================
 v4.0 변경:
   ★ Cross-Sectional Percentile 기반 등급 (Barra USE4 방법론)
@@ -48,7 +48,14 @@ try:
 except ImportError:
     _HAS_FSE = False
 
-W_L1, W_L2, W_L3 = 0.50, 0.25, 0.25
+# ═══════════════════════════════════════════════════════════
+# v5.0: Self-Improving Engine — IC 기반 적응형 가중치
+# ═══════════════════════════════════════════════════════════
+try:
+    from batch.batch_factor_monitor import get_adaptive_weights
+    W_L1, W_L2, W_L3 = get_adaptive_weights()
+except ImportError:
+    W_L1, W_L2, W_L3 = 0.50, 0.25, 0.25
 SHRINKAGE_ALPHA = 0.15
 
 def _clamp(v, lo, hi):
@@ -178,7 +185,8 @@ def run_final_score(calc_date: date = None):
     if calc_date is None:
         calc_date = datetime.now().date()
 
-    print(f"[FINAL] ▶ 시작 calc_date={calc_date} (Adaptive Scoring v4.0)")
+    print(f"[FINAL] ▶ 시작 calc_date={calc_date} (Adaptive Scoring v4.0 + Self-Improving)")
+    print(f"[FINAL] 가중치: L1={W_L1:.4f}, L2={W_L2:.4f}, L3={W_L3:.4f}")
 
     # ── DB에서 전 종목 원점수 로드 ──
     stocks = []
@@ -334,7 +342,7 @@ def run_final_score(calc_date: date = None):
                         percentile_rank    = EXCLUDED.percentile_rank,
                         conviction_score   = EXCLUDED.conviction_score
                 """, (stock_id, calc_date,
-                      l1_raw, l2_raw, l3_raw,
+                      l1_raw or 0, l2_raw or 0, l3_raw or 0,
                       weighted, grade, signal, opinion,
                       conviction["strong_buy_signal"],
                       conviction["strong_sell_signal"],
@@ -356,7 +364,7 @@ def run_final_score(calc_date: date = None):
                         grade          = EXCLUDED.grade,
                         signal         = EXCLUDED.signal
                 """, (stock_id, calc_date,
-                      l1_raw, l2_raw, l3_raw,
+                      l1_raw or 0, l2_raw or 0, l3_raw or 0,
                       weighted, grade, signal))
 
                 # high_conviction_signals
@@ -375,7 +383,7 @@ def run_final_score(calc_date: date = None):
                             signal_type  = EXCLUDED.signal_type,
                             reason       = EXCLUDED.reason
                     """, (stock_id, calc_date,
-                          l1_raw, l2_raw, l3_raw,
+                          l1_raw or 0, l2_raw or 0, l3_raw or 0,
                           weighted,
                           "STRONG_BUY" if conviction["strong_buy_signal"] else "STRONG_SELL",
                           conviction["conviction_reason"]))
