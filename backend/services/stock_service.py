@@ -1,8 +1,8 @@
 """
 stock_service.py — 종목 서비스 v3.9
 ====================================
-v3.9: get_stock_list에 conviction_score, layer_agreement 안전 추가
-      (daily_stock_score 테이블이 없어도 500 에러 안 남)
+v3.9: get_stock_list에 conviction_score, layer_agreement, data_completeness 추가
+      (daily_stock_score 테이블 LEFT JOIN)
 """
 from typing import Optional
 from db_pool import get_cursor
@@ -11,6 +11,22 @@ from db_pool import get_cursor
 # ──────────────────────────────────────────────────────────
 #  섹터 코드 → 한글명 매핑 (GICS 기준)
 # ──────────────────────────────────────────────────────────
+# ensemble 점수 → 시그널 매핑
+_SIGNAL_THRESHOLDS = [
+    (80, "STRONG_BUY"), (65, "BUY"), (50, "OUTPERFORM"),
+    (40, "HOLD"), (30, "UNDERPERFORM"), (20, "SELL"),
+    (0, "STRONG_SELL"),
+]
+
+def _score_to_signal(score):
+    if score is None:
+        return None
+    for threshold, label in _SIGNAL_THRESHOLDS:
+        if score >= threshold:
+            return label
+    return "STRONG_SELL"
+
+
 SECTOR_KO_MAP = {
     "10": "에너지",
     "15": "소재",
@@ -27,7 +43,7 @@ SECTOR_KO_MAP = {
 
 
 # ──────────────────────────────────────────────────────────
-#  GET /api/stocks
+#  GET /api/stocks  ★ v3.9: conviction_score, layer_agreement 추가
 # ──────────────────────────────────────────────────────────
 def get_stock_list(
     sector:  Optional[str] = None,
@@ -36,7 +52,7 @@ def get_stock_list(
 ) -> list[dict]:
     """
     메인 종목 목록 조회.
-    ★ v3.9: conviction_score 등은 별도 안전 쿼리로 보충 (테이블 없으면 skip)
+    ★ v3.9: conviction_score, layer_agreement, data_completeness 추가
     """
     conditions = ["1=1"]
     params: list = []
@@ -72,31 +88,19 @@ def get_stock_list(
             fs.investment_opinion               AS signal,
             COALESCE(lc.like_count, 0)          AS like_count
         FROM stocks s
-        JOIN markets m
-            ON s.market_id = m.market_id
-        LEFT JOIN sectors sec
-            ON s.sector_id = sec.sector_id
+        JOIN markets m ON s.market_id = m.market_id
+        LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
         LEFT JOIN (
             SELECT DISTINCT ON (stock_id)
-                stock_id,
-                layer1_score,
-                layer2_score,
-                layer3_score,
-                weighted_score,
-                grade,
-                investment_opinion
+                stock_id, layer1_score, layer2_score, layer3_score,
+                weighted_score, grade, investment_opinion
             FROM stock_final_scores
             ORDER BY stock_id, calc_date DESC
         ) fs ON s.stock_id = fs.stock_id
-        LEFT JOIN stock_prices_realtime rt
-            ON s.stock_id = rt.stock_id
-        LEFT JOIN stock_like_counts lc
-            ON s.stock_id = lc.stock_id
-        WHERE s.is_active = TRUE
-          AND {where_clause}
-        ORDER BY
-            fs.weighted_score DESC NULLS LAST,
-            s.ticker ASC
+        LEFT JOIN stock_prices_realtime rt ON s.stock_id = rt.stock_id
+        LEFT JOIN stock_like_counts lc ON s.stock_id = lc.stock_id
+        WHERE s.is_active = TRUE AND {where_clause}
+        ORDER BY fs.weighted_score DESC NULLS LAST, s.ticker ASC
     """
 
     with get_cursor() as cur:
@@ -111,14 +115,41 @@ def get_stock_list(
                 item[key] = float(item[key])
         result.append(item)
 
-    # ★ v3.9: conviction 보충 (daily_stock_score 테이블 없으면 자동 skip)
+    # ── AI 데이터 보충 (xgboost_predictions — 테이블 없으면 skip) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT s.ticker,
-                       dss.conviction_score,
-                       dss.layer_agreement,
-                       dss.data_completeness
+                SELECT s.ticker, xp.ai_score, xp.ensemble_score
+                FROM (
+                    SELECT DISTINCT ON (stock_id)
+                        stock_id, ai_score, ensemble_score
+                    FROM xgboost_predictions
+                    ORDER BY stock_id, calc_date DESC
+                ) xp
+                JOIN stocks s ON s.stock_id = xp.stock_id
+            """)
+            ai_map = {}
+            for r in cur.fetchall():
+                ai_s = float(r["ai_score"]) if r["ai_score"] is not None else None
+                ens = float(r["ensemble_score"]) if r["ensemble_score"] is not None else None
+                ai_map[r["ticker"]] = {
+                    "ai_score": ai_s,
+                    "ensemble": ens,
+                    "ai_signal": _score_to_signal(ens),
+                }
+        for item in result:
+            ai = ai_map.get(item.get("ticker"), {})
+            item["ai_score"] = ai.get("ai_score")
+            item["ensemble"] = ai.get("ensemble")
+            item["ai_signal"] = ai.get("ai_signal")
+    except Exception:
+        pass
+
+    # ── Conviction 보충 (daily_stock_score — 테이블 없으면 skip) ──
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT s.ticker, dss.conviction_score, dss.layer_agreement, dss.data_completeness
                 FROM (
                     SELECT DISTINCT ON (stock_id)
                         stock_id, conviction_score, layer_agreement, data_completeness
@@ -137,11 +168,8 @@ def get_stock_list(
             }
         for item in result:
             conv = conv_map.get(item.get("ticker"), {})
-            item["conviction_score"] = conv.get("conviction_score")
-            item["layer_agreement"] = conv.get("layer_agreement")
-            item["data_completeness"] = conv.get("data_completeness")
+            item.update(conv)
     except Exception:
-        # daily_stock_score 테이블 없음 → conviction 필드 없이 진행
         pass
 
     return result
@@ -344,6 +372,27 @@ def get_stock_detail(ticker: str) -> dict | None:
 
     row = dict(row)
 
+    # ★ v4.1: L3 fallback — stock_final_scores에 0이면 technical_indicators에서 직접 조회
+    try:
+        l3_val = row.get("l3")
+        if l3_val is None or float(l3_val) == 0:
+            with get_cursor() as cur:
+                cur.execute("""
+                    SELECT COALESCE(
+                        layer3_total_score,
+                        layer3_technical_score,
+                        section_a_technical
+                    ) AS l3_fallback
+                    FROM technical_indicators
+                    WHERE stock_id = (SELECT stock_id FROM stocks WHERE ticker = %s LIMIT 1)
+                    ORDER BY calc_date DESC LIMIT 1
+                """, (ticker.upper(),))
+                fb = cur.fetchone()
+                if fb and fb.get("l3_fallback") is not None:
+                    row["l3"] = float(fb["l3_fallback"])
+    except Exception:
+        pass
+
     def _f(key):
         v = row.get(key)
         return round(float(v), 4) if v is not None else None
@@ -384,8 +433,9 @@ def get_stock_detail(ticker: str) -> dict | None:
     # ── Forward PER (컨센서스 우선 → CAGR 폴백) ──
     forward_per = None
     forward_eps = None
-    forward_method = None
+    forward_method = None  # "consensus" | "cagr"
 
+    # 1순위: 애널리스트 컨센서스 EPS
     consensus_eps = _f("consensus_eps")
     if consensus_eps and consensus_eps > 0 and price:
         fwd = round(price / consensus_eps, 2)
@@ -394,9 +444,10 @@ def get_stock_detail(ticker: str) -> dict | None:
             forward_eps = round(consensus_eps, 4)
             forward_method = "consensus"
 
+    # 2순위: EPS 3년 CAGR 기반 자체 추정
     if forward_per is None and ttm_eps and ttm_eps > 0 and price:
-        eps_y1 = _f("eps_y1")
-        eps_y4 = _f("eps_y4")
+        eps_y1 = _f("eps_y1")  # 최신 ANNUAL
+        eps_y4 = _f("eps_y4")  # 3년 전
         if eps_y1 and eps_y1 > 0 and eps_y4 and eps_y4 > 0:
             cagr = (eps_y1 / eps_y4) ** (1.0 / 3.0) - 1.0
             if -0.30 <= cagr <= 0.80:

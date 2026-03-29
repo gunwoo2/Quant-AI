@@ -355,6 +355,17 @@ def _s_notify_all(calc_date, results, start_time):
         print("  ⚠️ notify_data_builder 없음 → 기본 모드")
         _HAS_BUILDER = False
 
+    # ★ v4.1: AI 데이터 빌더
+    _HAS_AI_BUILDER = False
+    try:
+        from notify_data_builder import (
+            build_ai_morning_data, build_ai_signal_data,
+            build_ai_risk_data, build_ai_batch_summary,
+        )
+        _HAS_AI_BUILDER = True
+    except ImportError:
+        print("  ⚠️ AI builder 없음 → AI 알림 스킵")
+
     # ── 매수 시그널 보강 ──
     buy_signals = []
     if _HAS_BUILDER:
@@ -417,6 +428,45 @@ def _s_notify_all(calc_date, results, start_time):
     # ═══════════════════════════════════════════════════════
     #  Phase 3: 일괄 알림 발송
     # ═══════════════════════════════════════════════════════
+    # ★ v4.1: AI 데이터 수집
+    ai_morning = {}
+    ai_risk_data = {}
+    ai_batch = {}
+    if _HAS_AI_BUILDER:
+        try:
+            ai_morning = build_ai_morning_data(calc_date)
+            print(f"  ✅ AI 모닝 데이터: Top {len(ai_morning.get('ai_top', []))} / Bottom {len(ai_morning.get('ai_bottom', []))}")
+        except Exception as e:
+            print(f"  ⚠️ AI 모닝 실패: {e}")
+
+        try:
+            ai_risk_data = build_ai_risk_data(calc_date)
+            danger_cnt = len([d for d in ai_risk_data.get("ic_details", []) if d.get("status") == "DANGER"])
+            dead_cnt = len(ai_risk_data.get("decay_dead", []))
+            print(f"  ✅ AI 리스크: IC DANGER {danger_cnt}건 / Decay DEAD {dead_cnt}건")
+        except Exception as e:
+            print(f"  ⚠️ AI 리스크 실패: {e}")
+
+        try:
+            ai_batch = build_ai_batch_summary(calc_date)
+            print(f"  ✅ AI 배치: AUC={ai_batch.get('auc')} / 추론={ai_batch.get('predict_count')}종목")
+        except Exception as e:
+            print(f"  ⚠️ AI 배치요약 실패: {e}")
+
+        # 매수 시그널에 AI 데이터 보강
+        for s in buy_signals:
+            try:
+                s["ai_data"] = build_ai_signal_data(s["stock_id"], calc_date)
+            except Exception:
+                s["ai_data"] = {}
+
+        # 매도 시그널에도
+        for s in sell_signals:
+            try:
+                s["ai_data"] = build_ai_signal_data(s["stock_id"], calc_date)
+            except Exception:
+                s["ai_data"] = {}
+
     print(f"\n  ── Phase 3: 알림 발송 ──")
 
     from notifier import (
@@ -451,6 +501,8 @@ def _s_notify_all(calc_date, results, start_time):
                 hit_rate=hit_rate,
                 fear_greed=fear_greed,
                 portfolio_summary=portfolio_summary,
+                ai_morning=ai_morning,
+                ai_risk=ai_risk_data,
             )
             print(f"  ✅ 모닝 브리핑 → MY_MORNING + PUB_MORNING")
         except Exception as e:
@@ -499,6 +551,7 @@ def _s_notify_all(calc_date, results, start_time):
                 defense_status=risk_data.get("defense"),
                 stress_test=risk_data.get("stress_test"),
                 correlation=risk_data.get("correlation"),
+                ai_risk=ai_risk_data,
             )
             print(f"  ✅ 리스크 → MY_RISK + PUB_RISK ({risk_data.get('risk_level', '?')})")
         except Exception as e:
@@ -546,6 +599,7 @@ def _s_notify_all(calc_date, results, start_time):
                 "total": ok_cnt + fail_cnt,
                 "steps": step_results,
             },
+            ai_summary=ai_batch,
         )
         print(f"  ✅ 배치 완료 → MY_SYSTEM + PUB_REPORT")
     except Exception as e:

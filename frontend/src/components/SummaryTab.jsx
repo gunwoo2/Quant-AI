@@ -1,14 +1,12 @@
 /**
- * SummaryTab.jsx — v5.1
+ * SummaryTab.jsx — v5.2
  *
- * v5.1: 이전 디자인(v4) 유지 + AI Explainability(SHAP) 섹션만 추가
- *
- * 렌더 순서:
- *   1. TradingView 차트 (450px)
- *   2. Signal Strip (80px 등급 뱃지 + 큰 게이지)
+ * 페이지 순서:
+ *   1. TradingView 차트
+ *   2. Signal Strip
  *   3. Valuation + Profitability
- *   4. ★ AI Explainability (SHAP Waterfall)
- *   5. Signal Summary + AI Rating History
+ *   4. AI Explainability (SHAP) — borderTop 스타일
+ *   5. Signal Summary + Quant Rating History + AI Rating History (3열)
  */
 import React, { useState, useEffect } from "react";
 import { useOutletContext } from "react-router-dom";
@@ -48,7 +46,6 @@ export default function SummaryTab() {
         { date: "2025-12-28", grade: "A",  desc: "Growth Stable",   score: 68.9 },
       ]));
 
-    /* ★ SHAP 데이터 로드 */
     setShapLoading(true);
     api.get(`/api/stock/explain/${ticker}`)
       .then(res => { setShapData(res.data); setShapLoading(false); })
@@ -106,10 +103,10 @@ export default function SummaryTab() {
         <TradingViewWidget symbol={ticker || "AAPL"} />
       </div>
 
-      {/* ── 2. Signal Strip (차트 바로 아래) */}
+      {/* ── 2. Signal Strip */}
       <SignalStrip signal={signal} realtime={realtime} />
 
-      {/* ── 3. 가치평가 + 수익성 지표 */}
+      {/* ── 3. Valuation + Profitability */}
       <div style={{ padding: 28, backgroundColor: C.bgDark, borderRadius: 20, border: `1px solid ${C.cardBg}` }}>
         <SectionHeader title="Valuation" subTitle="가치 평가" question="Value: 주가가 저렴한가?"
           description="현재 주가가 기업의 내재가치나 이익 대비 어느 수준인지 측정합니다." color={C.primary} />
@@ -123,11 +120,12 @@ export default function SummaryTab() {
         </div>
       </div>
 
-      {/* ── ★ 4. AI Explainability (SHAP Waterfall) */}
+      {/* ── 4. AI Explainability (SHAP) */}
       <ShapSection data={shapData} loading={shapLoading} />
 
-      {/* ── 5. Signal Summary + AI Rating History */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 450px", gap: 24, alignItems: "start" }}>
+      {/* ── 5. Signal Summary + Quant Rating History + AI Rating History (3열) */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, alignItems: "start" }}>
+
         {/* 좌: Signal Summary */}
         <div style={{ padding: 24, backgroundColor: C.bgDeeper, border: `1px solid ${C.cardBg}`, borderRadius: 16 }}>
           <h3 style={{ color: C.textPri, fontSize: 20, fontWeight: 800, marginBottom: 18, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.sans }}>
@@ -152,11 +150,11 @@ export default function SummaryTab() {
           </div>
         </div>
 
-        {/* 우: AI Rating History */}
+        {/* 중: Quant Rating History (신규) */}
         <div style={{ padding: 24, backgroundColor: C.bgDeeper, border: `1px solid ${C.cardBg}`, borderRadius: 16 }}>
           <h3 style={{ color: C.textPri, fontSize: 20, fontWeight: 800, marginBottom: 18, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.sans }}>
-            <span style={{ width: 3, height: 14, backgroundColor: C.golden, display: "inline-block" }} />
-            AI Rating History
+            <span style={{ width: 3, height: 14, backgroundColor: C.primary, display: "inline-block" }} />
+            Quant Rating
           </h3>
           {!ratingHistory ? (
             <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: 20, fontFamily: FONT.sans }}>LOADING...</div>
@@ -164,7 +162,42 @@ export default function SummaryTab() {
             <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: 20 }}>이력 없음</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {ratingHistory.slice(0, 5).map((item, i) => {
+              {ratingHistory.filter(r => !r.type || r.type === "quant").slice(0, 6).map((item, i) => {
+                const gc = gradeColor(item.grade);
+                return (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8, backgroundColor: C.bgDark, border: `1px solid ${C.cardBg}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontFamily: FONT.sans, fontSize: 12, fontWeight: 900, color: gc, textAlign: "center", minWidth: 32 }}>{item.grade}</span>
+                      <div>
+                        <div style={{ color: gc, fontWeight: 700, fontSize: 11, fontFamily: FONT.sans }}>{item.desc || ""}</div>
+                        {item.score != null && (
+                          <div style={{ color: C.textMuted, fontSize: 10, fontFamily: FONT.sans }}>
+                            Score {typeof item.score === "number" ? item.score.toFixed(1) : item.score}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ color: C.textMuted, fontSize: 11, fontFamily: FONT.sans }}>{item.date}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 우: AI Rating History */}
+        <div style={{ padding: 24, backgroundColor: C.bgDeeper, border: `1px solid ${C.cardBg}`, borderRadius: 16 }}>
+          <h3 style={{ color: C.textPri, fontSize: 20, fontWeight: 800, marginBottom: 18, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.sans }}>
+            <span style={{ width: 3, height: 14, backgroundColor: C.golden, display: "inline-block" }} />
+            AI Rating
+          </h3>
+          {!ratingHistory ? (
+            <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: 20, fontFamily: FONT.sans }}>LOADING...</div>
+          ) : ratingHistory.length === 0 ? (
+            <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: 20 }}>이력 없음</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {ratingHistory.slice(0, 6).map((item, i) => {
                 const gc = gradeColor(item.grade);
                 return (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8, backgroundColor: C.bgDark, border: `1px solid ${C.cardBg}` }}>
@@ -193,12 +226,12 @@ export default function SummaryTab() {
 
 
 /* ═══════════════════════════════════════════════════════
-   ★ ShapSection — AI Explainability (SHAP Waterfall)
+   ★ ShapSection — AI Explainability (borderTop 스타일)
    ═══════════════════════════════════════════════════════ */
 function ShapSection({ data, loading }) {
   if (loading) {
     return (
-      <div style={{ padding: 28, backgroundColor: C.bgDark, borderRadius: 16, border: `1px solid ${C.cardBg}`, textAlign: "center" }}>
+      <div style={{ padding: 28, backgroundColor: C.bgDark, borderRadius: 20, border: `1px solid ${C.cardBg}`, textAlign: "center" }}>
         <div style={{ color: C.textMuted, fontSize: 12, fontFamily: FONT.sans }}>AI 분석 로딩 중...</div>
       </div>
     );
@@ -206,16 +239,16 @@ function ShapSection({ data, loading }) {
 
   if (!data || data.status === "NO_DATA" || data.aiScore == null) {
     return (
-      <div style={{ padding: 28, backgroundColor: C.bgDark, borderRadius: 16, border: `1px solid ${C.cardBg}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <span style={{ width: 3, height: 14, backgroundColor: C.cyan, display: "inline-block" }} />
-          <span style={{ fontSize: 15, fontWeight: 800, color: C.textPri, fontFamily: FONT.sans }}>🤖 AI Explainability</span>
-          <span style={{ fontSize: 11, color: C.textMuted }}>XGBoost + SHAP</span>
-        </div>
-        <div style={{ padding: "20px 0", textAlign: "center" }}>
-          <div style={{ fontSize: 12, color: C.textMuted }}>
-            {data?.message || "XGBoost 분석 데이터가 아직 없습니다. 배치 실행 후 표시됩니다."}
+      <div style={{ padding: 28, backgroundColor: C.bgDark, borderRadius: 20, border: `1px solid ${C.cardBg}` }}>
+        <div style={{ marginBottom: 15, borderTop: `2px solid ${C.cyan}`, paddingTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <h3 style={{ color: C.textPri, fontSize: 15, margin: 0, fontWeight: 800, fontFamily: FONT.sans }}>🤖 AI Explainability</h3>
+            <span style={{ color: C.textMuted, fontSize: 12 }}>(XGBoost + SHAP)</span>
+            <span style={{ background: `${C.cyan}15`, color: C.cyan, padding: "2px 10px", borderRadius: 4, fontSize: 11, fontWeight: 900, border: `1px solid ${C.cyan}33`, fontFamily: FONT.sans }}>AI: 왜 이 등급인가?</span>
           </div>
+          <p style={{ color: C.textGray, fontSize: 12, margin: 0 }}>
+            {data?.message || "XGBoost 분석 데이터가 아직 없습니다. 배치 실행 후 표시됩니다."}
+          </p>
         </div>
       </div>
     );
@@ -233,14 +266,12 @@ function ShapSection({ data, loading }) {
 
   return (
     <div style={{ padding: 28, backgroundColor: C.bgDark, borderRadius: 20, border: `1px solid ${C.cardBg}` }}>
-      {/* 헤더 — v4 스타일 borderTop */}
+      {/* 헤더 — borderTop 스타일 (v4와 통일) */}
       <div style={{ marginBottom: 20, borderTop: `2px solid ${C.cyan}`, paddingTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <h3 style={{ color: C.textPri, fontSize: 15, margin: 0, fontWeight: 800, fontFamily: FONT.sans }}>🤖 AI Explainability</h3>
           <span style={{ color: C.textMuted, fontSize: 12 }}>(XGBoost + SHAP)</span>
-          <span style={{ background: `${C.cyan}15`, color: C.cyan, padding: "2px 10px", borderRadius: 4, fontSize: 11, fontWeight: 900, border: `1px solid ${C.cyan}33`, fontFamily: FONT.sans }}>
-            AI: 왜 이 등급인가?
-          </span>
+          <span style={{ background: `${C.cyan}15`, color: C.cyan, padding: "2px 10px", borderRadius: 4, fontSize: 11, fontWeight: 900, border: `1px solid ${C.cyan}33`, fontFamily: FONT.sans }}>AI: 왜 이 등급인가?</span>
           <span style={{ marginLeft: "auto", fontSize: 11, color: C.textMuted, fontFamily: FONT.sans }}>{data.calcDate}</span>
         </div>
         <p style={{ color: C.textGray, fontSize: 12, margin: 0, lineHeight: 1.5 }}>
@@ -271,7 +302,6 @@ function ShapSection({ data, loading }) {
 
       {/* SHAP Waterfall — 좌우 2열 */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-        {/* 상승 기여 요인 */}
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.up, marginBottom: 12, fontFamily: FONT.sans }}>
             📈 상승 기여 요인 (Positive SHAP)
@@ -292,7 +322,6 @@ function ShapSection({ data, loading }) {
           }) : <div style={{ fontSize: 12, color: C.textMuted }}>데이터 없음</div>}
         </div>
 
-        {/* 하락 기여 요인 */}
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.down, marginBottom: 12, fontFamily: FONT.sans }}>
             📉 하락 기여 요인 (Negative SHAP)
@@ -349,8 +378,6 @@ function SignalStrip({ signal, realtime }) {
       borderRadius: 12,
       gap: 20,
     }}>
-
-      {/* 좌측: 등급 뱃지 + 시그널 라벨 */}
       <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
         <div style={{
           width: 80, height: 80, borderRadius: 10,
@@ -370,7 +397,6 @@ function SignalStrip({ signal, realtime }) {
         </div>
       </div>
 
-      {/* 중앙: 종합 점수 게이지 */}
       {score && (
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
           <div style={{ position: "relative", width: 80, height: 80 }}>
@@ -397,10 +423,8 @@ function SignalStrip({ signal, realtime }) {
         </div>
       )}
 
-      {/* 구분선 */}
       <div style={{ width: 1, height: 36, background: C.border }} />
 
-      {/* 우측: L1 / L2 / L3 미니 카드 */}
       <div style={{ display: "flex", gap: 10 }}>
         {layers.map(l => (
           <div key={l.key} style={{

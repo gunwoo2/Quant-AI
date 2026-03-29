@@ -17,21 +17,31 @@ import api from "../../api";
 const GRADES    = ["ALL", "S", "A+", "A", "B+", "B", "C", "D"];
 const COUNTRIES = ["ALL", "US", "KR", "JP"];
 
+// 정렬용 숫자 매핑 (높을수록 좋음)
+const _GRADE_ORDER = { "S": 7, "A+": 6, "A": 5, "B+": 4, "B": 3, "C": 2, "D": 1 };
+const _SIGNAL_ORDER = {
+  "STRONG_BUY": 7, "BUY": 6, "OUTPERFORM": 5, "HOLD": 4,
+  "UNDERPERFORM": 3, "SELL": 2, "STRONG_SELL": 1,
+};
+
 // ── 컬럼 총합 목표 ~870px (사이드바 210 포함 시 1080px → 1280px 이상 화면에서 스크롤 없음)
 const COLUMNS = [
-  { key: "ticker", label: "TICKER",  width: 74  },
-  { key: "name",   label: "COMPANY", width: 155 },
-  { key: "sector", label: "SECTOR",  width: 88  },
-  { key: "price",  label: "PRICE",   width: 88  },
-  { key: "chg",    label: "CHG%",    width: 68  },
-  { key: "l1",     label: "L1",      width: 50,  tip: "퀀트 레이팅 (Fundamental)"     },
-  { key: "l2",     label: "L2",      width: 50,  tip: "텍스트·감성 신호 (NLP/AI)"     },
-  { key: "l3",     label: "L3",      width: 50,  tip: "시장 신호 (Price/Order Flow)"  },
-  { key: "score",  label: "SCORE",   width: 100 },
-  { key: "grade",  label: "GRADE",   width: 50  },
-  { key: "signal", label: "SIGNAL",  width: 100 },
+  { key: "ticker",    label: "TICKER",    width: 74  },
+  { key: "name",      label: "COMPANY",   width: 140 },
+  { key: "sector",    label: "SECTOR",    width: 80  },
+  { key: "price",     label: "PRICE",     width: 82  },
+  { key: "chg",       label: "CHG%",      width: 62  },
+  { key: "l1",        label: "L1",        width: 44,  tip: "퀀트 레이팅 (Fundamental)"     },
+  { key: "l2",        label: "L2",        width: 44,  tip: "텍스트·감성 신호 (NLP/AI)"     },
+  { key: "l3",        label: "L3",        width: 44,  tip: "시장 신호 (Price/Order Flow)"  },
+  { key: "score",     label: "SCORE",     width: 62,  tip: "L1+L2+L3 가중합 (Stat)"      },
+  { key: "signal",    label: "Q.SIG",     width: 72,  tip: "퀀트 전용 시그널 (Stat 기반)"  },
+  { key: "ai_score",  label: "AI",        width: 48,  tip: "XGBoost AI 예측 점수"          },
+  { key: "ensemble",  label: "ENSEMBLE",  width: 68,  tip: "Stat×0.7 + AI×0.3 통합"       },
+  { key: "grade",     label: "GRADE",     width: 48  },
+  { key: "ai_signal", label: "SIGNAL",    width: 80,  tip: "퀀트+AI 최종 시그널"           },
 ];
-// 체크박스(28) + 컬럼합(873) + 좌우패딩(32) = 933px
+// 체크박스(28) + 컬럼합(968) + 좌우패딩(32) = 1028px
 
 function nextSort(dir, clickedKey, sortKey) {
   if (sortKey !== clickedKey) return { key: clickedKey, dir: "desc" };
@@ -112,9 +122,26 @@ export default function StockTable({ onTickerClick, filterSector, onResetSector 
 
     if (sort.key && sort.dir) {
       data.sort((a, b) => {
-        let av = a[sort.key] ?? -Infinity;
-        let bv = b[sort.key] ?? -Infinity;
-        if (typeof av === "string") { av = av.toLowerCase(); bv = String(bv).toLowerCase(); }
+        let av = a[sort.key] ?? null;
+        let bv = b[sort.key] ?? null;
+
+        // null 처리: null은 항상 뒤로
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+
+        // 등급/시그널: 숫자 매핑 후 비교
+        if (sort.key === "grade") {
+          av = _GRADE_ORDER[av] ?? -1;
+          bv = _GRADE_ORDER[bv] ?? -1;
+        } else if (sort.key === "signal" || sort.key === "ai_signal") {
+          av = _SIGNAL_ORDER[av] ?? -1;
+          bv = _SIGNAL_ORDER[bv] ?? -1;
+        } else if (typeof av === "string") {
+          av = av.toLowerCase();
+          bv = String(bv).toLowerCase();
+        }
+
         if (av < bv) return sort.dir === "desc" ?  1 : -1;
         if (av > bv) return sort.dir === "desc" ? -1 :  1;
         return 0;
@@ -422,40 +449,85 @@ function Row({ row, odd, checked, onCheck, onClick }) {
         </div>
       ))}
 
-      {/* 9. SCORE */}
-      <div style={{ width: 100, minWidth: 100, flexShrink: 0, padding: "0 4px" }}>
+      {/* 9. SCORE (stat) */}
+      <div style={{ width: 62, minWidth: 62, flexShrink: 0, padding: "0 4px" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.textGray, marginBottom: 2 }}>
           {fmtScore(row.score)}
         </div>
         <MiniBar value={row.score ?? 0} />
       </div>
 
-      {/* 10. GRADE */}
-      <div style={{ width: 50, minWidth: 50, flexShrink: 0, padding: "0 4px" }}>
+      {/* 10. Q.SIGNAL (퀀트 전용 시그널) */}
+      <div style={{ width: 72, minWidth: 72, flexShrink: 0, padding: "0 4px" }}>
+        <span style={{
+          fontSize: 9, fontWeight: 700, letterSpacing: 0.2,
+          color: sigColor, background: `${sigColor}10`,
+          border: `1px solid ${sigColor}25`, borderRadius: 3,
+          padding: "2px 5px", display: "inline-block", whiteSpace: "nowrap",
+          opacity: 0.7,
+        }}>
+          {row.signal ?? "—"}
+        </span>
+      </div>
+
+      {/* 11. AI Score (🤖) */}
+      <div style={{ width: 48, minWidth: 48, flexShrink: 0, padding: "0 4px", textAlign: "center" }}>
+        {row.ai_score != null ? (
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.cyan, fontFamily: FONT.mono }}>
+            {Number(row.ai_score).toFixed(1)}
+          </span>
+        ) : (
+          <span style={{ fontSize: 10, color: C.border }}>—</span>
+        )}
+      </div>
+
+      {/* 12. ENSEMBLE (stat+ai) */}
+      <div style={{ width: 68, minWidth: 68, flexShrink: 0, padding: "0 4px" }}>
+        {row.ensemble != null ? (
+          <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textPri, marginBottom: 2, fontFamily: FONT.mono }}>
+              {Number(row.ensemble).toFixed(1)}
+            </div>
+            <MiniBar value={row.ensemble ?? 0} color={C.cyan} />
+          </>
+        ) : (
+          <span style={{ fontSize: 10, color: C.border }}>—</span>
+        )}
+      </div>
+
+      {/* 13. GRADE */}
+      <div style={{ width: 48, minWidth: 48, flexShrink: 0, padding: "0 4px" }}>
         <span style={{ fontSize: 15, fontWeight: 800, color: gc }}>
           {row.grade ?? "—"}
         </span>
       </div>
 
-      {/* 11. SIGNAL */}
-      <div style={{ width: 100, minWidth: 100, flexShrink: 0, padding: "0 4px" }}>
-        <span style={{
-          fontSize: 10, fontWeight: 700, letterSpacing: 0.2,
-          color: sigColor, background: `${sigColor}12`,
-          border: `1px solid ${sigColor}35`, borderRadius: 3,
-          padding: "3px 7px", display: "inline-block", whiteSpace: "nowrap",
-        }}>
-          {row.signal ?? label}
-        </span>
+      {/* 14. SIGNAL (퀀트+AI 최종) */}
+      <div style={{ width: 80, minWidth: 80, flexShrink: 0, padding: "0 4px" }}>
+        {(() => {
+          const finalSig = row.ai_signal || row.signal;
+          const finalColor = row.ai_signal ? signalColor(row.grade) : sigColor;
+          const hasAi = row.ai_signal != null;
+          return (
+            <span style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.2,
+              color: finalColor, background: `${finalColor}12`,
+              border: `1px solid ${finalColor}35`, borderRadius: 3,
+              padding: "3px 6px", display: "inline-block", whiteSpace: "nowrap",
+            }}>
+              {hasAi && "🤖 "}{finalSig ?? label}
+            </span>
+          );
+        })()}
       </div>
     </div>
   );
 }
 
-function MiniBar({ value }) {
+function MiniBar({ value, color }) {
   return (
     <div style={{ width: "100%", height: 2, background: C.surfaceHi, borderRadius: 1, overflow: "hidden" }}>
-      <div style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, height: "100%", background: C.gaugebar, borderRadius: 1 }} />
+      <div style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, height: "100%", background: color || C.gaugebar, borderRadius: 1 }} />
     </div>
   );
 }

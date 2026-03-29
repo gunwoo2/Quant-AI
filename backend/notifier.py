@@ -292,6 +292,7 @@ def notify_morning_briefing(
     hit_rate: dict = None,
     fear_greed: dict = None,
     portfolio_summary: dict = None,
+    **kwargs,
 ):
     today_str = calc_date.strftime("%Y-%m-%d")
     r_emoji = _REGIME_EMOJI.get(regime.upper(), "⚪")
@@ -372,6 +373,39 @@ def notify_morning_briefing(
             f"현금 {ps.get('cash_pct', 0):.1f}%"
         )
 
+    # ★ v4.1: AI 데이터 필드 추가
+    ai_morning = kwargs.get("ai_morning") or {}
+    if ai_morning.get("ai_top"):
+        top_lines = []
+        for t in ai_morning["ai_top"][:5]:
+            reason = f" ▲ {t['shap_reason']}" if t.get("shap_reason") else ""
+            top_lines.append(f"**{t['ticker']}** {t.get('grade','?')} `AI {t['ai_score']:.1f}`{reason}")
+        my_fields.append({"name": "🤖 AI Top Pick", "value": "\n".join(top_lines), "inline": False})
+
+    if ai_morning.get("ai_bottom"):
+        bot_lines = []
+        for b in ai_morning["ai_bottom"][:3]:
+            reason = f" ▼ {b['shap_reason']}" if b.get("shap_reason") else ""
+            bot_lines.append(f"⚠️ **{b['ticker']}** {b.get('grade','?')} `AI {b['ai_score']:.1f}`{reason}")
+        my_fields.append({"name": "📉 AI 경고종목", "value": "\n".join(bot_lines), "inline": False})
+
+    if ai_morning.get("feature_top3"):
+        ft_text = " | ".join([f"{f['name']} `{f['pct']}%`" for f in ai_morning["feature_top3"]])
+        my_fields.append({"name": "🧠 핵심 팩터", "value": ft_text, "inline": False})
+
+    ai_risk = kwargs.get("ai_risk") or {}
+    if ai_risk.get("ic_danger"):
+        ic_lines = []
+        for d in ai_risk.get("ic_details", []):
+            emoji = "🔴" if d["status"] == "DANGER" else "✅"
+            ic_lines.append(f"{emoji} {d['layer']}: `{d['ic']:+.4f}`")
+        if ic_lines:
+            my_fields.append({"name": "📡 Factor IC 경고", "value": "\n".join(ic_lines), "inline": False})
+
+    if ai_risk.get("decay_dead"):
+        decay_lines = [f"💀 {d['grade']}등급 ({d['period']}): hit {d['hit']:.0f}% IC {d['ic']:+.4f}" for d in ai_risk["decay_dead"][:3]]
+        my_fields.append({"name": "🔴 Alpha Decay", "value": "\n".join(decay_lines), "inline": False})
+
     my_embeds = [{
         "title": f"☀️ 모닝 브리핑 — {today_str}",
         "description": (
@@ -385,12 +419,24 @@ def notify_morning_briefing(
     }]
 
     # ── Public (PUB_MORNING) ──
+    # ★ PUB AI Top 3 라인 구성
+    pub_ai_line = ""
+    if ai_morning.get("ai_top"):
+        pub_top = [f"**{t['ticker']}**({t.get('grade','?')})" for t in ai_morning["ai_top"][:3]]
+        pub_ai_line = f"\n\n🤖 AI Top: {' | '.join(pub_top)}"
+
+    pub_fg_line = ""
+    if fear_greed:
+        pub_fg_line = f"\nFear & Greed: **{fear_greed.get('value', '')}** ({fear_greed.get('label', '')})"
+
     pub_embeds = [{
         "title": f"☀️ 모닝 브리핑 — {today_str}",
         "description": (
             f"시장 국면: {r_emoji} **{regime.upper()}**\n"
-            f"SPY `${spy:,.2f}` | VIX `{vix:.1f}` | 선물 `{futures:+.2f}%`\n\n"
+            f"SPY `${spy:,.2f}` | VIX `{vix:.1f}` | 선물 `{futures:+.2f}%`"
+            f"{pub_fg_line}\n\n"
             f"{'  |  '.join(sig_lines)}"
+            f"{pub_ai_line}"
         ),
         "color": r_color,
         "footer": {"text": f"{FOOTER_BASE} | 모닝 브리핑"},
@@ -484,8 +530,12 @@ def _send_buy_premium(today_str: str, regime: str, buy_signals: list):
         l2 = s.get("l2_score", s.get("nlp_score", 0))
         l3 = s.get("l3_score", s.get("technical_score", 0))
 
-        # Because 자동 생성
+        # Because 자동 생성 (★ v4.1: SHAP 기반 강화)
         because_lines = []
+        ai_data = s.get("ai_data") or {}
+        if ai_data.get("shap_positive"):
+            for sp in ai_data["shap_positive"][:2]:
+                because_lines.append(f"▸ AI: {sp['feature']} (+{sp['shap']})")
         if l1 >= 70: because_lines.append("▸ 퀀트 펀더멘탈 우수 (수익성/성장성/밸류)")
         if l2 >= 70: because_lines.append("▸ NLP 감성 긍정적 (뉴스/애널리스트)")
         if l3 >= 70: because_lines.append("▸ 기술적 모멘텀 양호 (추세/패턴)")
@@ -493,9 +543,15 @@ def _send_buy_premium(today_str: str, regime: str, buy_signals: list):
             layers = {"Quant(L1)": l1, "NLP(L2)": l2, "Tech(L3)": l3}
             best = max(layers, key=layers.get)
             because_lines.append(f"▸ {best} 중심 시그널")
+        if ai_data.get("shap_negative"):
+            for sn in ai_data["shap_negative"][:1]:
+                because_lines.append(f"⚠️ 리스크: {sn['feature']} ({sn['shap']})")
+
+        ai_score_val = ai_data.get("ai_score")
+        ai_badge = f" | AI `{ai_score_val:.1f}`" if ai_score_val else ""
 
         fields = [
-            {"name": "등급", "value": f"**{grade}**", "inline": True},
+            {"name": "등급", "value": f"**{grade}**{ai_badge}", "inline": True},
             {"name": "종합점수", "value": _score_bar(score), "inline": True},
             {"name": "Conviction", "value": conviction, "inline": True},
             {"name": "레이어 분해", "value": _layer_breakdown(l1, l2, l3), "inline": False},
@@ -855,6 +911,21 @@ def notify_risk_warning(
             d_lines.append(f"신규 매수 한도: {defense['buy_limit_pct']}%")
         my_fields.append({"name": "🛡️ 자동 방어", "value": "\n".join(d_lines), "inline": False})
 
+    # ★ v4.1: AI IC + Alpha Decay 필드
+    _ai_risk = ai_risk or {}
+    if _ai_risk.get("ic_details"):
+        ic_lines = []
+        for d in _ai_risk["ic_details"]:
+            ic_emoji = "🔴 DANGER" if d["status"] == "DANGER" else "✅"
+            ic_lines.append(f"{d['layer']}: `{d['ic']:+.4f}` {ic_emoji}")
+        my_fields.append({"name": "📡 Factor IC (5일)", "value": "\n".join(ic_lines), "inline": False})
+
+    if _ai_risk.get("decay_dead"):
+        decay_lines = []
+        for d in _ai_risk["decay_dead"][:5]:
+            decay_lines.append(f"💀 {d['grade']}등급 {d['period']}: avg {d['avg_return']:+.2f}% hit {d['hit']:.0f}% IC {d['ic']:+.4f}")
+        my_fields.append({"name": "🔴 Alpha Decay (DEAD)", "value": "\n".join(decay_lines), "inline": False})
+
     _send_discord([{
         "title": f"⚠️ 리스크 대시보드 — {today_str}",
         "color": level_color,
@@ -1086,6 +1157,7 @@ def notify_batch_complete(
     duration_sec: float = 0,
     results: dict = None,
     job_name: str = "Daily Batch",
+    ai_summary: dict = None,
 ):
     today_str = calc_date.strftime("%Y-%m-%d")
     res = results or {}
@@ -1120,6 +1192,17 @@ def notify_batch_complete(
         errors = res.get("errors", [])
         if errors:
             my_fields.append({"name": "❌ 실패 항목", "value": "\n".join(errors[:5]), "inline": False})
+
+    # ★ v4.1: AI 모델 성능 필드
+    ais = ai_summary or {}
+    if ais.get("auc"):
+        auc_emoji = "✅" if ais["auc"] >= 0.7 else "🟡"
+        ai_text = f"{auc_emoji} AUC: **{ais['auc']:.4f}** | Weight: **{ais.get('ai_weight', 0)*100:.0f}%** | 추론: {ais.get('predict_count', 0)}종목"
+        my_fields.append({"name": "🤖 AI Model", "value": ai_text, "inline": False})
+
+    if ais.get("feature_top3"):
+        ft_lines = [f"{i+1}. {f['name']} `{f['pct']}%`" for i, f in enumerate(ais["feature_top3"])]
+        my_fields.append({"name": "📊 Feature Top 3", "value": "\n".join(ft_lines), "inline": False})
 
     _send_discord([{
         "title": f"{emoji} 배치 완료 — {today_str}",
