@@ -520,7 +520,7 @@ function TechnicalTab({ data }) {
           </div>
         ) : (
           <div style={{ padding:24, textAlign:'center' }}>
-            <div style={{ fontSize:22, marginBottom:6 }}>📊</div>
+            <div style={{ fontSize:22, marginBottom:6 }}>🚫</div>
             <div style={{ fontSize:11, color:T.textMuted }}>감지된 차트 패턴 없음</div>
             <div style={{ fontSize:9, color:T.borderHi, marginTop:4 }}>최근 3일간 Double Bottom, Bollinger Squeeze, RSI Divergence, Volume Climax, S/R 접근 분석 완료</div>
           </div>
