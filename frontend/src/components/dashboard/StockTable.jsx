@@ -1,14 +1,15 @@
 /**
- * StockTable.jsx — v5.1
+ * StockTable.jsx — v5.0
  *
- * v5.1 변경:
- *   ✅ 정렬 수정: grade/signal 모두 커스텀 order로 정렬 (한글 시그널도 매핑)
- *   ✅ 필터 단순화: Grade 필터 1개만 (전체 등급 대상)
- *   ✅ Signal 색상 = Grade 동일 색상 체계 (gradeColor 사용)
- *   ✅ 티커 호버 = yolk(#F3BE26) 색상
- *   ✅ 폰트 = FONT.sans 전체 통일
- *   ✅ 헤더 3세트 시각 분리 유지 (QUANT / AI / FINAL)
- *   ✅ 디폴트 정렬: ai_signal desc, 3번째 클릭 정렬 해제
+ * v5.0 변경:
+ *   ✅ 헤더 3세트 시각 분리 (Quant / AI / Final) + 그룹 라벨
+ *   ✅ Grade/Signal 정렬 정상화 (커스텀 order 매핑)
+ *   ✅ 정렬 디폴트: ai_signal desc, 3번째 클릭 시 정렬 해제
+ *   ✅ AI/Ensemble 데이터 미표시 대응 (프론트 grade 계산)
+ *   ✅ 필터 3세트 분리 (Quant Grade/Signal, AI Grade, Final Grade/Signal)
+ *   ✅ 티커 클릭 → 새 창 (window.open)
+ *   ✅ 티커 호버 효과 복원 (크기+색상 변화)
+ *   ✅ 폰트 sans 통일, S등급 cyan 색상
  */
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { C, FONT, SECTORS, MOCK_STOCKS, gradeColor, gradeLabel, gradeTextColor, chgColor, sectorByBackendName } from "../../styles/tokens";
@@ -17,54 +18,29 @@ import api from "../../api";
 
 const GRADES    = ["ALL", "S", "A+", "A", "B+", "B", "C", "D"];
 const COUNTRIES = ["ALL", "US", "KR", "JP"];
+const SIGNALS   = ["ALL", "STRONG_BUY", "BUY", "OUTPERFORM", "HOLD", "UNDERPERFORM", "SELL", "STRONG_SELL"];
 
-// ── 정렬용 숫자 매핑 (높을수록 좋음) ──
+// 정렬용 숫자 매핑 (높을수록 좋음)
 const _GRADE_ORDER  = { "S": 7, "A+": 6, "A": 5, "B+": 4, "B": 3, "C": 2, "D": 1 };
-
-// 영문 시그널 → 정렬 순서 (7단계 + 5단계 모두 커버)
 const _SIGNAL_ORDER = {
   "STRONG_BUY": 7, "BUY": 6, "OUTPERFORM": 5, "HOLD": 4,
   "UNDERPERFORM": 3, "SELL": 2, "STRONG_SELL": 1,
 };
-
-// 한글 시그널 → 정렬 순서 (혹시 한글로 내려올 경우 대비)
-const _SIGNAL_KO_ORDER = {
-  "강력매수": 7, "매수": 6, "우수": 5, "보유": 4,
-  "부진": 3, "매도": 2, "강력매도": 1,
-};
-
-// 영문 → 한글 변환
 const _SIGNAL_KO = {
   "STRONG_BUY": "강력매수", "BUY": "매수", "OUTPERFORM": "우수",
   "HOLD": "보유", "UNDERPERFORM": "부진", "SELL": "매도", "STRONG_SELL": "강력매도",
 };
 
-// 시그널 → 등급 매핑 (signal에 grade 색상 적용하기 위함)
-const _SIGNAL_TO_GRADE = {
-  "STRONG_BUY": "S", "BUY": "A+", "OUTPERFORM": "A", "HOLD": "B+",
-  "UNDERPERFORM": "B", "SELL": "C", "STRONG_SELL": "D",
-  // 한글도 매핑
-  "강력매수": "S", "매수": "A+", "우수": "A", "보유": "B+",
-  "부진": "B", "매도": "C", "강력매도": "D",
+// signal → 색상 매핑
+const _SIGNAL_COLOR = {
+  "STRONG_BUY": C.up,
+  "BUY":        C.golden,
+  "OUTPERFORM": C.primary,
+  "HOLD":       C.neutral,
+  "UNDERPERFORM": C.textMuted,
+  "SELL":       C.down,
+  "STRONG_SELL": C.down,
 };
-
-// 시그널 정렬값 가져오기 (영문/한글 모두 대응)
-function getSignalOrder(val) {
-  if (val == null) return -1;
-  return _SIGNAL_ORDER[val] ?? _SIGNAL_KO_ORDER[val] ?? -1;
-}
-
-// 시그널 → 한글 변환 (이미 한글이면 그대로)
-function toSignalKo(sig) {
-  if (!sig) return "—";
-  return _SIGNAL_KO[sig] || sig;
-}
-
-// 시그널 → gradeColor 색상 (등급 색상 체계 동일 적용)
-function signalToColor(sig) {
-  const g = _SIGNAL_TO_GRADE[sig];
-  return g ? gradeColor(g) : C.textMuted;
-}
 
 // score → grade 변환 (backend grade_utils.py 로직 동일)
 function scoreToGrade(score) {
@@ -92,7 +68,7 @@ function scoreToSignal(score) {
   return "STRONG_SELL";
 }
 
-// sector_code → SECTORS key
+// sector_code("45") 또는 backendName("Information Technology") → SECTORS key("TECHNOLOGY")
 function toSectorKey(row) {
   if (!row) return null;
   if (row.sector_code) {
@@ -106,38 +82,38 @@ function toSectorKey(row) {
   return null;
 }
 
-// ── 컬럼 정의 (group 속성으로 3세트 구분) ──
+// ── 컬럼 정의 (group 속성 추가) ──
 const INIT_COLUMNS = [
   { key: "ticker",    label: "TICKER",    w: 74,  min: 60,  group: "info" },
   { key: "name",      label: "COMPANY",   w: 145, min: 80,  group: "info" },
   { key: "sector",    label: "SECTOR",    w: 130, min: 80,  group: "info" },
   { key: "price",     label: "PRICE",     w: 82,  min: 60,  group: "info" },
   { key: "chg",       label: "CHG%",      w: 64,  min: 50,  group: "info" },
-  { key: "l1",        label: "L1",        w: 44,  min: 36,  group: "quant", tip: "퀀트 레이팅 (Fundamental)" },
-  { key: "l2",        label: "L2",        w: 44,  min: 36,  group: "quant", tip: "텍스트·감성 신호 (NLP/AI)" },
-  { key: "l3",        label: "L3",        w: 44,  min: 36,  group: "quant", tip: "시장 신호 (Price/Order Flow)" },
-  { key: "score",     label: "SCORE",     w: 62,  min: 50,  group: "quant", tip: "L1+L2+L3 가중합 (Stat)" },
-  { key: "grade",     label: "Q.GRADE",   w: 56,  min: 44,  group: "quant", tip: "퀀트 전용 등급" },
-  { key: "signal",    label: "Q.SIG",     w: 70,  min: 56,  group: "quant", tip: "퀀트 전용 시그널" },
-  { key: "ai_score",  label: "AI",        w: 48,  min: 36,  group: "ai",    tip: "XGBoost AI 예측 점수" },
-  { key: "ensemble",  label: "ENSEMBLE",  w: 68,  min: 50,  group: "ai",    tip: "Stat×0.7 + AI×0.3" },
-  { key: "ai_grade",  label: "GRADE",     w: 56,  min: 44,  group: "final", tip: "최종 등급 (퀀트+AI)" },
-  { key: "ai_signal", label: "F.SIGNAL",  w: 76,  min: 56,  group: "final", tip: "최종 시그널 (퀀트+AI)" },
+  { key: "l1",        label: "L1",        w: 44,  min: 36,  group: "quant", tip: "퀀트 레이팅 (Fundamental)"     },
+  { key: "l2",        label: "L2",        w: 44,  min: 36,  group: "quant", tip: "텍스트·감성 신호 (NLP/AI)"     },
+  { key: "l3",        label: "L3",        w: 44,  min: 36,  group: "quant", tip: "시장 신호 (Price/Order Flow)"  },
+  { key: "score",     label: "SCORE",     w: 62,  min: 50,  group: "quant", tip: "L1+L2+L3 가중합 (Stat)"       },
+  { key: "grade",     label: "Q.GRADE",   w: 56,  min: 44,  group: "quant", tip: "퀀트 전용 등급"                 },
+  { key: "signal",    label: "Q.SIG",     w: 70,  min: 56,  group: "quant", tip: "퀀트 전용 시그널 (Stat 기반)"   },
+  { key: "ai_score",  label: "AI",        w: 48,  min: 36,  group: "ai",    tip: "XGBoost AI 예측 점수"           },
+  { key: "ensemble",  label: "ENSEMBLE",  w: 68,  min: 50,  group: "ai",    tip: "Stat×0.7 + AI×0.3"              },
+  { key: "ai_grade",  label: "GRADE",     w: 56,  min: 44,  group: "final", tip: "최종 등급 (퀀트+AI)"            },
+  { key: "ai_signal", label: "F.SIGNAL",  w: 76,  min: 56,  group: "final", tip: "최종 시그널 (퀀트+AI)"          },
 ];
 
-// 그룹 메타
+// 그룹 메타 (헤더 라벨, 배경색)
 const GROUP_META = {
-  info:  { label: "",       borderColor: "transparent" },
-  quant: { label: "QUANT",  borderColor: C.primary },
-  ai:    { label: "AI",     borderColor: C.cyan },
-  final: { label: "FINAL",  borderColor: C.pink },
+  info:  { label: "",           bg: "transparent",      borderColor: "transparent" },
+  quant: { label: "QUANT",      bg: `${C.primary}08`,   borderColor: C.primary },
+  ai:    { label: "AI",         bg: `${C.golden}06`,    borderColor: C.golden },
+  final: { label: "FINAL",      bg: `${C.yolk}06`,      borderColor: C.yolk },
 };
 
-// 3클릭 정렬: desc → asc → 해제
+// 3클릭 정렬: 1→desc, 2→asc, 3→해제
 function nextSort(prev, clickedKey) {
   if (prev.key !== clickedKey) return { key: clickedKey, dir: "desc" };
   if (prev.dir === "desc")     return { key: clickedKey, dir: "asc" };
-  return { key: null, dir: null };
+  return { key: null, dir: null };  // 3번째 클릭 → 해제
 }
 
 
@@ -150,20 +126,29 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
   const [searchName, setSearchName]   = useState("");
   const [selSector, setSelSector]     = useState("ALL");
   const [selCountry, setSelCountry]   = useState("ALL");
-  const [selGrade, setSelGrade]       = useState("ALL");
-  const [sort, setSort]               = useState({ key: "ai_signal", dir: "desc" });
+  // 퀀트 필터
+  const [selQGrade, setSelQGrade]     = useState("ALL");
+  const [selQSignal, setSelQSignal]   = useState("ALL");
+  // AI 필터
+  const [selAiGrade, setSelAiGrade]   = useState("ALL");
+  // Final 필터
+  const [selFGrade, setSelFGrade]     = useState("ALL");
+  const [selFSignal, setSelFSignal]   = useState("ALL");
+
+  const [sort, setSort]               = useState({ key: "ai_grade", dir: "desc" }); // 디폴트: F.Signal desc
   const [checked, setChecked]         = useState(new Set());
   const [deleteOpen, setDeleteOpen]   = useState(false);
   const [columns, setColumns]         = useState(INIT_COLUMNS);
 
-  // ── 데이터 로드 + ai_grade/ai_signal 보충
+  // ── 데이터 로드 + ai_grade 보충
   useEffect(() => {
     api.get("/api/stocks")
       .then(res => {
         if (Array.isArray(res.data)) {
           const enriched = res.data.map(row => ({
             ...row,
-            ai_grade:  row.ai_grade  || scoreToGrade(row.ensemble)  || row.grade  || null,
+            // ai_grade가 없으면 ensemble 점수로 계산, ensemble도 없으면 quant grade fallback
+            ai_grade:  row.ai_grade  || scoreToGrade(row.ensemble) || row.grade || null,
             ai_signal: row.ai_signal || scoreToSignal(row.ensemble) || row.signal || null,
           }));
           setStocks(enriched);
@@ -172,15 +157,18 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
       .catch(() => setStocks(MOCK_STOCKS || []));
   }, []);
 
-  // ── 사이드바 섹터 동기화
+  // ── 사이드바 섹터 → 내부 셀렉트 동기화
   useEffect(() => {
-    setSelSector(filterSector || "ALL");
+    if (filterSector) setSelSector(filterSector);
+    else setSelSector("ALL");
   }, [filterSector]);
 
   const reset = () => {
     setSearch(""); setSearchName("");
     setSelSector("ALL"); setSelCountry("ALL");
-    setSelGrade("ALL");
+    setSelQGrade("ALL"); setSelQSignal("ALL");
+    setSelAiGrade("ALL");
+    setSelFGrade("ALL"); setSelFSignal("ALL");
     onResetSector?.();
   };
 
@@ -188,15 +176,24 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
   const rows = useMemo(() => {
     let data = [...stocks];
 
+    // 텍스트 검색
     if (search)     data = data.filter(r => r.ticker?.toLowerCase().includes(search.toLowerCase()));
     if (searchName) data = data.filter(r => r.name?.toLowerCase().includes(searchName.toLowerCase()));
+
+    // 섹터/국가
     if (selSector  !== "ALL") data = data.filter(r => toSectorKey(r) === selSector);
     if (selCountry !== "ALL") data = data.filter(r => r.country === selCountry);
 
-    // Grade 필터: quant grade OR ai_grade 중 하나라도 매칭
-    if (selGrade !== "ALL") {
-      data = data.filter(r => r.grade === selGrade || r.ai_grade === selGrade);
-    }
+    // Quant 필터
+    if (selQGrade  !== "ALL") data = data.filter(r => r.grade === selQGrade);
+    if (selQSignal !== "ALL") data = data.filter(r => r.signal === selQSignal);
+
+    // AI 필터 (ensemble 기반 grade)
+    if (selAiGrade !== "ALL") data = data.filter(r => scoreToGrade(r.ensemble) === selAiGrade);
+
+    // Final 필터
+    if (selFGrade  !== "ALL") data = data.filter(r => r.ai_grade === selFGrade);
+    if (selFSignal !== "ALL") data = data.filter(r => r.ai_signal === selFSignal);
 
     // 정렬
     if (sort.key && sort.dir) {
@@ -209,15 +206,15 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
         if (av == null) return 1;
         if (bv == null) return -1;
 
-        // 등급 정렬
+        // 등급 정렬: 숫자 매핑
         if (sort.key === "grade" || sort.key === "ai_grade") {
           av = _GRADE_ORDER[av] ?? -1;
           bv = _GRADE_ORDER[bv] ?? -1;
         }
-        // 시그널 정렬 (영문/한글 모두 대응)
+        // 시그널 정렬: 숫자 매핑
         else if (sort.key === "signal" || sort.key === "ai_signal") {
-          av = getSignalOrder(av);
-          bv = getSignalOrder(bv);
+          av = _SIGNAL_ORDER[av] ?? -1;
+          bv = _SIGNAL_ORDER[bv] ?? -1;
         }
         // 문자열
         else if (typeof av === "string") {
@@ -231,7 +228,7 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
       });
     }
     return data;
-  }, [stocks, search, searchName, selSector, selCountry, selGrade, sort]);
+  }, [stocks, search, searchName, selSector, selCountry, selQGrade, selQSignal, selAiGrade, selFGrade, selFSignal, sort]);
 
   // ── 체크박스
   const allIds     = rows.map(r => r.ticker);
@@ -241,8 +238,11 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
     setChecked(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   };
 
-  const handleSort = (key) => setSort(prev => nextSort(prev, key));
+  const handleSort = (key) => {
+    setSort(prev => nextSort(prev, key));
+  };
 
+  // ── 컬럼 리사이즈
   const handleResize = useCallback((idx, delta) => {
     setColumns(prev => {
       const next = [...prev];
@@ -251,41 +251,80 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
     });
   }, []);
 
-  // ── 티커 클릭 → 새 창
+  // ── 티커 클릭 → 항상 새 창
   const handleTicker = (ticker) => {
     window.open(`/stock/${ticker}/summary`, "_blank", "noopener");
   };
 
+  // ── 섹터 드롭다운
   const handleSectorChange = (val) => {
     setSelSector(val);
     if (val === "ALL") onResetSector?.();
   };
 
-  // 그룹별 컬럼 너비 합산
-  const groupWidth = (groupKey) => columns.filter(c => c.group === groupKey).reduce((s, c) => s + c.w, 0);
+  // ── 그룹별 컬럼 너비 합산 (구분선용)
+  const groupCols = (groupKey) => columns.filter(c => c.group === groupKey);
+
+  // 필터 드롭다운 공통 스타일
+  const filterGroupStyle = (borderColor) => ({
+    display: "flex", gap: 6, alignItems: "center",
+    padding: "4px 8px",
+    borderLeft: `2px solid ${borderColor}`,
+    marginLeft: 4,
+  });
+
+  const filterLabelStyle = (color) => ({
+    fontSize: 9, fontWeight: 700, color: color,
+    letterSpacing: 0.8, fontFamily: FONT.sans,
+    minWidth: 36,
+  });
 
   return (
     <div style={{ fontFamily: FONT.sans, color: C.textPri }}>
 
       {/* ── 필터 바 ── */}
       <div style={{
-        display: "flex", gap: 8, alignItems: "center", padding: "10px 16px",
+        display: "flex", gap: 6, alignItems: "center", padding: "10px 16px",
         background: C.bgDeeper, borderRadius: 10, marginBottom: 8, flexWrap: "wrap",
       }}>
+        {/* 기본 필터 */}
         <FInput value={search}     onChange={setSearch}     placeholder="Ticker" width={100} />
         <FInput value={searchName} onChange={setSearchName} placeholder="Company Name" width={140} />
         <FSelect value={selCountry} onChange={setSelCountry}
           options={COUNTRIES.map(c => ({ value: c, label: c === "ALL" ? "All Countries" : c }))} />
         <FSelect value={selSector} onChange={handleSectorChange}
           options={[{ value: "ALL", label: "All Sectors" }, ...SECTORS.map(s => ({ value: s.key, label: s.en }))]} />
-        <FSelect value={selGrade} onChange={setSelGrade}
-          options={GRADES.map(g => ({ value: g, label: g === "ALL" ? "All Grades" : g }))} />
+
+        {/* ── Quant 필터 그룹 ── */}
+        <div style={filterGroupStyle(C.primary)}>
+          <span style={filterLabelStyle(C.primary)}>QUANT</span>
+          <FSelect value={selQGrade} onChange={setSelQGrade}
+            options={GRADES.map(g => ({ value: g, label: g === "ALL" ? "Q.Grade" : g }))} />
+          <FSelect value={selQSignal} onChange={setSelQSignal}
+            options={SIGNALS.map(s => ({ value: s, label: s === "ALL" ? "Q.Signal" : (_SIGNAL_KO[s] || s) }))} />
+        </div>
+
+        {/* ── AI 필터 그룹 ── */}
+        <div style={filterGroupStyle(C.golden)}>
+          <span style={filterLabelStyle(C.golden)}>AI</span>
+          <FSelect value={selAiGrade} onChange={setSelAiGrade}
+            options={GRADES.map(g => ({ value: g, label: g === "ALL" ? "AI Grade" : g }))} />
+        </div>
+
+        {/* ── Final 필터 그룹 ── */}
+        <div style={filterGroupStyle(C.yolk)}>
+          <span style={filterLabelStyle(C.yolk)}>FINAL</span>
+          <FSelect value={selFGrade} onChange={setSelFGrade}
+            options={GRADES.map(g => ({ value: g, label: g === "ALL" ? "F.Grade" : g }))} />
+          <FSelect value={selFSignal} onChange={setSelFSignal}
+            options={SIGNALS.map(s => ({ value: s, label: s === "ALL" ? "F.Signal" : (_SIGNAL_KO[s] || s) }))} />
+        </div>
 
         <button onClick={reset} style={{
           fontFamily: FONT.sans, fontSize: 11, fontWeight: 600,
-          color: C.pink, background: "none",
-          border: `1px solid ${C.pink}44`, borderRadius: 4,
-          padding: "4px 14px", cursor: "pointer",
+          color: C.yolk, background: "none",
+          border: `1px solid ${C.yolk}44`, borderRadius: 4,
+          padding: "4px 14px", cursor: "pointer", marginLeft: 4,
         }}>Reset</button>
       </div>
 
@@ -294,21 +333,36 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
 
         {/* ── 그룹 라벨 행 (QUANT / AI / FINAL) ── */}
         <div style={{
-          display: "flex", alignItems: "flex-end", padding: "0 16px", height: 22,
+          display: "flex", alignItems: "center", padding: "0 16px", height: 22,
           background: C.bgDeeper,
         }}>
+          {/* 체크박스 자리 */}
           <div style={{ width: 28, flexShrink: 0 }} />
-          <div style={{ width: groupWidth("info"), flexShrink: 0 }} />
-          {["quant", "ai", "final"].map(gk => (
-            <div key={gk} style={{
-              width: groupWidth(gk), flexShrink: 0,
-              textAlign: "center", fontSize: 9, fontWeight: 800, letterSpacing: 1.2,
-              color: GROUP_META[gk].borderColor,
-              borderBottom: `2px solid ${GROUP_META[gk].borderColor}`,
-              fontFamily: FONT.sans, lineHeight: "20px",
-              marginLeft: 2,
-            }}>{GROUP_META[gk].label}</div>
-          ))}
+          {/* info 그룹 — 빈 라벨 */}
+          <div style={{ width: groupCols("info").reduce((s, c) => s + c.w, 0), flexShrink: 0 }} />
+          {/* Quant 그룹 라벨 */}
+          <div style={{
+            width: groupCols("quant").reduce((s, c) => s + c.w, 0), flexShrink: 0,
+            textAlign: "center", fontSize: 9, fontWeight: 800, letterSpacing: 1.2,
+            color: C.primary, borderBottom: `2px solid ${C.primary}`,
+            fontFamily: FONT.sans, lineHeight: "20px",
+          }}>QUANT</div>
+          {/* AI 그룹 라벨 */}
+          <div style={{
+            width: groupCols("ai").reduce((s, c) => s + c.w, 0), flexShrink: 0,
+            textAlign: "center", fontSize: 9, fontWeight: 800, letterSpacing: 1.2,
+            color: C.golden, borderBottom: `2px solid ${C.golden}`,
+            fontFamily: FONT.sans, lineHeight: "20px",
+            marginLeft: 2,
+          }}>AI</div>
+          {/* Final 그룹 라벨 */}
+          <div style={{
+            width: groupCols("final").reduce((s, c) => s + c.w, 0), flexShrink: 0,
+            textAlign: "center", fontSize: 9, fontWeight: 800, letterSpacing: 1.2,
+            color: C.yolk, borderBottom: `2px solid ${C.yolk}`,
+            fontFamily: FONT.sans, lineHeight: "20px",
+            marginLeft: 2,
+          }}>FINAL</div>
         </div>
 
         {/* ── 컬럼 헤더 ── */}
@@ -323,6 +377,7 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
               style={{ accentColor: C.primary, cursor: "pointer" }} />
           </div>
           {columns.map((col, idx) => {
+            // 그룹 시작점에 구분선 삽입
             const prevGroup = idx > 0 ? columns[idx - 1].group : null;
             const showSep = col.group !== "info" && col.group !== prevGroup;
             return (
@@ -357,7 +412,7 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
 
 
 // ═══════════════════════════════════════════════════════
-//  Row
+//  Row — 행 렌더링 + 티커 호버 효과
 // ═══════════════════════════════════════════════════════
 function Row({ row, odd, checked, onCheck, onClick, columns }) {
   const [tickerHov, setTickerHov] = useState(false);
@@ -368,10 +423,12 @@ function Row({ row, odd, checked, onCheck, onClick, columns }) {
   const fmtChg   = (v) => v != null ? `${v > 0 ? "▲" : v < 0 ? "▼" : ""}${Math.abs(v).toFixed(2)}%` : "—";
   const fmtScore = (v) => v != null ? Number(v).toFixed(1) : "—";
 
+  const getSigColor = (sig) => _SIGNAL_COLOR[sig] || C.textMuted;
+
   const renderCell = (col) => {
     const w = col.w;
-    const colIdx = columns.indexOf(col);
-    const prevGroup = colIdx > 0 ? columns[colIdx - 1].group : null;
+    const prevIdx = columns.indexOf(col);
+    const prevGroup = prevIdx > 0 ? columns[prevIdx - 1].group : null;
     const showSep = col.group !== "info" && col.group !== prevGroup;
 
     const base = {
@@ -393,46 +450,72 @@ function Row({ row, odd, checked, onCheck, onClick, columns }) {
               fontSize: tickerHov ? 15 : 13,
               fontWeight: 700,
               color: tickerHov ? C.yolk : C.primary,
-              fontFamily: FONT.sans,
+              fontFamily: FONT.mono,
               transition: "all 0.15s ease",
+              textShadow: tickerHov ? `0 0 6px ${C.yolk}40` : "none",
             }}>{row.ticker}</span>
           </div>
         );
       case "name":
-        return <div key={col.key} style={base}><span style={{ fontSize: 12, color: C.textGray }}>{row.name || "—"}</span></div>;
+        return (
+          <div key={col.key} style={{ ...base }}>
+            <span style={{ fontSize: 12, color: C.textGray, fontFamily: FONT.sans }}>{row.name || "—"}</span>
+          </div>
+        );
       case "sector":
-        return <div key={col.key} style={base}><span style={{ fontSize: 11, color: C.textMuted }}>{row.sector || "—"}</span></div>;
+        return (
+          <div key={col.key} style={{ ...base }}>
+            <span style={{ fontSize: 11, color: C.textMuted, fontFamily: FONT.sans }}>{row.sector || "—"}</span>
+          </div>
+        );
       case "price":
-        return <div key={col.key} style={base}><span style={{ fontSize: 12, fontWeight: 600, color: C.textPri, fontFamily: FONT.sans }}>{fmtPrice(row.price)}</span></div>;
+        return (
+          <div key={col.key} style={{ ...base }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.textPri, fontFamily: FONT.mono }}>{fmtPrice(row.price)}</span>
+          </div>
+        );
       case "chg": {
         const cc = chgColor(row.chg);
-        return <div key={col.key} style={base}><span style={{ fontSize: 11, fontWeight: 700, color: cc, fontFamily: FONT.sans }}>{fmtChg(row.chg)}</span></div>;
+        return (
+          <div key={col.key} style={{ ...base }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: cc, fontFamily: FONT.mono }}>{fmtChg(row.chg)}</span>
+          </div>
+        );
       }
       case "l1": case "l2": case "l3":
-        return <div key={col.key} style={{ ...base, textAlign: "center" }}><span style={{ fontSize: 12, fontWeight: 600, color: C.textGray, fontFamily: FONT.sans }}>{fmtScore(row[col.key])}</span></div>;
+        return (
+          <div key={col.key} style={{ ...base, textAlign: "center" }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.textGray, fontFamily: FONT.mono }}>{fmtScore(row[col.key])}</span>
+          </div>
+        );
       case "score":
         return (
-          <div key={col.key} style={base}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.textGray, fontFamily: FONT.sans }}>{fmtScore(row.score)}</div>
+          <div key={col.key} style={{ ...base }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textGray, fontFamily: FONT.mono }}>{fmtScore(row.score)}</div>
             <MiniBar value={row.score ?? 0} />
           </div>
         );
       case "grade": {
         const g = row.grade ?? "—";
-        return <div key={col.key} style={{ ...base, textAlign: "center" }}><span style={{ fontSize: 14, fontWeight: 800, color: gradeColor(g) }}>{g}</span></div>;
+        const gc = gradeColor(g);
+        return (
+          <div key={col.key} style={{ ...base, textAlign: "center" }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: gc, fontFamily: FONT.sans }}>{g}</span>
+          </div>
+        );
       }
       case "signal": {
         const sig = row.signal;
-        const ko = toSignalKo(sig);
-        const sc = signalToColor(sig);
+        const ko = _SIGNAL_KO[sig] || sig || "—";
+        const sc = getSigColor(sig);
         return (
-          <div key={col.key} style={base}>
+          <div key={col.key} style={{ ...base }}>
             <span style={{
               fontSize: 9, fontWeight: 700, letterSpacing: 0.2,
               color: sc, background: `${sc}10`,
               border: `1px solid ${sc}25`, borderRadius: 3,
               padding: "2px 5px", display: "inline-block", whiteSpace: "nowrap",
-              opacity: 0.85,
+              opacity: 0.8, fontFamily: FONT.sans,
             }}>{ko}</span>
           </div>
         );
@@ -440,44 +523,50 @@ function Row({ row, odd, checked, onCheck, onClick, columns }) {
       case "ai_score":
         return (
           <div key={col.key} style={{ ...base, textAlign: "center" }}>
-            {row.ai_score != null
-              ? <span style={{ fontSize: 12, fontWeight: 700, color: C.cyan, fontFamily: FONT.sans }}>{Number(row.ai_score).toFixed(1)}</span>
-              : <span style={{ fontSize: 10, color: C.border }}>—</span>}
+            {row.ai_score != null ? (
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textGray, fontFamily: FONT.mono }}>{Number(row.ai_score).toFixed(1)}</span>
+            ) : <span style={{ fontSize: 10, color: C.border }}>—</span>}
           </div>
         );
       case "ensemble":
         return (
-          <div key={col.key} style={base}>
+          <div key={col.key} style={{ ...base }}>
             {row.ensemble != null ? (
               <>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.textPri, fontFamily: FONT.sans }}>{Number(row.ensemble).toFixed(1)}</div>
-                <MiniBar value={row.ensemble ?? 0} color={C.cyan} />
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.textGray, fontFamily: FONT.mono }}>{Number(row.ensemble).toFixed(1)}</div>
+                <MiniBar value={row.ensemble ?? 0} />
               </>
             ) : <span style={{ fontSize: 10, color: C.border }}>—</span>}
           </div>
         );
       case "ai_grade": {
         const g = row.ai_grade ?? "—";
-        return <div key={col.key} style={{ ...base, textAlign: "center" }}><span style={{ fontSize: 14, fontWeight: 800, color: gradeColor(g) }}>{g}</span></div>;
+        const agc = gradeColor(g);
+        return (
+          <div key={col.key} style={{ ...base, textAlign: "center" }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: agc, fontFamily: FONT.sans }}>{g}</span>
+          </div>
+        );
       }
       case "ai_signal": {
         const finalSig = row.ai_signal || row.signal;
-        const ko = toSignalKo(finalSig);
-        const finalColor = signalToColor(finalSig);
+        const ko = _SIGNAL_KO[finalSig] || finalSig || "—";
+        const finalColor = getSigColor(finalSig);
         const hasAi = row.ai_signal != null;
         return (
-          <div key={col.key} style={base}>
+          <div key={col.key} style={{ ...base }}>
             <span style={{
               fontSize: 9, fontWeight: 700, letterSpacing: 0.2,
               color: finalColor, background: `${finalColor}12`,
               border: `1px solid ${finalColor}35`, borderRadius: 3,
               padding: "2px 5px", display: "inline-block", whiteSpace: "nowrap",
-            }}>{hasAi ? "🤖 " : ""}{ko}</span>
+              fontFamily: FONT.sans,
+            }}>{ko}</span>
           </div>
         );
       }
       default:
-        return <div key={col.key} style={base}>—</div>;
+        return <div key={col.key} style={{ ...base }}>—</div>;
     }
   };
 
@@ -488,6 +577,7 @@ function Row({ row, odd, checked, onCheck, onClick, columns }) {
       background: checked ? `${C.primary}08` : odd ? C.bgDeeper : "transparent",
       borderBottom: `1px solid ${C.border}22`,
       transition: "background 0.15s",
+      fontFamily: FONT.sans,
     }}
       onMouseEnter={e => { if (!checked) e.currentTarget.style.background = `${C.primary}06`; }}
       onMouseLeave={e => { if (!checked) e.currentTarget.style.background = odd ? C.bgDeeper : "transparent"; }}
@@ -504,7 +594,7 @@ function Row({ row, odd, checked, onCheck, onClick, columns }) {
 
 
 // ═══════════════════════════════════════════════════════
-//  ColHead
+//  ColHead — 정렬 + 리사이즈 + 그룹 구분선
 // ═══════════════════════════════════════════════════════
 function ColHead({ col, sort, onSort, onResize, showSep, groupColor }) {
   const [hov, setHov] = useState(false);
@@ -531,8 +621,7 @@ function ColHead({ col, sort, onSort, onResize, showSep, groupColor }) {
         onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
         title={col.tip || ""}
         style={{
-          fontSize: 10, fontWeight: 700,
-          color: isActive ? (groupColor !== "transparent" ? groupColor : C.primary) : C.textMuted,
+          fontSize: 10, fontWeight: 700, color: isActive ? groupColor !== "transparent" ? groupColor : C.primary : C.textMuted,
           cursor: "pointer", userSelect: "none", padding: "0 4px",
           letterSpacing: 0.5, fontFamily: FONT.sans,
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",

@@ -1,13 +1,15 @@
 """
-stock_service.py — 종목 서비스 v4.2
+stock_service.py — 종목 서비스 v5.0
 ====================================
-v4.2 Fixes:
-  - signal 컬럼을 investment_opinion 대신 직접 반환 (영문 키: STRONG_BUY 등)
-  - get_sector_list: top_ticker subquery 추가
-  - AI 데이터(ai_scores_daily) 안전 처리
+v5.0 Fixes:
+  - AI 테이블: xgboost_predictions → ai_scores_daily 수정
+  - ensemble 등급: 절대값 → 횡단면 백분위(Cross-Sectional Percentile) 기반
+  - ai_grade, ai_signal 필드 추가
+  - except pass → 에러 로깅
 """
 from typing import Optional
 from db_pool import get_cursor
+import traceback
 
 
 SECTOR_KO_MAP = {
@@ -16,7 +18,124 @@ SECTOR_KO_MAP = {
     "50": "커뮤니케이션", "55": "유틸리티", "60": "부동산",
 }
 
-# ensemble 점수 → 시그널 매핑
+
+# ── 횡단면 백분위 기반 등급/시그널 (batch_final_score와 동일 방법론) ──
+
+# Percentile → Grade (adaptive_scoring.py의 GRADE_PERCENTILE_CUTS와 동일)
+_GRADE_PCT_CUTS = [
+    (97, "S"),    # 상위  3%
+    (92, "A+"),   # 상위  8%
+    (82, "A"),    # 상위 18%
+    (65, "B+"),   # 상위 35%
+    (40, "B"),    # 상위 60%
+    (15, "C"),    # 상위 85%
+    (0,  "D"),    # 하위 15%
+]
+
+# 절대 하한선 (adaptive_scoring.py의 ABSOLUTE_FLOOR_CAPS와 동일)
+_ABSOLUTE_FLOOR = [
+    (25, "D"), (30, "C"), (35, "B"), (40, "B+"),
+]
+
+_GRADE_ORDER = {"S": 7, "A+": 6, "A": 5, "B+": 4, "B": 3, "C": 2, "D": 1}
+
+# Grade → Signal (adaptive_scoring.py의 GRADE_TO_SIGNAL과 동일)
+_GRADE_TO_SIGNAL = {
+    "S": "STRONG_BUY", "A+": "STRONG_BUY",
+    "A": "BUY", "B+": "BUY",
+    "B": "HOLD",
+    "C": "SELL",
+    "D": "STRONG_SELL",
+}
+
+
+def _percentile_to_grade(pct):
+    """백분위 → 등급"""
+    if pct is None:
+        return None
+    for cutoff, grade in _GRADE_PCT_CUTS:
+        if pct >= cutoff:
+            return grade
+    return "D"
+
+
+def _apply_floor(grade, raw_score):
+    """절대 하한선: 원점수 너무 낮으면 등급 상한 제한"""
+    if grade is None or raw_score is None:
+        return grade
+    for threshold, cap_grade in _ABSOLUTE_FLOOR:
+        if raw_score < threshold:
+            if _GRADE_ORDER.get(grade, 0) > _GRADE_ORDER.get(cap_grade, 0):
+                return cap_grade
+            return grade
+    return grade
+
+
+def _compute_cross_sectional_grades(ai_map):
+    """
+    전 종목 ensemble 점수에 횡단면 백분위 기반 등급/시그널 부여.
+    batch_final_score의 adaptive_scoring과 동일한 방법론.
+    
+    1. MAD Z-Score (Robust)
+    2. Normal CDF → Percentile
+    3. Percentile → Grade
+    4. Absolute Floor 적용
+    5. Grade → Signal
+    """
+    import numpy as np
+    from scipy import stats as sp_stats
+
+    tickers = []
+    scores = []
+    for ticker, data in ai_map.items():
+        if data.get("ensemble") is not None:
+            tickers.append(ticker)
+            scores.append(data["ensemble"])
+
+    if len(tickers) < 5:
+        # 데이터 너무 적으면 절대값 기반 fallback
+        for ticker, data in ai_map.items():
+            ens = data.get("ensemble")
+            data["ai_grade"] = _percentile_to_grade(50) if ens is not None else None
+            data["ai_signal"] = _GRADE_TO_SIGNAL.get(data.get("ai_grade"), "HOLD")
+        return
+
+    arr = np.array(scores, dtype=float)
+
+    # MAD Z-Score (Barra USE4)
+    median = np.median(arr)
+    mad = np.median(np.abs(arr - median))
+    MAD_SCALE = 1.4826
+
+    if mad < 1e-8:
+        std = np.std(arr)
+        if std < 1e-8:
+            # 전부 동점 → rank-based
+            from scipy.stats import rankdata
+            ranks = rankdata(arr, method='average')
+            pcts = (ranks - 1) / max(len(ranks) - 1, 1) * 100.0
+        else:
+            z = (arr - np.mean(arr)) / std
+            z = np.clip(z, -3.0, 3.0)
+            pcts = sp_stats.norm.cdf(z) * 100.0
+    else:
+        z = (arr - median) / (MAD_SCALE * mad)
+        z = np.clip(z, -3.0, 3.0)
+        pcts = sp_stats.norm.cdf(z) * 100.0
+
+    # Percentile → Grade → Signal
+    for idx, ticker in enumerate(tickers):
+        pct = float(pcts[idx])
+        raw_score = scores[idx]
+        grade = _percentile_to_grade(pct)
+        grade = _apply_floor(grade, raw_score)
+        signal = _GRADE_TO_SIGNAL.get(grade, "HOLD")
+        ai_map[ticker]["ai_grade"] = grade
+        ai_map[ticker]["ai_signal"] = signal
+        ai_map[ticker]["ai_percentile"] = round(pct, 1)
+
+
+# (legacy) 절대값 기반 시그널 — 호환용
 _SIGNAL_THRESHOLDS = [
     (80, "STRONG_BUY"), (65, "BUY"), (50, "OUTPERFORM"),
     (40, "HOLD"), (30, "UNDERPERFORM"), (20, "SELL"),
@@ -30,21 +149,6 @@ def _score_to_signal(score):
         if score >= threshold:
             return label
     return "STRONG_SELL"
-
-
-# ensemble 점수 → 등급 매핑
-_GRADE_THRESHOLDS = [
-    (90, "S"), (80, "A+"), (70, "A"), (60, "B+"),
-    (50, "B"), (40, "C"), (0, "D"),
-]
-
-def _score_to_grade(score):
-    if score is None:
-        return None
-    for threshold, label in _GRADE_THRESHOLDS:
-        if score >= threshold:
-            return label
-    return "D"
 
 
 def get_stock_list(
@@ -115,7 +219,7 @@ def get_stock_list(
                 item[key] = float(item[key])
         result.append(item)
 
-    # ── AI 데이터 보충 (ai_scores_daily) ──
+    # ── AI 데이터 보충 (ai_scores_daily + 횡단면 백분위 등급) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
@@ -137,17 +241,22 @@ def get_stock_list(
                 ai_map[r["ticker"]] = {
                     "ai_score": ai_s,
                     "ensemble": ens,
-                    "ai_grade": _score_to_grade(ens),
-                    "ai_signal": _score_to_signal(ens),
+                    "ai_grade": None,
+                    "ai_signal": None,
                 }
+
+        # 횡단면 백분위 기반 등급 계산 (batch_final_score와 동일 방법론)
+        _compute_cross_sectional_grades(ai_map)
+
         for item in result:
             ai = ai_map.get(item.get("ticker"), {})
             item["ai_score"] = ai.get("ai_score")
             item["ensemble"] = ai.get("ensemble")
             item["ai_grade"] = ai.get("ai_grade")
             item["ai_signal"] = ai.get("ai_signal")
-    except Exception:
-        pass  # ai_scores_daily 없으면 → ai 필드 없이 진행
+    except Exception as e:
+        print(f"[stock_service] ⚠️ AI 데이터 로드 실패: {e}")
+        traceback.print_exc()
 
     # ── Conviction 보충 (daily_stock_score — 테이블 없으면 skip) ──
     try:
