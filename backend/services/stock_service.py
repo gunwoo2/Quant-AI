@@ -1,16 +1,21 @@
 """
-stock_service.py — 종목 서비스 v3.9
+stock_service.py — 종목 서비스 v4.2
 ====================================
-v3.9: get_stock_list에 conviction_score, layer_agreement, data_completeness 추가
-      (daily_stock_score 테이블 LEFT JOIN)
+v4.2 Fixes:
+  - signal 컬럼을 investment_opinion 대신 직접 반환 (영문 키: STRONG_BUY 등)
+  - get_sector_list: top_ticker subquery 추가
+  - AI 데이터(xgboost_predictions) 안전 처리
 """
 from typing import Optional
 from db_pool import get_cursor
 
 
-# ──────────────────────────────────────────────────────────
-#  섹터 코드 → 한글명 매핑 (GICS 기준)
-# ──────────────────────────────────────────────────────────
+SECTOR_KO_MAP = {
+    "10": "에너지", "15": "소재", "20": "산업재", "25": "경기소비재",
+    "30": "필수소비재", "35": "헬스케어", "40": "금융", "45": "IT",
+    "50": "커뮤니케이션", "55": "유틸리티", "60": "부동산",
+}
+
 # ensemble 점수 → 시그널 매핑
 _SIGNAL_THRESHOLDS = [
     (80, "STRONG_BUY"), (65, "BUY"), (50, "OUTPERFORM"),
@@ -27,24 +32,6 @@ def _score_to_signal(score):
     return "STRONG_SELL"
 
 
-SECTOR_KO_MAP = {
-    "10": "에너지",
-    "15": "소재",
-    "20": "산업재",
-    "25": "경기소비재",
-    "30": "필수소비재",
-    "35": "헬스케어",
-    "40": "금융",
-    "45": "IT",
-    "50": "커뮤니케이션",
-    "55": "유틸리티",
-    "60": "부동산",
-}
-
-
-# ──────────────────────────────────────────────────────────
-#  GET /api/stocks  ★ v3.9: conviction_score, layer_agreement 추가
-# ──────────────────────────────────────────────────────────
 def get_stock_list(
     sector:  Optional[str] = None,
     country: Optional[str] = None,
@@ -52,7 +39,7 @@ def get_stock_list(
 ) -> list[dict]:
     """
     메인 종목 목록 조회.
-    ★ v3.9: conviction_score, layer_agreement, data_completeness 추가
+    v4.2: signal을 investment_opinion(한국어) 대신 signal(영문키)로 직접 반환
     """
     conditions = ["1=1"]
     params: list = []
@@ -60,11 +47,9 @@ def get_stock_list(
     if sector:
         conditions.append("sec.sector_code = %s")
         params.append(sector)
-
     if country:
         conditions.append("m.market_code = %s")
         params.append(country.upper())
-
     if grade:
         conditions.append("fs.grade = %s")
         params.append(grade)
@@ -85,7 +70,7 @@ def get_stock_list(
             fs.layer3_score                     AS l3,
             fs.weighted_score                   AS score,
             fs.grade,
-            fs.investment_opinion               AS signal,
+            fs.signal,
             COALESCE(lc.like_count, 0)          AS like_count
         FROM stocks s
         JOIN markets m ON s.market_id = m.market_id
@@ -93,7 +78,7 @@ def get_stock_list(
         LEFT JOIN (
             SELECT DISTINCT ON (stock_id)
                 stock_id, layer1_score, layer2_score, layer3_score,
-                weighted_score, grade, investment_opinion
+                weighted_score, grade, signal
             FROM stock_final_scores
             ORDER BY stock_id, calc_date DESC
         ) fs ON s.stock_id = fs.stock_id
@@ -115,11 +100,13 @@ def get_stock_list(
                 item[key] = float(item[key])
         result.append(item)
 
-    # ── AI 데이터 보충 (xgboost_predictions) ──
+    # ── AI 데이터 보충 (xgboost_predictions — 테이블 없으면 skip) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT s.ticker, xp.ai_score, xp.ensemble_score
+                SELECT s.ticker,
+                       xp.ai_score,
+                       xp.ensemble_score
                 FROM (
                     SELECT DISTINCT ON (stock_id)
                         stock_id, ai_score, ensemble_score
@@ -143,13 +130,16 @@ def get_stock_list(
             item["ensemble"] = ai.get("ensemble")
             item["ai_signal"] = ai.get("ai_signal")
     except Exception:
-        pass
+        pass  # xgboost_predictions 없으면 → ai 필드 없이 진행
 
-    # ── Conviction 보충 (daily_stock_score) ──
+    # ── Conviction 보충 (daily_stock_score — 테이블 없으면 skip) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT s.ticker, dss.conviction_score, dss.layer_agreement, dss.data_completeness
+                SELECT s.ticker,
+                       dss.conviction_score,
+                       dss.layer_agreement,
+                       dss.data_completeness
                 FROM (
                     SELECT DISTINCT ON (stock_id)
                         stock_id, conviction_score, layer_agreement, data_completeness
@@ -158,29 +148,38 @@ def get_stock_list(
                 ) dss
                 JOIN stocks s ON s.stock_id = dss.stock_id
             """)
-            for r in cur.fetchall():
-                for item in result:
-                    if item.get("ticker") == r["ticker"]:
-                        item["conviction_score"] = float(r["conviction_score"]) if r["conviction_score"] else None
-                        item["layer_agreement"] = float(r["layer_agreement"]) if r["layer_agreement"] else None
-                        item["data_completeness"] = float(r["data_completeness"]) if r["data_completeness"] else None
+            conv_map = {
+                r["ticker"]: {
+                    "conviction_score": float(r["conviction_score"]) if r["conviction_score"] else None,
+                    "layer_agreement": float(r["layer_agreement"]) if r["layer_agreement"] else None,
+                    "data_completeness": float(r["data_completeness"]) if r["data_completeness"] else None,
+                }
+                for r in cur.fetchall()
+            }
+        for item in result:
+            conv = conv_map.get(item.get("ticker"), {})
+            item["conviction_score"] = conv.get("conviction_score")
+            item["layer_agreement"] = conv.get("layer_agreement")
+            item["data_completeness"] = conv.get("data_completeness")
     except Exception:
         pass
 
     return result
 
 
-# ──────────────────────────────────────────────────────────
-#  GET /api/sectors
-# ──────────────────────────────────────────────────────────
 def get_sector_list() -> list[dict]:
-    """사이드바용 섹터 목록."""
+    """
+    사이드바용 섹터 목록.
+    v4.2: top_ticker(섹터 내 최고 점수 종목 티커) 추가
+    """
     sql = """
         SELECT
-            sec.sector_code                         AS key,
-            sec.sector_name                         AS en,
-            COUNT(s.stock_id)                       AS stock_count,
-            ROUND(AVG(fs.weighted_score)::NUMERIC, 1) AS avg_score
+            sec.sector_code                             AS key,
+            sec.sector_name                             AS en,
+            COUNT(s.stock_id)                           AS stock_count,
+            ROUND(AVG(fs.weighted_score)::NUMERIC, 1)   AS avg_score,
+            top.top_grade,
+            top.top_ticker
         FROM sectors sec
         LEFT JOIN stocks s
             ON sec.sector_id = s.sector_id
@@ -191,7 +190,25 @@ def get_sector_list() -> list[dict]:
             FROM stock_final_scores
             ORDER BY stock_id, calc_date DESC
         ) fs ON s.stock_id = fs.stock_id
-        GROUP BY sec.sector_id, sec.sector_code, sec.sector_name
+        LEFT JOIN LATERAL (
+            SELECT
+                s2.ticker   AS top_ticker,
+                fs2.grade   AS top_grade
+            FROM stocks s2
+            JOIN (
+                SELECT DISTINCT ON (stock_id)
+                    stock_id, weighted_score, grade
+                FROM stock_final_scores
+                ORDER BY stock_id, calc_date DESC
+            ) fs2 ON s2.stock_id = fs2.stock_id
+            WHERE s2.sector_id = sec.sector_id
+              AND s2.is_active = TRUE
+              AND fs2.weighted_score IS NOT NULL
+            ORDER BY fs2.weighted_score DESC
+            LIMIT 1
+        ) top ON TRUE
+        GROUP BY sec.sector_id, sec.sector_code, sec.sector_name,
+                 top.top_grade, top.top_ticker
         ORDER BY sec.sector_code ASC
     """
 
@@ -206,37 +223,9 @@ def get_sector_list() -> list[dict]:
         if item.get("avg_score") is not None:
             item["avg_score"] = float(item["avg_score"])
         item["stock_count"] = item["stock_count"] or 0
+        item["top_ticker"] = item.get("top_ticker") or "—"
+        item["top_grade"] = item.get("top_grade") or "—"
         result.append(item)
-
-    # ★ v4.1: 섹터별 Top 종목 (최고 점수)
-    try:
-        with get_cursor() as cur:
-            cur.execute("""
-                SELECT DISTINCT ON (sec.sector_code)
-                    sec.sector_code AS key,
-                    s.ticker        AS top_ticker,
-                    fs.grade        AS top_grade
-                FROM sectors sec
-                JOIN stocks s ON sec.sector_id = s.sector_id AND s.is_active = TRUE
-                JOIN (
-                    SELECT DISTINCT ON (stock_id)
-                        stock_id, weighted_score, grade
-                    FROM stock_final_scores
-                    ORDER BY stock_id, calc_date DESC
-                ) fs ON s.stock_id = fs.stock_id
-                ORDER BY sec.sector_code, fs.weighted_score DESC NULLS LAST
-            """)
-            top_map = {}
-            for r in cur.fetchall():
-                top_map[r["key"]] = {"top_ticker": r["top_ticker"], "top_grade": r["top_grade"]}
-        for item in result:
-            top = top_map.get(item["key"], {})
-            item["top_ticker"] = top.get("top_ticker", "—")
-            item["top_grade"] = top.get("top_grade", "—")
-    except Exception:
-        for item in result:
-            item["top_ticker"] = "—"
-            item["top_grade"] = "—"
 
     return result
 
@@ -395,27 +384,6 @@ def get_stock_detail(ticker: str) -> dict | None:
         return None
 
     row = dict(row)
-
-    # ★ v4.1: L3 fallback
-    try:
-        l3_val = row.get("l3")
-        if l3_val is None or float(l3_val) == 0:
-            with get_cursor() as cur:
-                cur.execute("""
-                    SELECT COALESCE(
-                        layer3_total_score,
-                        layer3_technical_score,
-                        section_a_technical
-                    ) AS l3_fallback
-                    FROM technical_indicators
-                    WHERE stock_id = (SELECT stock_id FROM stocks WHERE ticker = %s LIMIT 1)
-                    ORDER BY calc_date DESC LIMIT 1
-                """, (ticker.upper(),))
-                fb = cur.fetchone()
-                if fb and fb.get("l3_fallback") is not None:
-                    row["l3"] = float(fb["l3_fallback"])
-    except Exception:
-        pass
 
     def _f(key):
         v = row.get(key)

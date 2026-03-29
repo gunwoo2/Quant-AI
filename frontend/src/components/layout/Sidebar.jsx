@@ -1,5 +1,10 @@
 /**
- * Sidebar.jsx — v2.1 (Top Ticker 표시)
+ * Sidebar.jsx — v2.2
+ *
+ * v2.2 변경:
+ *   ✅ 폰트: FONT.sans 통일 (Inter 하드코딩 제거)
+ *   ✅ top_ticker 정상 표시 (backend top_ticker 필드 활용)
+ *   ✅ sectorByCode fallback 강화
  */
 
 import { useState, useEffect } from "react";
@@ -20,13 +25,15 @@ export default function Sidebar({ activeSector, onSectorClick }) {
         if (!Array.isArray(res.data) || res.data.length === 0) return;
         const map = {};
         res.data.forEach(item => {
+          // code 기반 매칭 (sector_code: "45", "40" 등)
           const matched = sectorByCode(item.key) ??
-            SECTORS.find(s => s.en.toLowerCase() === String(item.en ?? "").toLowerCase());
+            SECTORS.find(s => s.en.toLowerCase() === String(item.en ?? "").toLowerCase()) ??
+            SECTORS.find(s => s.backendName?.toLowerCase() === String(item.en ?? "").toLowerCase());
           if (!matched) return;
           map[matched.key] = {
-            count:    item.stock_count ?? 0,
-            avgScore: item.avg_score   != null ? Number(item.avg_score).toFixed(1) : "—",
-            topGrade: item.top_grade   ?? "—",
+            count:     item.stock_count ?? 0,
+            avgScore:  item.avg_score != null ? Number(item.avg_score).toFixed(1) : "—",
+            topGrade:  item.top_grade  ?? "—",
             topTicker: item.top_ticker ?? "—",
           };
         });
@@ -40,7 +47,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
   const getStatFor = (key) => {
     if (sectorStats && sectorStats[key]) {
       const s = sectorStats[key];
-      return { count: s.count, avgScore: s.avgScore, top: s.topTicker || s.topGrade };
+      return { count: s.count, avgScore: s.avgScore, top: s.topTicker || s.topGrade || "—" };
     }
     const fb = SECTOR_STATS[key];
     if (!fb) return { count: 0, avgScore: "—", top: "—" };
@@ -58,7 +65,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
       transition: "width 0.2s ease",
       position: "relative", zIndex: 50,
       flexShrink: 0, overflow: "visible",
-      fontFamily: "'Inter', sans-serif",
+      fontFamily: FONT.sans,
     }}>
 
       <div style={{
@@ -70,7 +77,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
       }}>
         {open && (
           <span style={{
-            fontFamily: "'Inter', sans-serif",
+            fontFamily: FONT.sans,
             fontSize: 14, fontWeight: 1000,
             color: C.textGray, letterSpacing: 2,
           }}>
@@ -114,7 +121,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           <div style={{
             fontSize: 10, color: C.textMuted,
             letterSpacing: 1.5, padding: "4px 14px 8px",
-            fontFamily: "'Inter', sans-serif",
+            fontFamily: FONT.sans,
           }}>
             API STATUS
           </div>
@@ -135,7 +142,7 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           }}>
             {open && <span style={{ fontSize: 11, color: C.textMuted }}>{a.label}</span>}
             <span style={{
-              fontFamily: "'Inter', sans-serif",
+              fontFamily: FONT.sans,
               fontSize: 10, fontWeight: 700,
               color: a.ok ? C.primary : "#555555",
             }}>
@@ -170,7 +177,7 @@ function NavItem({ icon, label, open, active, arrow, onClick }) {
       {open && (
         <>
           <span style={{
-            fontFamily: "'Inter', sans-serif",
+            fontFamily: FONT.sans,
             fontSize: 13, fontWeight: 500, flex: 1,
             color: active ? C.primary : hov ? "#e8e8e8" : C.textGray,
           }}>
@@ -195,7 +202,7 @@ function SectorFlyout({ activeSector, getStatFor, onSelect }) {
       boxShadow: "6px 0 28px rgba(0,0,0,0.85)",
       zIndex: 200, overflow: "hidden",
       animation: "flyoutIn 0.15s ease",
-      fontFamily: "'Inter', sans-serif",
+      fontFamily: FONT.sans,
     }}>
       <style>{`
         @keyframes flyoutIn {
