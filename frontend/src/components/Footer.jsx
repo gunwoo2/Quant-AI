@@ -60,9 +60,9 @@ const Footer = () => {
         }}>
           <span>STATUS: <span style={{color: C.up}}>●</span> ONLINE</span>
           <span style={{color: '#222'}}>|</span>
-          <span>VERSION: 1.1.0-PRO</span>
+          <span>VERSION: 5.0.0-PRO</span>
           <span style={{color: '#222'}}>|</span>
-          <span>LAST DEPLOY: 2026-03-026</span>
+          <span>LAST DEPLOY: 2026-03-30</span>
         </div>
       </div>
     </footer>
