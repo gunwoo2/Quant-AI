@@ -31,7 +31,7 @@ export const C = {
   downDim:  "#3B82F633", // 하락 배경 (투명)
 
   // ── 등급 전용 (오렌지 채도 그라데이션)
-  gradeS:   "#FFB800",   // S  — 골드 플래시 ✦
+  gradeS:   "#00F5FF",   // S  — 사이안 (최상위 등급) ✦
   gradeAP:  "#E88D14",   // A+ — 골든 오렌지
   gradeA:   "#D85604",   // A  — PwC 오렌지
   gradeBP:  "#A0653A",   // B+ — 브론즈

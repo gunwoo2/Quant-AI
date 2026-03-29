@@ -562,6 +562,32 @@ def _send_buy_premium(today_str: str, regime: str, buy_signals: list):
             {"name": "섹터", "value": s.get("sector", "N/A"), "inline": True},
         ]
 
+        # ── AI Enrichment 필드 (Step 4에서 builder가 추가한 데이터) ──
+        if s.get("conviction_v5") is not None:
+            cv5 = s["conviction_v5"]
+            bar = "█" * int(cv5 * 10) + "░" * (10 - int(cv5 * 10))
+            fields.append({"name": "🧠 AI Conviction", "value": f"`{bar}` {cv5:.0%}", "inline": True})
+
+        if s.get("layer_agreement_label"):
+            fields.append({"name": "📐 Layer 일치", "value": s["layer_agreement_label"], "inline": True})
+
+        if s.get("signal_expiry"):
+            fields.append({"name": "⏳ 유효기간", "value": s["signal_expiry"], "inline": True})
+
+        if s.get("factor_tags"):
+            tags = s["factor_tags"]
+            if isinstance(tags, list):
+                tags_str = " ".join(f"`{t}`" for t in tags[:3])
+            else:
+                tags_str = str(tags)
+            fields.append({"name": "🏷️ Key Factors", "value": tags_str, "inline": False})
+
+        if s.get("rr_ratio"):
+            rr = s["rr_ratio"]
+            rr_emoji = "🟢" if rr >= 2 else "🟡" if rr >= 1.5 else "🔴"
+            tp = s.get("target_price", 0)
+            fields.append({"name": f"{rr_emoji} R:R", "value": f"1:{rr} (목표 ${tp:,.2f})", "inline": True})
+
         because_text = '\n'.join(because_lines)
         embeds.append({
             "title": f"■ {_tn(ticker)}",

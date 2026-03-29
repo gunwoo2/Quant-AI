@@ -469,6 +469,14 @@ def _s_notify_all(calc_date, results, start_time):
 
     print(f"\n  ── Phase 3: 알림 발송 ──")
 
+    # (0) 배치 시작 알림 → MY_SYSTEM
+    try:
+        from notifier import notify_batch_start as _nbs
+        _nbs(calc_date)
+        print(f"  ✅ 배치 시작 → MY_SYSTEM")
+    except Exception as e:
+        print(f"  ⚠️ 배치 시작 알림 실패: {e}")
+
     from notifier import (
         notify_morning_briefing,
         notify_daily_signals,
@@ -479,6 +487,10 @@ def _s_notify_all(calc_date, results, start_time):
         notify_grade_changes as notify_grades,
         notify_regime_change,
         notify_batch_complete,
+        notify_batch_start,
+        notify_daily_performance,
+        notify_earnings_alert,
+        notify_emergency,
     )
 
     # (A) 모닝 브리핑 → MY_MORNING + PUB_MORNING
@@ -604,6 +616,44 @@ def _s_notify_all(calc_date, results, start_time):
         print(f"  ✅ 배치 완료 → MY_SYSTEM + PUB_REPORT")
     except Exception as e:
         print(f"  ⚠️ 배치완료 알림 실패: {e}")
+
+    # (I) 일일 성과 리포트 → MY_PERF
+    try:
+        daily_ret = portfolio_summary.get("daily_return", 0)
+        total_val = portfolio_summary.get("total_value", 0)
+        spy_ret = portfolio_summary.get("spy_return", 0)
+        n_pos = portfolio_summary.get("num_positions", 0)
+        notify_daily_performance(
+            calc_date=calc_date,
+            daily_return=daily_ret,
+            total_value=total_val,
+            spy_return=spy_ret,
+            num_positions=n_pos,
+        )
+        print(f"  ✅ 일일 성과 → MY_PERF")
+    except Exception as e:
+        print(f"  ⚠️ 일일 성과 실패: {e}")
+
+    # (J) 어닝 임박 경고 → MY_ALERT
+    try:
+        earnings_tickers = []
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT s.ticker, th.next_earnings_date
+                FROM ticker_header th
+                JOIN stocks s ON th.stock_id = s.stock_id
+                WHERE th.next_earnings_date BETWEEN %s AND %s + INTERVAL '7 days'
+                ORDER BY th.next_earnings_date
+            """, (calc_date, calc_date))
+            earnings_tickers = [
+                {"ticker": r["ticker"], "date": str(r["next_earnings_date"])}
+                for r in cur.fetchall()
+            ]
+        if earnings_tickers:
+            notify_earnings_alert(calc_date, earnings_tickers, days_until=7)
+            print(f"  ✅ 어닝 임박 → MY_ALERT ({len(earnings_tickers)}종목)")
+    except Exception as e:
+        print(f"  ⚠️ 어닝 알림 실패: {e}")
 
     print(f"\n  ── 알림 발송 완료 ──")
 
@@ -915,6 +965,13 @@ def _run_step(name: str, fn):
         elapsed = datetime.now() - t0
         print(f"  ❌ {e} ({elapsed})")
         traceback.print_exc()
+        # 긴급 알림 발송
+        try:
+            from notifier import notify_emergency
+            from datetime import date as _date
+            notify_emergency(_date.today(), f"Step [{name}] 실패: {str(e)[:300]}")
+        except Exception:
+            pass
         return f"FAIL: {e}"
 
 

@@ -4,7 +4,7 @@ stock_service.py — 종목 서비스 v4.2
 v4.2 Fixes:
   - signal 컬럼을 investment_opinion 대신 직접 반환 (영문 키: STRONG_BUY 등)
   - get_sector_list: top_ticker subquery 추가
-  - AI 데이터(xgboost_predictions) 안전 처리
+  - AI 데이터(ai_scores_daily) 안전 처리
 """
 from typing import Optional
 from db_pool import get_cursor
@@ -30,6 +30,21 @@ def _score_to_signal(score):
         if score >= threshold:
             return label
     return "STRONG_SELL"
+
+
+# ensemble 점수 → 등급 매핑
+_GRADE_THRESHOLDS = [
+    (90, "S"), (80, "A+"), (70, "A"), (60, "B+"),
+    (50, "B"), (40, "C"), (0, "D"),
+]
+
+def _score_to_grade(score):
+    if score is None:
+        return None
+    for threshold, label in _GRADE_THRESHOLDS:
+        if score >= threshold:
+            return label
+    return "D"
 
 
 def get_stock_list(
@@ -100,7 +115,7 @@ def get_stock_list(
                 item[key] = float(item[key])
         result.append(item)
 
-    # ── AI 데이터 보충 (xgboost_predictions — 테이블 없으면 skip) ──
+    # ── AI 데이터 보충 (ai_scores_daily) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
@@ -110,7 +125,7 @@ def get_stock_list(
                 FROM (
                     SELECT DISTINCT ON (stock_id)
                         stock_id, ai_score, ensemble_score
-                    FROM xgboost_predictions
+                    FROM ai_scores_daily
                     ORDER BY stock_id, calc_date DESC
                 ) xp
                 JOIN stocks s ON s.stock_id = xp.stock_id
@@ -122,15 +137,17 @@ def get_stock_list(
                 ai_map[r["ticker"]] = {
                     "ai_score": ai_s,
                     "ensemble": ens,
+                    "ai_grade": _score_to_grade(ens),
                     "ai_signal": _score_to_signal(ens),
                 }
         for item in result:
             ai = ai_map.get(item.get("ticker"), {})
             item["ai_score"] = ai.get("ai_score")
             item["ensemble"] = ai.get("ensemble")
+            item["ai_grade"] = ai.get("ai_grade")
             item["ai_signal"] = ai.get("ai_signal")
     except Exception:
-        pass  # xgboost_predictions 없으면 → ai 필드 없이 진행
+        pass  # ai_scores_daily 없으면 → ai 필드 없이 진행
 
     # ── Conviction 보충 (daily_stock_score — 테이블 없으면 skip) ──
     try:
