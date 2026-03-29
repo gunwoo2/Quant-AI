@@ -1,12 +1,5 @@
 /**
- * Sidebar.jsx — v2 (백엔드 API 연결)
- *
- * GET /api/sectors
- *   { key(GICS code), en, ko, stock_count, avg_score, top_grade }
- *
- * - API 성공 시 실제 종목 수·평균 점수 표시
- * - API 실패 시 SECTOR_STATS fallback
- * - sectorByCode()로 GICS code → 프론트 SECTORS 키 매핑
+ * Sidebar.jsx — v2.1 (Top Ticker 표시)
  */
 
 import { useState, useEffect } from "react";
@@ -19,7 +12,6 @@ const W_CLOSE = 54;
 export default function Sidebar({ activeSector, onSectorClick }) {
   const [open,       setOpen]       = useState(true);
   const [showFlyout, setShowFlyout] = useState(false);
-  // key: frontendKey(예: "TECHNOLOGY"), value: { count, avgScore, topGrade }
   const [sectorStats, setSectorStats] = useState(null);
 
   useEffect(() => {
@@ -28,7 +20,6 @@ export default function Sidebar({ activeSector, onSectorClick }) {
         if (!Array.isArray(res.data) || res.data.length === 0) return;
         const map = {};
         res.data.forEach(item => {
-          // item.key 는 GICS 코드 ("45") 또는 영문명일 수 있음
           const matched = sectorByCode(item.key) ??
             SECTORS.find(s => s.en.toLowerCase() === String(item.en ?? "").toLowerCase());
           if (!matched) return;
@@ -36,23 +27,21 @@ export default function Sidebar({ activeSector, onSectorClick }) {
             count:    item.stock_count ?? 0,
             avgScore: item.avg_score   != null ? Number(item.avg_score).toFixed(1) : "—",
             topGrade: item.top_grade   ?? "—",
+            topTicker: item.top_ticker ?? "—",
           };
         });
         setSectorStats(map);
       })
       .catch(() => {
-        // SECTOR_STATS fallback: topTicker → topGrade 없음, 그대로 사용
         setSectorStats(null);
       });
   }, []);
 
-  // sectorStats가 없으면 SECTOR_STATS 기반 fallback 구성
   const getStatFor = (key) => {
     if (sectorStats && sectorStats[key]) {
       const s = sectorStats[key];
-      return { count: s.count, avgScore: s.avgScore, top: s.topGrade };
+      return { count: s.count, avgScore: s.avgScore, top: s.topTicker || s.topGrade };
     }
-    // Fallback
     const fb = SECTOR_STATS[key];
     if (!fb) return { count: 0, avgScore: "—", top: "—" };
     return { count: fb.count, avgScore: fb.avgScore, top: fb.topTicker };
@@ -72,7 +61,6 @@ export default function Sidebar({ activeSector, onSectorClick }) {
       fontFamily: "'Inter', sans-serif",
     }}>
 
-      {/* ── 로고 + 토글 */}
       <div style={{
         display: "flex", alignItems: "center",
         justifyContent: open ? "space-between" : "center",
@@ -98,14 +86,10 @@ export default function Sidebar({ activeSector, onSectorClick }) {
         </button>
       </div>
 
-      {/* ── 메뉴 */}
       <nav style={{ flex: 1, padding: "6px 0", overflow: "visible" }}>
-
-        {/* HOME */}
         <NavItem icon="🏠" label="HOME" open={open}
           onClick={() => window.open(window.location.origin + "/main", "_blank")} />
 
-        {/* SECTORS + flyout */}
         <div style={{ position: "relative" }}
           onMouseEnter={() => setShowFlyout(true)}
           onMouseLeave={() => setShowFlyout(false)}
@@ -121,14 +105,11 @@ export default function Sidebar({ activeSector, onSectorClick }) {
           )}
         </div>
 
-        {/* HEATMAP */}
         <NavItem icon="🔥" label="HEATMAP" open={open}
           onClick={() => window.open("https://finviz.com/map.ashx", "_blank")} />
 
-        {/* 구분선 */}
         <div style={{ height: 1, background: C.border, margin: open ? "10px 14px" : "10px 10px" }} />
 
-        {/* API STATUS */}
         {open && (
           <div style={{
             fontSize: 10, color: C.textMuted,
@@ -167,7 +148,6 @@ export default function Sidebar({ activeSector, onSectorClick }) {
   );
 }
 
-/* ── NavItem */
 function NavItem({ icon, label, open, active, arrow, onClick }) {
   const [hov, setHov] = useState(false);
   return (
@@ -203,7 +183,6 @@ function NavItem({ icon, label, open, active, arrow, onClick }) {
   );
 }
 
-/* ── SectorFlyout */
 function SectorFlyout({ activeSector, getStatFor, onSelect }) {
   return (
     <div style={{
@@ -303,7 +282,7 @@ function SectorRow({ sector, stat, active, onSelect }) {
       <div style={{ fontSize: 11, color: scoreColor, fontWeight: 700, textAlign: "right" }}>
         {stat.avgScore}
       </div>
-      <div style={{ fontSize: 11, color: C.pink, textAlign: "right" }}>
+      <div style={{ fontSize: 11, color: C.pink, fontWeight: 700, textAlign: "right" }}>
         {stat.top}
       </div>
     </button>

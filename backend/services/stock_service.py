@@ -115,7 +115,7 @@ def get_stock_list(
                 item[key] = float(item[key])
         result.append(item)
 
-    # ── AI 데이터 보충 (xgboost_predictions — 테이블 없으면 skip) ──
+    # ── AI 데이터 보충 (xgboost_predictions) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
@@ -145,7 +145,7 @@ def get_stock_list(
     except Exception:
         pass
 
-    # ── Conviction 보충 (daily_stock_score — 테이블 없으면 skip) ──
+    # ── Conviction 보충 (daily_stock_score) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
@@ -158,17 +158,12 @@ def get_stock_list(
                 ) dss
                 JOIN stocks s ON s.stock_id = dss.stock_id
             """)
-            conv_map = {
-                r["ticker"]: {
-                    "conviction_score": float(r["conviction_score"]) if r["conviction_score"] else None,
-                    "layer_agreement": float(r["layer_agreement"]) if r["layer_agreement"] else None,
-                    "data_completeness": float(r["data_completeness"]) if r["data_completeness"] else None,
-                }
-                for r in cur.fetchall()
-            }
-        for item in result:
-            conv = conv_map.get(item.get("ticker"), {})
-            item.update(conv)
+            for r in cur.fetchall():
+                for item in result:
+                    if item.get("ticker") == r["ticker"]:
+                        item["conviction_score"] = float(r["conviction_score"]) if r["conviction_score"] else None
+                        item["layer_agreement"] = float(r["layer_agreement"]) if r["layer_agreement"] else None
+                        item["data_completeness"] = float(r["data_completeness"]) if r["data_completeness"] else None
     except Exception:
         pass
 
@@ -185,8 +180,7 @@ def get_sector_list() -> list[dict]:
             sec.sector_code                         AS key,
             sec.sector_name                         AS en,
             COUNT(s.stock_id)                       AS stock_count,
-            ROUND(AVG(fs.weighted_score)::NUMERIC, 1) AS avg_score,
-            MAX(fs.grade)                           AS top_grade
+            ROUND(AVG(fs.weighted_score)::NUMERIC, 1) AS avg_score
         FROM sectors sec
         LEFT JOIN stocks s
             ON sec.sector_id = s.sector_id
@@ -213,6 +207,36 @@ def get_sector_list() -> list[dict]:
             item["avg_score"] = float(item["avg_score"])
         item["stock_count"] = item["stock_count"] or 0
         result.append(item)
+
+    # ★ v4.1: 섹터별 Top 종목 (최고 점수)
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT ON (sec.sector_code)
+                    sec.sector_code AS key,
+                    s.ticker        AS top_ticker,
+                    fs.grade        AS top_grade
+                FROM sectors sec
+                JOIN stocks s ON sec.sector_id = s.sector_id AND s.is_active = TRUE
+                JOIN (
+                    SELECT DISTINCT ON (stock_id)
+                        stock_id, weighted_score, grade
+                    FROM stock_final_scores
+                    ORDER BY stock_id, calc_date DESC
+                ) fs ON s.stock_id = fs.stock_id
+                ORDER BY sec.sector_code, fs.weighted_score DESC NULLS LAST
+            """)
+            top_map = {}
+            for r in cur.fetchall():
+                top_map[r["key"]] = {"top_ticker": r["top_ticker"], "top_grade": r["top_grade"]}
+        for item in result:
+            top = top_map.get(item["key"], {})
+            item["top_ticker"] = top.get("top_ticker", "—")
+            item["top_grade"] = top.get("top_grade", "—")
+    except Exception:
+        for item in result:
+            item["top_ticker"] = "—"
+            item["top_grade"] = "—"
 
     return result
 
@@ -372,7 +396,7 @@ def get_stock_detail(ticker: str) -> dict | None:
 
     row = dict(row)
 
-    # ★ v4.1: L3 fallback — stock_final_scores에 0이면 technical_indicators에서 직접 조회
+    # ★ v4.1: L3 fallback
     try:
         l3_val = row.get("l3")
         if l3_val is None or float(l3_val) == 0:
