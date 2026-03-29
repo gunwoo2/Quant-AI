@@ -7,6 +7,7 @@ class StockListItem(BaseModel):
     ticker:     str
     name:       str
     sector:     Optional[str]   = None
+    sector_code: Optional[str]  = None
     country:    Optional[str]   = "US"
     price:      Optional[float] = None
     chg:        Optional[float] = None
@@ -16,6 +17,10 @@ class StockListItem(BaseModel):
     score:      Optional[float] = None
     grade:      Optional[str]   = None
     signal:     Optional[str]   = None
+    ai_score:   Optional[float] = None
+    ensemble:   Optional[float] = None
+    ai_grade:   Optional[str]   = None
+    ai_signal:  Optional[str]   = None
     like_count: Optional[int]   = 0
 
     class Config:
@@ -29,6 +34,7 @@ class SectorItem(BaseModel):
     stock_count: int             = 0
     avg_score:   Optional[float] = None
     top_grade:   Optional[str]   = None
+    top_ticker:  Optional[str]   = None
 
 
 class StockHeader(BaseModel):

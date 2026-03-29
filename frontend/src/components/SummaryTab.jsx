@@ -193,11 +193,11 @@ export default function SummaryTab() {
           </h3>
           {!ratingHistory ? (
             <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: 20, fontFamily: FONT.sans }}>LOADING...</div>
-          ) : ratingHistory.length === 0 ? (
-            <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: 20 }}>이력 없음</div>
+          ) : ratingHistory.filter(r => r.type === "ai").length === 0 ? (
+            <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: 20 }}>AI 이력 없음 (XGBoost 배치 실행 필요)</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {ratingHistory.slice(0, 6).map((item, i) => {
+              {ratingHistory.filter(r => r.type === "ai").slice(0, 6).map((item, i) => {
                 const gc = gradeColor(item.grade);
                 return (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8, backgroundColor: C.bgDark, border: `1px solid ${C.cardBg}` }}>
