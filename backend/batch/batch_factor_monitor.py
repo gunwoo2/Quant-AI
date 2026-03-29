@@ -151,7 +151,7 @@ def _calc_forward_returns(calc_date: date):
                 cur.execute(f"""
                     WITH signals AS (
                         SELECT stock_id, calc_date AS signal_date, weighted_score
-                        FROM daily_stock_score
+                        FROM stock_final_scores
                         WHERE calc_date BETWEEN %s AND %s
                           AND weighted_score IS NOT NULL
                     ),
@@ -218,7 +218,7 @@ def _calc_daily_ic(calc_date: date) -> dict:
                         ds.layer2_score,
                         ds.layer3_score,
                         fr.{fwd_col} AS fwd_return
-                    FROM daily_stock_score ds
+                    FROM stock_final_scores ds
                     JOIN forward_returns fr
                         ON ds.stock_id = fr.stock_id
                         AND fr.signal_date BETWEEN %s AND %s
