@@ -238,7 +238,9 @@ def _build_features(target_date: date, with_label: bool = False) -> tuple:
                 -- Layer1 sub-scores
                 l1.moat_score, l1.value_score, l1.momentum_score, l1.stability_score,
                 -- Layer2 sub-scores
-                l2.news_sentiment_score AS news_score, l2.analyst_rating_score AS analyst_score, l2.insider_signal_score AS insider_score,
+                l2.news_sentiment_score AS news_score,
+                l2.analyst_rating_score AS analyst_score,
+                l2.insider_signal_score AS insider_score,
                 -- Layer3 sub-scores
                 ti.section_a_technical AS section_a_tech,
                 ti.section_b_flow,
@@ -258,7 +260,7 @@ def _build_features(target_date: date, with_label: bool = False) -> tuple:
                 ORDER BY calc_date DESC LIMIT 1
             ) l1 ON TRUE
             LEFT JOIN LATERAL (
-                SELECT news_sentiment_score AS news_score, analyst_rating_score AS analyst_score, insider_signal_score AS insider_score
+                SELECT news_sentiment_score, analyst_rating_score, insider_signal_score
                 FROM layer2_scores
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
