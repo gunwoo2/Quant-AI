@@ -72,7 +72,7 @@ export const C = {
 
 export const FONT = {
   mono: "'IBM Plex Mono', 'Courier New', monospace",
-  sans: "'Inter', -apple-system, sans-serif",
+  sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
 };
 
 
