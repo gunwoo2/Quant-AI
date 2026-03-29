@@ -169,14 +169,14 @@ def _calc_decay_matrix(calc_date: date) -> list:
                             JOIN LATERAL (
                                 SELECT close_price FROM stock_prices_daily
                                 WHERE stock_id = bs.stock_id
-                                  AND price_date >= bs.signal_date
-                                ORDER BY price_date ASC LIMIT 1
+                                  AND trade_date >= bs.signal_date
+                                ORDER BY trade_date ASC LIMIT 1
                             ) p0 ON TRUE
                             JOIN LATERAL (
                                 SELECT close_price FROM stock_prices_daily
                                 WHERE stock_id = bs.stock_id
-                                  AND price_date >= bs.signal_date + INTERVAL '{h} days'
-                                ORDER BY price_date ASC LIMIT 1
+                                  AND trade_date >= bs.signal_date + INTERVAL '{h} days'
+                                ORDER BY trade_date ASC LIMIT 1
                             ) p1 ON TRUE
                             WHERE p0.close_price > 0
                         )

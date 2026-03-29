@@ -151,21 +151,21 @@ def _calc_forward_returns(calc_date: date):
                 cur.execute(f"""
                     WITH signals AS (
                         SELECT stock_id, calc_date AS signal_date, weighted_score
-                        FROM stock_final_scores
+                        FROM daily_stock_score
                         WHERE calc_date BETWEEN %s AND %s
                           AND weighted_score IS NOT NULL
                     ),
                     prices_then AS (
-                        SELECT DISTINCT ON (stock_id) stock_id, close_price AS p_then, price_date
+                        SELECT DISTINCT ON (stock_id) stock_id, close_price AS p_then, trade_date
                         FROM stock_prices_daily
-                        WHERE price_date BETWEEN %s AND %s
-                        ORDER BY stock_id, price_date DESC
+                        WHERE trade_date BETWEEN %s AND %s
+                        ORDER BY stock_id, trade_date DESC
                     ),
                     prices_now AS (
                         SELECT DISTINCT ON (stock_id) stock_id, close_price AS p_now
                         FROM stock_prices_daily
-                        WHERE price_date <= %s
-                        ORDER BY stock_id, price_date DESC
+                        WHERE trade_date <= %s
+                        ORDER BY stock_id, trade_date DESC
                     )
                     INSERT INTO forward_returns (stock_id, signal_date, price_at_signal, {col})
                     SELECT s.stock_id, s.signal_date, pt.p_then,
@@ -218,7 +218,7 @@ def _calc_daily_ic(calc_date: date) -> dict:
                         ds.layer2_score,
                         ds.layer3_score,
                         fr.{fwd_col} AS fwd_return
-                    FROM stock_final_scores ds
+                    FROM daily_stock_score ds
                     JOIN forward_returns fr
                         ON ds.stock_id = fr.stock_id
                         AND fr.signal_date BETWEEN %s AND %s
