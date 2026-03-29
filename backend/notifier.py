@@ -1114,7 +1114,7 @@ def notify_batch_complete(
             s_e = "✅" if sr.get("ok") else "❌"
             s_t = sr.get("duration", "")
             step_lines.append(f"{s_e} {sn} {f'({s_t})' if s_t else ''}")
-        my_fields.append({"name": "📋 단계별 결과", "value": "\n".join(step_lines[:10]), "inline": False})
+        my_fields.append({"name": "📋 단계별 결과", "value": "\n".join(step_lines[:20]), "inline": False})
 
     if fail > 0:
         errors = res.get("errors", [])
