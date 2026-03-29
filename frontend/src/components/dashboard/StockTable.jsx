@@ -1,21 +1,20 @@
 /**
- * StockTable.jsx — v4.4
+ * StockTable.jsx — v4.2
  *
- * v4.4 변경:
- *   ✅ 사이드바 섹터 클릭 → filterSector prop → 테이블 필터 연동
- *   ✅ 섹터 필터 비교 로직 수정 (key 기반 통일)
- *   ✅ F.Signal 필터 드롭다운 추가
- *   ✅ prop 이름 정리: onTickerClick, filterSector, onResetSector
- *   ✅ (v4.3 수정 사항 포함)
+ * v4.2 변경:
+ *   ✅ 컬럼: Q.Grade, Q.Sig, AI, Ensemble, Grade, Final Signal
+ *   ✅ 정렬: Grade/Signal 전용 순서 매핑
+ *   ✅ 컬럼 리사이즈 (드래그)
+ *   ✅ 티커 클릭 → 새 탭
+ *   ✅ AI/Ensemble 데이터 표시
  */
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { C, FONT, SECTORS, MOCK_STOCKS, gradeColor, gradeLabel, gradeTextColor, chgColor, sectorByBackendName } from "../../styles/tokens";
+import { C, FONT, SECTORS, MOCK_STOCKS, gradeColor, gradeLabel, gradeTextColor, chgColor, signalColor, sectorByBackendName } from "../../styles/tokens";
 import { DeleteConfirmModal } from "./Modals";
 import api from "../../api";
 
 const GRADES    = ["ALL", "S", "A+", "A", "B+", "B", "C", "D"];
 const COUNTRIES = ["ALL", "US", "KR", "JP"];
-const SIGNALS   = ["ALL", "STRONG_BUY", "BUY", "OUTPERFORM", "HOLD", "UNDERPERFORM", "SELL", "STRONG_SELL"];
 
 // 정렬용 숫자 매핑 (높을수록 좋음)
 const _GRADE_ORDER  = { "S": 7, "A+": 6, "A": 5, "B+": 4, "B": 3, "C": 2, "D": 1 };
@@ -28,37 +27,10 @@ const _SIGNAL_KO = {
   "HOLD": "보유", "UNDERPERFORM": "부진", "SELL": "매도", "STRONG_SELL": "강력매도",
 };
 
-// signal → 색상 매핑
-const _SIGNAL_COLOR = {
-  "STRONG_BUY": C.up,
-  "BUY":        C.golden,
-  "OUTPERFORM": C.primary,
-  "HOLD":       C.neutral,
-  "UNDERPERFORM": C.textMuted,
-  "SELL":       C.down,
-  "STRONG_SELL": C.down,
-};
-
-// sector_code("45") 또는 backendName("Information Technology") → SECTORS key("TECHNOLOGY")
-function toSectorKey(row) {
-  if (!row) return null;
-  // 1) sector_code → key
-  if (row.sector_code) {
-    const found = SECTORS.find(s => s.code === String(row.sector_code));
-    if (found) return found.key;
-  }
-  // 2) sector(backendName) → key
-  if (row.sector) {
-    const found = sectorByBackendName(row.sector);
-    if (found) return found.key;
-  }
-  return null;
-}
-
 const INIT_COLUMNS = [
   { key: "ticker",    label: "TICKER",    w: 74,  min: 60  },
   { key: "name",      label: "COMPANY",   w: 145, min: 80  },
-  { key: "sector",    label: "SECTOR",    w: 130, min: 80  },
+  { key: "sector",    label: "SECTOR",    w: 82,  min: 60  },
   { key: "price",     label: "PRICE",     w: 82,  min: 60  },
   { key: "chg",       label: "CHG%",      w: 64,  min: 50  },
   { key: "l1",        label: "L1",        w: 44,  min: 36, tip: "퀀트 레이팅 (Fundamental)"     },
@@ -82,18 +54,17 @@ function nextSort(dir, clickedKey, sortKey) {
 // ═══════════════════════════════════════════════════════
 //  Main Component
 // ═══════════════════════════════════════════════════════
-export default function StockTable({ filterSector, onTickerClick, onResetSector }) {
+export default function StockTable({ onSelectTicker }) {
   const [stocks, setStocks] = useState([]);
   const [search, setSearch] = useState("");
   const [searchName, setSearchName] = useState("");
-  const [selSector, setSelSector]     = useState("ALL");
-  const [selCountry, setSelCountry]   = useState("ALL");
-  const [selGrade, setSelGrade]       = useState("ALL");
-  const [selSignal, setSelSignal]     = useState("ALL");
-  const [sort, setSort]               = useState({ key: "ai_signal", dir: "desc" });
-  const [checked, setChecked]         = useState(new Set());
-  const [deleteOpen, setDeleteOpen]   = useState(false);
-  const [columns, setColumns]         = useState(INIT_COLUMNS);
+  const [selSector, setSelSector]   = useState("ALL");
+  const [selCountry, setSelCountry] = useState("ALL");
+  const [selGrade, setSelGrade]     = useState("ALL");
+  const [sort, setSort]             = useState({ key: "score", dir: "desc" });
+  const [checked, setChecked]       = useState(new Set());
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [columns, setColumns]       = useState(INIT_COLUMNS);
 
   // ── 데이터 로드
   useEffect(() => {
@@ -102,43 +73,16 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
       .catch(() => setStocks(MOCK_STOCKS || []));
   }, []);
 
-  // ── 사이드바 섹터 → 내부 셀렉트 동기화
-  useEffect(() => {
-    if (filterSector) {
-      setSelSector(filterSector);
-    } else {
-      setSelSector("ALL");
-    }
-  }, [filterSector]);
-
-  const reset = () => {
-    setSearch("");
-    setSearchName("");
-    setSelSector("ALL");
-    setSelCountry("ALL");
-    setSelGrade("ALL");
-    setSelSignal("ALL");
-    onResetSector?.();
-  };
+  const reset = () => { setSearch(""); setSearchName(""); setSelSector("ALL"); setSelCountry("ALL"); setSelGrade("ALL"); };
 
   // ── 필터 + 정렬
   const rows = useMemo(() => {
     let data = [...stocks];
     if (search)      data = data.filter(r => r.ticker?.toLowerCase().includes(search.toLowerCase()));
     if (searchName)  data = data.filter(r => r.name?.toLowerCase().includes(searchName.toLowerCase()));
-
-    // 섹터 필터: key 기반 비교 (TECHNOLOGY, FINANCIALS 등)
-    if (selSector !== "ALL") {
-      data = data.filter(r => toSectorKey(r) === selSector);
-    }
-
+    if (selSector  !== "ALL") data = data.filter(r => (r.sector_code || sectorByBackendName(r.sector)) === selSector);
     if (selCountry !== "ALL") data = data.filter(r => r.country === selCountry);
     if (selGrade   !== "ALL") data = data.filter(r => r.grade === selGrade);
-
-    // F.Signal 필터: ai_signal 우선, 없으면 signal fallback
-    if (selSignal !== "ALL") {
-      data = data.filter(r => (r.ai_signal || r.signal) === selSignal);
-    }
 
     if (sort.key && sort.dir) {
       data.sort((a, b) => {
@@ -172,7 +116,7 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
       });
     }
     return data;
-  }, [stocks, search, searchName, selSector, selCountry, selGrade, selSignal, sort]);
+  }, [stocks, search, searchName, selSector, selCountry, selGrade, sort]);
 
   // ── 체크박스
   const allIds     = rows.map(r => r.ticker);
@@ -197,19 +141,7 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
 
   // ── 티커 클릭 → 새 탭
   const handleTicker = (ticker) => {
-    if (onTickerClick) {
-      onTickerClick(ticker);
-    } else {
-      window.open(`/stock/${ticker}/summary`, "_blank", "noopener");
-    }
-  };
-
-  // ── 섹터 드롭다운 변경 시 URL도 동기화
-  const handleSectorChange = (val) => {
-    setSelSector(val);
-    if (val === "ALL") {
-      onResetSector?.();
-    }
+    window.open(`/stock/${ticker}/summary`, "_blank", "noopener");
   };
 
   return (
@@ -222,18 +154,13 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
         <FInput value={searchName} onChange={setSearchName} placeholder="Company Name" width={150} />
         <FSelect value={selCountry} onChange={setSelCountry}
           options={COUNTRIES.map(c => ({ value: c, label: c === "ALL" ? "All Countries" : c }))} />
-        <FSelect value={selSector} onChange={handleSectorChange}
+        <FSelect value={selSector} onChange={setSelSector}
           options={[{ value: "ALL", label: "All Sectors" }, ...SECTORS.map(s => ({ value: s.key, label: s.en }))]} />
         <FSelect value={selGrade} onChange={setSelGrade}
-          options={GRADES.map(g => ({ value: g, label: g === "ALL" ? "All Grades" : g }))} />
-        <FSelect value={selSignal} onChange={setSelSignal}
-          options={SIGNALS.map(s => ({
-            value: s,
-            label: s === "ALL" ? "All Signals" : `${_SIGNAL_KO[s] || s}`,
-          }))} />
+          options={GRADES.map(g => ({ value: g, label: g === "ALL" ? "All Ratings" : g }))} />
 
         <button onClick={reset} style={{
-          fontFamily: FONT.sans, fontSize: 12,
+          fontFamily: "'Inter', sans-serif", fontSize: 12,
           color: C.pink, background: "none",
           border: `1px solid ${C.pink}44`, borderRadius: 4,
           padding: "4px 12px", cursor: "pointer",
@@ -282,16 +209,14 @@ export default function StockTable({ filterSector, onTickerClick, onResetSector 
 //  Row
 // ═══════════════════════════════════════════════════════
 function Row({ row, odd, checked, onCheck, onClick, columns }) {
-  const gc = gradeColor(row.grade);
+  const gc    = gradeColor(row.grade);
+  const sigColor = signalColor(row.grade);
 
   const fmtPrice = (v) => v != null
     ? `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : "—";
   const fmtChg   = (v) => v != null ? `${v > 0 ? "▲" : v < 0 ? "▼" : ""}${Math.abs(v).toFixed(2)}%` : "—";
   const fmtScore = (v) => v != null ? Number(v).toFixed(1) : "—";
-
-  // signal 값 기반 색상
-  const getSigColor = (sig) => _SIGNAL_COLOR[sig] || C.textMuted;
 
   const renderCell = (col) => {
     const w = col.w;
@@ -354,13 +279,12 @@ function Row({ row, odd, checked, onCheck, onClick, columns }) {
       case "signal": {
         const sig = row.signal;
         const ko = _SIGNAL_KO[sig] || sig || "—";
-        const sc = getSigColor(sig);
         return (
           <div key={col.key} style={{ ...base }}>
             <span style={{
               fontSize: 9, fontWeight: 700, letterSpacing: 0.2,
-              color: sc, background: `${sc}10`,
-              border: `1px solid ${sc}25`, borderRadius: 3,
+              color: sigColor, background: `${sigColor}10`,
+              border: `1px solid ${sigColor}25`, borderRadius: 3,
               padding: "2px 5px", display: "inline-block", whiteSpace: "nowrap",
               opacity: 0.8,
             }}>{ko}</span>
@@ -387,18 +311,18 @@ function Row({ row, odd, checked, onCheck, onClick, columns }) {
           </div>
         );
       case "ai_grade": {
-        const g = row.ai_grade ?? row.grade ?? "—";
-        const agc = gradeColor(g);
+        // ai_grade = grade (현재 동일, 추후 ensemble 기반 분리)
+        const g = row.grade ?? "—";
         return (
           <div key={col.key} style={{ ...base, textAlign: "center" }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: agc }}>{g}</span>
+            <span style={{ fontSize: 14, fontWeight: 800, color: gc }}>{g}</span>
           </div>
         );
       }
       case "ai_signal": {
         const finalSig = row.ai_signal || row.signal;
         const ko = _SIGNAL_KO[finalSig] || finalSig || "—";
-        const finalColor = getSigColor(finalSig);
+        const finalColor = row.ai_signal ? C.cyan : sigColor;
         const hasAi = row.ai_signal != null;
         return (
           <div key={col.key} style={{ ...base }}>
@@ -490,7 +414,7 @@ function ColHead({ col, sort, onSort, onResize }) {
 function MiniBar({ value, color }) {
   return (
     <div style={{ width: "100%", height: 2, background: C.surfaceHi, borderRadius: 1, overflow: "hidden" }}>
-      <div style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, height: "100%", background: color || C.gaugeBar, borderRadius: 1 }} />
+      <div style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, height: "100%", background: color || C.gaugebar, borderRadius: 1 }} />
     </div>
   );
 }
@@ -505,7 +429,7 @@ function FInput({ value, onChange, placeholder, width }) {
       style={{
         width: width || 120, padding: "5px 10px", fontSize: 12,
         background: C.bgDark, border: `1px solid ${C.border}`,
-        borderRadius: 6, color: C.textPri, fontFamily: FONT.sans,
+        borderRadius: 6, color: C.textPri, fontFamily: FONT.mono,
         outline: "none",
       }} />
   );

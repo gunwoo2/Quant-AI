@@ -1,10 +1,11 @@
-/* global.css — QUANT AI v2.1
+/* global.css — QUANT AI v2
  *
  * ★ CSS 변수는 tokens.js C 객체와 1:1 동기화
  * ★ 상승/하락: 한국식 (빨강/파랑)
  * ★ 등급: 오렌지 채도 그라데이션
- * ★ 폰트: sans-serif 통일
  */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
   /* ── 브랜드 */
@@ -63,7 +64,7 @@ html, body, #root {
   height: 100%;
   background: var(--bg-dark);
   color: var(--text-pri);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Inter', -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -127,31 +128,103 @@ input, select { font-family: inherit; }
 .cal-header button {
   background: none;
   border: 1px solid var(--border);
-  color: var(--text-gray);
+  color: var(--text-sec);
   border-radius: 4px;
-  padding: 4px 10px;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  transition: 0.15s;
 }
-.cal-header button:hover { background: var(--surface-hi); }
+.cal-header button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.cal-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-pri);
+  letter-spacing: 0.5px;
+}
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 4px;
+}
+.cal-weekdays span {
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  padding: 4px 0;
+  font-family: 'IBM Plex Mono', monospace;
+}
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 2px;
-  text-align: center;
-}
-.cal-dow {
-  font-size: 10px;
-  color: var(--text-muted);
-  padding: 4px 0;
 }
 .cal-day {
-  padding: 6px 4px;
-  border-radius: 4px;
+  text-align: center;
+  padding: 7px 4px;
   font-size: 12px;
-  color: var(--text-gray);
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  color: var(--text-sec);
+  border-radius: 6px;
   cursor: pointer;
+  transition: 0.12s;
+  border: 1px solid transparent;
 }
-.cal-day:hover { background: var(--surface-hi); }
-.cal-day.active { background: var(--primary); color: #fff; font-weight: 700; }
-.cal-day.in-range { background: rgba(216,86,4,0.15); }
-.cal-day.disabled { color: var(--text-muted); pointer-events: none; opacity: 0.4; }
+.cal-day:hover {
+  background: var(--surface-hi);
+  color: var(--text-pri);
+  border-color: var(--border-hi);
+}
+.cal-day.today {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+.cal-day.selected {
+  background: var(--primary);
+  color: var(--white);
+  font-weight: 800;
+}
+.cal-day.other-month {
+  color: var(--border);
+}
+.cal-day.in-range {
+  background: rgba(216, 86, 4, 0.12);
+}
+.cal-quick {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.cal-quick button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.cal-quick button:hover {
+  border-color: var(--golden);
+  color: var(--golden);
+}
