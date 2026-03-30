@@ -1,5 +1,5 @@
 """
-batch_trading_signals.py — QUANT AI v3.3 트레이딩 시그널 배치
+batch_trading_signals.py — QUANT AI v5.0 트레이딩 시그널 배치
 ================================================================
 v3.3 통합: DynamicConfig + DD 5단계 + CircuitBreaker + CorrelationFilter + DecisionAudit
 
@@ -37,6 +37,13 @@ from risk.risk_manager import check_position_risk
 from portfolio.correlation_filter import CorrelationFilter
 from portfolio.position_sizer import calculate_position_size
 from analytics.decision_audit import DecisionAudit
+
+# ── v5.0 앙상블 + 확신도 보강 ──
+try:
+    from batch.trading_signals_v5_patch import enrich_with_ensemble_data
+    _HAS_V5_PATCH = True
+except ImportError:
+    _HAS_V5_PATCH = False
 
 # ── signal 패키지 (Python 내장 signal 충돌 우회) ──
 def _import_signal_module(name):
@@ -131,7 +138,7 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
         calc_date = datetime.now().date()
 
     print(f"\n{'='*60}")
-    print(f"  QUANT AI v3.3 — Trading Signal Pipeline")
+    print(f"  QUANT AI v5.0 — Trading Signal Pipeline")
     print(f"  Date: {calc_date} | Mode: {'DRY RUN' if dry_run else '⚡ LIVE'}")
     print(f"{'='*60}")
 
@@ -150,7 +157,15 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
     print("\n── Step 2/7: 리스크 상태 평가 ──")
     current_positions = _load_current_positions()
     stocks = _load_stock_data(calc_date)
-    stocks = enrich_with_ensemble_data(stocks, calc_date)
+
+    # v5.0: Ensemble disagreement + Conviction v2 보강
+    if _HAS_V5_PATCH:
+        try:
+            stocks = enrich_with_ensemble_data(stocks, calc_date)
+            print(f"  v5.0 Ensemble enrichment: {len(stocks)} stocks")
+        except Exception as e:
+            print(f"  v5.0 enrichment skipped: {e}")
+
     account_value = _get_account_value(current_positions, stocks, cfg)
 
     # Drawdown 평가

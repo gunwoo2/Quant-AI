@@ -1,5 +1,5 @@
 """
-scheduler.py — QUANT AI v4.0 (배치 완료 후 일괄 알림)
+scheduler.py — QUANT AI v5.0 (v4.0 + DQ Gate + Ensemble + Regime + AutoPilot)
 =====================================================
 v4.0 변경 (v3.4 → v4.0):
   - APScheduler 자체 cron 탑재: 평일 ET 20:30 (애프터마켓 20:00 + 30분)
@@ -30,46 +30,71 @@ import traceback
 # ═══════════════════════════════════════════════════════════
 
 def run_all(calc_date: date = None):
+    """
+    QUANT AI v5.0 일일 배치.
+    
+    v4.0 대비 추가:
+      Step 0:   Data Quality Gate (데이터 품질 관문)
+      Step 5.3: Options Flow (IV/Skew/Put-Call 실데이터)
+      Step 5.5: Macro Regime HMM (6-State 국면 분류)
+      Step 6.3: Stacking Ensemble (기존 XGBoost → 3-Model)
+      Step 7.5: AutoPilot (자가진화 엔진)
+    """
     if calc_date is None:
         calc_date = datetime.now().date()
     start_all = datetime.now()
     results = {}
-    print(f"\n{'='*60}\n  QUANT AI v4.0 일일 배치 — {calc_date}\n{'='*60}")
+    print(f"\n{'='*60}\n  QUANT AI v5.0 일일 배치 — {calc_date}\n{'='*60}")
 
-    # ── Step 1~7: 계산 전용 (알림 ZERO) ──
-    results["1_price"]   = _run_step("1/10 가격 수집",        lambda: _s_price(calc_date))
-    results["2_fin"]     = _run_step("2/10 파생 재무",        lambda: _s_fin())
-    results["3_l1"]      = _run_step("3/10 Layer 1",          lambda: _s_l1(calc_date))
-    results["4_l3"]      = _run_step("4/10 Layer 3",          lambda: _s_l3(calc_date))
-    results["4.5_pat"]   = _run_step("4.5 차트패턴",           lambda: _s_chart_patterns(calc_date))
-    results["4.6_fg"]    = _run_step("4.6 Fear & Greed",       lambda: _s_fear_greed(calc_date))
-    results["4.7_pc"]    = _run_step("4.7 Put/Call Ratio",     lambda: _s_put_call(calc_date))
-    results["4.8_ca"]    = _run_step("4.8 Cross-Asset",        lambda: _s_cross_asset(calc_date))
-    results["5_l2"]      = _run_step("5/10 Layer 2",          lambda: _s_l2())
+    # ══════════ PHASE 1: 데이터 품질 + 수집 ══════════
+
+    results["0_dq"]      = _run_step("0/16 Data Quality Gate",  lambda: _s_dq_gate(calc_date))
+    results["1_price"]   = _run_step("1/16 가격 수집",          lambda: _s_price(calc_date))
+    results["2_fin"]     = _run_step("2/16 파생 재무",          lambda: _s_fin())
+    results["3_l1"]      = _run_step("3/16 Layer 1",            lambda: _s_l1(calc_date))
+    results["4_l3"]      = _run_step("4/16 Layer 3",            lambda: _s_l3(calc_date))
+    results["4.5_pat"]   = _run_step("4.5 차트패턴",            lambda: _s_chart_patterns(calc_date))
+    results["4.6_fg"]    = _run_step("4.6 Fear & Greed",        lambda: _s_fear_greed(calc_date))
+    results["4.7_pc"]    = _run_step("4.7 Put/Call Ratio",      lambda: _s_put_call(calc_date))
+    results["4.8_ca"]    = _run_step("4.8 Cross-Asset",         lambda: _s_cross_asset(calc_date))
+    results["5_l2"]      = _run_step("5/16 Layer 2",            lambda: _s_l2())
 
     if _should_earnings(calc_date):
-        results["5.5_ec"] = _run_step("5.5 어닝콜",           lambda: _s_ec(calc_date))
+        results["5.1_ec"] = _run_step("5.1 어닝콜",             lambda: _s_ec(calc_date))
     else:
-        results["5.5_ec"] = "SKIP"
+        results["5.1_ec"] = "SKIP"
 
-    results["6_final"]   = _run_step("6/10 최종 합산",        lambda: _s_final(calc_date))
-    results["6.3_xgb"]  = _run_step("6.3 XGBoost+SHAP",      lambda: _s_xgboost(calc_date))
-    results["6.5_ic"]    = _run_step("6.5 팩터 IC 모니터",    lambda: _s_factor_monitor(calc_date))
-    results["6.7_decay"] = _run_step("6.7 Alpha Decay",       lambda: _s_alpha_decay(calc_date))
-    results["7_trading"] = _run_step("7/10 트레이딩 시그널",   lambda: _s_trading(calc_date))
+    # ══════════ PHASE 2: 선행지표 + 매크로 ══════════
 
-    # ── Step 8: 일괄 알림 (모든 알림을 여기서 한 번에) ──
-    results["8_notify"]  = _run_step("8/10 일괄 알림 전송",    lambda: _s_notify_all(calc_date, results, start_all))
+    results["5.3_options"] = _run_step("5.3 Options Flow",       lambda: _s_options(calc_date))
+    results["5.5_regime"]  = _run_step("5.5 Macro Regime",       lambda: _s_regime(calc_date))
 
-    # Step 9: 주간 성과 리포트 (토요일)
-    if calc_date.weekday() == 5:  # Saturday
-        results["9_weekly"] = _run_step("9/10 주간 성과",     lambda: _s_weekly(calc_date))
+    # ══════════ PHASE 3: 합산 + ML + 앙상블 ══════════
+
+    results["6_final"]   = _run_step("6/16 최종 합산",          lambda: _s_final(calc_date))
+    results["6.3_ens"]   = _run_step("6.3 Stacking Ensemble",   lambda: _s_ensemble(calc_date))
+    results["6.5_ic"]    = _run_step("6.5 IC Guard v2",         lambda: _s_factor_monitor(calc_date))
+    results["6.7_decay"] = _run_step("6.7 Alpha Decay",         lambda: _s_alpha_decay(calc_date))
+
+    # ══════════ PHASE 4: 시그널 ══════════
+
+    results["7_trading"] = _run_step("7/16 Trading Signals",    lambda: _s_trading(calc_date))
+
+    # ══════════ PHASE 5: 자가진화 ══════════
+
+    results["7.5_pilot"] = _run_step("7.5 AutoPilot",           lambda: _s_auto_pilot(calc_date))
+
+    # ══════════ PHASE 6: 알림 ══════════
+
+    results["8_notify"]  = _run_step("8/16 일괄 알림 전송",     lambda: _s_notify_all(calc_date, results, start_all))
+
+    if calc_date.weekday() == 5:
+        results["9_weekly"] = _run_step("9/16 주간 성과",       lambda: _s_weekly(calc_date))
     else:
         results["9_weekly"] = "SKIP"
 
-    # Step 10: 월간 성과 리포트 (매월 1일)
     if calc_date.day == 1:
-        results["10_monthly"] = _run_step("10/10 월간 성과",   lambda: _s_monthly(calc_date))
+        results["10_monthly"] = _run_step("10/16 월간 성과",    lambda: _s_monthly(calc_date))
     else:
         results["10_monthly"] = "SKIP"
 
@@ -77,13 +102,9 @@ def run_all(calc_date: date = None):
     ok   = sum(1 for v in results.values() if v == "OK")
     fail = sum(1 for v in results.values() if isinstance(v, str) and v.startswith("FAIL"))
     skip = sum(1 for v in results.values() if v == "SKIP")
-    print(f"\n{'='*60}\n  결과: 성공={ok} 실패={fail} 스킵={skip} | 소요: {elapsed}\n{'='*60}")
+    print(f"\n{'='*60}\n  v5.0 결과: 성공={ok} 실패={fail} 스킵={skip} | 소요: {elapsed}\n{'='*60}")
     return results
 
-
-# ═══════════════════════════════════════════════════════════
-#  Step 1~7: 계산 함수 (알림 ZERO)
-# ═══════════════════════════════════════════════════════════
 
 def _s_price(d):
     from batch.batch_ticker_item_daily import run_daily_price
@@ -159,6 +180,40 @@ def _s_trading(d):
 # ═══════════════════════════════════════════════════════════
 #  Step 8: 일괄 알림 — 배치 완료 후 한 번에 전부 전송
 # ═══════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════
+#  v5.0 신규 Step 함수들
+# ═══════════════════════════════════════════════════════════
+
+def _s_dq_gate(d):
+    """Step 0: Data Quality Gate"""
+    from utils.data_quality_gate import run_data_quality_gate
+    return run_data_quality_gate(d)
+
+def _s_options(d):
+    """Step 5.3: Options Flow (IV/Skew/Put-Call)"""
+    from batch.batch_options_flow import run_options_flow
+    return run_options_flow(d)
+
+def _s_regime(d):
+    """Step 5.5: Macro Regime HMM"""
+    from batch.batch_macro_regime import run_macro_regime
+    return run_macro_regime(d)
+
+def _s_ensemble(d):
+    """Step 6.3: Stacking Ensemble (XGBoost+LightGBM+Ridge)"""
+    try:
+        from batch.batch_ensemble import run_ensemble
+        return run_ensemble(d)
+    except ImportError:
+        from batch.batch_xgboost import run_xgboost
+        return run_xgboost(d)
+
+def _s_auto_pilot(d):
+    """Step 7.5: AutoPilot Self-Evolution"""
+    from batch.batch_auto_pilot import run_auto_pilot
+    return run_auto_pilot(d)
 
 def _s_notify_all(calc_date, results, start_time):
     """
@@ -469,14 +524,6 @@ def _s_notify_all(calc_date, results, start_time):
 
     print(f"\n  ── Phase 3: 알림 발송 ──")
 
-    # (0) 배치 시작 알림 → MY_SYSTEM
-    try:
-        from notifier import notify_batch_start as _nbs
-        _nbs(calc_date)
-        print(f"  ✅ 배치 시작 → MY_SYSTEM")
-    except Exception as e:
-        print(f"  ⚠️ 배치 시작 알림 실패: {e}")
-
     from notifier import (
         notify_morning_briefing,
         notify_daily_signals,
@@ -487,10 +534,6 @@ def _s_notify_all(calc_date, results, start_time):
         notify_grade_changes as notify_grades,
         notify_regime_change,
         notify_batch_complete,
-        notify_batch_start,
-        notify_daily_performance,
-        notify_earnings_alert,
-        notify_emergency,
     )
 
     # (A) 모닝 브리핑 → MY_MORNING + PUB_MORNING
@@ -616,44 +659,6 @@ def _s_notify_all(calc_date, results, start_time):
         print(f"  ✅ 배치 완료 → MY_SYSTEM + PUB_REPORT")
     except Exception as e:
         print(f"  ⚠️ 배치완료 알림 실패: {e}")
-
-    # (I) 일일 성과 리포트 → MY_PERF
-    try:
-        daily_ret = portfolio_summary.get("daily_return", 0)
-        total_val = portfolio_summary.get("total_value", 0)
-        spy_ret = portfolio_summary.get("spy_return", 0)
-        n_pos = portfolio_summary.get("num_positions", 0)
-        notify_daily_performance(
-            calc_date=calc_date,
-            daily_return=daily_ret,
-            total_value=total_val,
-            spy_return=spy_ret,
-            num_positions=n_pos,
-        )
-        print(f"  ✅ 일일 성과 → MY_PERF")
-    except Exception as e:
-        print(f"  ⚠️ 일일 성과 실패: {e}")
-
-    # (J) 어닝 임박 경고 → MY_ALERT
-    try:
-        earnings_tickers = []
-        with get_cursor() as cur:
-            cur.execute("""
-                SELECT s.ticker, th.next_earnings_date
-                FROM ticker_header th
-                JOIN stocks s ON th.stock_id = s.stock_id
-                WHERE th.next_earnings_date BETWEEN %s AND %s + INTERVAL '7 days'
-                ORDER BY th.next_earnings_date
-            """, (calc_date, calc_date))
-            earnings_tickers = [
-                {"ticker": r["ticker"], "date": str(r["next_earnings_date"])}
-                for r in cur.fetchall()
-            ]
-        if earnings_tickers:
-            notify_earnings_alert(calc_date, earnings_tickers, days_until=7)
-            print(f"  ✅ 어닝 임박 → MY_ALERT ({len(earnings_tickers)}종목)")
-    except Exception as e:
-        print(f"  ⚠️ 어닝 알림 실패: {e}")
 
     print(f"\n  ── 알림 발송 완료 ──")
 
@@ -965,13 +970,6 @@ def _run_step(name: str, fn):
         elapsed = datetime.now() - t0
         print(f"  ❌ {e} ({elapsed})")
         traceback.print_exc()
-        # 긴급 알림 발송
-        try:
-            from notifier import notify_emergency
-            from datetime import date as _date
-            notify_emergency(_date.today(), f"Step [{name}] 실패: {str(e)[:300]}")
-        except Exception:
-            pass
         return f"FAIL: {e}"
 
 
