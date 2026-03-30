@@ -58,6 +58,65 @@ except ImportError:
     W_L1, W_L2, W_L3 = 0.50, 0.25, 0.25
 SHRINKAGE_ALPHA = 0.15
 
+
+# ═══════════════════════════════════════════════════════════
+# v5.0: DQ Gate + Regime 가중치 동적 조정
+# ═══════════════════════════════════════════════════════════
+
+def _get_dq_adjusted_weights(base_l1, base_l2, base_l3):
+    mult = {"L1_FUNDAMENTAL": 1.0, "L2_SENTIMENT": 1.0, "L3_TECHNICAL": 1.0}
+    try:
+        from db_pool import get_cursor as _gc
+        import json as _json
+        with _gc() as cur:
+            cur.execute("""
+                SELECT detail FROM system_telemetry
+                WHERE category = 'DATA_QUALITY' AND metric_name = 'gate_check'
+                ORDER BY calc_date DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row and row["detail"]:
+                detail = row["detail"] if isinstance(row["detail"], dict) else _json.loads(row["detail"])
+                for source, info in detail.items():
+                    status = info.get("status", "OK")
+                    if status == "DISABLED":
+                        mult[source] = 0.0
+                    elif status in ("DEGRADED", "STALE"):
+                        mult[source] = 0.5
+    except Exception:
+        pass
+    w1 = base_l1 * mult.get("L1_FUNDAMENTAL", 1.0)
+    w2 = base_l2 * mult.get("L2_SENTIMENT", 1.0)
+    w3 = base_l3 * mult.get("L3_TECHNICAL", 1.0)
+    total = w1 + w2 + w3
+    if total > 0:
+        return round(w1/total, 4), round(w2/total, 4), round(w3/total, 4)
+    return base_l1, base_l2, base_l3
+
+
+def _get_regime_adjusted_weights(base_l1, base_l2, base_l3):
+    REGIME_PROFILES = {
+        "RISK_ON_RALLY": (0.35, 0.25, 0.40), "GOLDILOCKS": (0.40, 0.25, 0.35),
+        "REFLATION": (0.45, 0.25, 0.30), "STAGFLATION": (0.55, 0.20, 0.25),
+        "DEFLATION_SCARE": (0.55, 0.20, 0.25), "CRISIS": (0.60, 0.15, 0.25),
+    }
+    try:
+        from batch.batch_macro_regime import get_current_regime
+        regime = get_current_regime()
+        regime_name = regime.get("dominant_regime", "GOLDILOCKS")
+        is_fallback = regime.get("is_fallback", True)
+    except Exception:
+        return base_l1, base_l2, base_l3
+    if regime_name not in REGIME_PROFILES:
+        return base_l1, base_l2, base_l3
+    r_l1, r_l2, r_l3 = REGIME_PROFILES[regime_name]
+    regime_alpha = 0.30 if not is_fallback else 0.10
+    w1 = base_l1 * (1 - regime_alpha) + r_l1 * regime_alpha
+    w2 = base_l2 * (1 - regime_alpha) + r_l2 * regime_alpha
+    w3 = base_l3 * (1 - regime_alpha) + r_l3 * regime_alpha
+    total = w1 + w2 + w3
+    return round(w1/total, 4), round(w2/total, 4), round(w3/total, 4)
+
 def _clamp(v, lo, hi):
     return float(max(lo, min(hi, v)))
 
@@ -185,8 +244,12 @@ def run_final_score(calc_date: date = None):
     if calc_date is None:
         calc_date = datetime.now().date()
 
-    print(f"[FINAL] ▶ 시작 calc_date={calc_date} (Adaptive Scoring v4.0 + Self-Improving)")
-    print(f"[FINAL] 가중치: L1={W_L1:.4f}, L2={W_L2:.4f}, L3={W_L3:.4f}")
+    adj_l1, adj_l2, adj_l3 = W_L1, W_L2, W_L3
+    adj_l1, adj_l2, adj_l3 = _get_dq_adjusted_weights(adj_l1, adj_l2, adj_l3)
+    adj_l1, adj_l2, adj_l3 = _get_regime_adjusted_weights(adj_l1, adj_l2, adj_l3)
+    print(f"[FINAL] ▶ 시작 calc_date={calc_date} (v5.0 + DQ Gate + Regime)")
+    print(f"[FINAL] 가중치 (IC): L1={W_L1:.4f}, L2={W_L2:.4f}, L3={W_L3:.4f}")
+    print(f"[FINAL] 가중치 (조정): L1={adj_l1:.4f}, L2={adj_l2:.4f}, L3={adj_l3:.4f}")
 
     # ── DB에서 전 종목 원점수 로드 ──
     stocks = []
@@ -232,8 +295,32 @@ def run_final_score(calc_date: date = None):
         l2 = _f(s.get("layer2_total_score"))
         l3 = _f(s.get("layer3_score"))
 
-        result = calc_final_weighted_score(
-            layer1_score=l1, layer2_score=l2, layer3_score=l3)
+        layers = {"L1": (l1, adj_l1), "L2": (l2, adj_l2), "L3": (l3, adj_l3)}
+        available = {}
+        missing_count = 0
+        for name, (score, base_w) in layers.items():
+            if score is not None:
+                available[name] = (float(score), base_w)
+            else:
+                missing_count += 1
+        if not available:
+            result = {"weighted_score": 50.0, "data_completeness": 0.0,
+                      "l1_weight_actual": 0.0, "l2_weight_actual": 0.0,
+                      "l3_weight_actual": 0.0, "confidence_level": "LOW"}
+        else:
+            total_w = sum(w for _, w in available.values())
+            actual = {n: w / total_w for n, (_, w) in available.items()}
+            wv = sum(s * actual[n] for n, (s, _) in available.items())
+            shrinkage = missing_count * SHRINKAGE_ALPHA
+            wv = wv * (1.0 - shrinkage) + 50.0 * shrinkage
+            wv = _clamp(round(wv, 2), 0.0, 100.0)
+            dc = len(available) / 3.0
+            conf = "HIGH" if dc >= 1.0 else ("MEDIUM" if dc >= 0.67 else "LOW")
+            result = {"weighted_score": wv, "data_completeness": round(dc, 2),
+                      "l1_weight_actual": round(actual.get("L1", 0), 4),
+                      "l2_weight_actual": round(actual.get("L2", 0), 4),
+                      "l3_weight_actual": round(actual.get("L3", 0), 4),
+                      "confidence_level": conf}
 
         s["l1_raw"] = l1
         s["l2_raw"] = l2

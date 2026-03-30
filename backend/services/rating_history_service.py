@@ -1,105 +1,137 @@
 """
-rating_history_service.py — Rating History 조회 (Quant + AI)
+rating_history_service.py — Rating History (Quant + AI) v2.1
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-v2.0:
-  - Quant 이력: stock_rating_history 테이블
-  - AI 이력: ai_scores_daily 테이블 (ensemble 기반 등급 계산)
-  - type 필드로 "quant" / "ai" 구분
+v2.1:
+  - AI 등급: 횡단면 백분위 기반 (절대값 → 상대평가)
+  - 같은 날짜의 전 종목 ensemble 분포에서 백분위 계산
 """
-
 from db_pool import get_cursor
 
-
-# ensemble 점수 → 등급
-_GRADE_THRESHOLDS = [
-    (90, "S"), (80, "A+"), (70, "A"), (60, "B+"),
-    (50, "B"), (40, "C"), (0, "D"),
+# 백분위 → 등급 (adaptive_scoring 동일)
+_GRADE_PCT_CUTS = [
+    (97, "S"), (92, "A+"), (82, "A"), (65, "B+"),
+    (40, "B"), (15, "C"), (0, "D"),
 ]
+_ABSOLUTE_FLOOR = [(25, "D"), (30, "C"), (35, "B"), (40, "B+")]
+_GRADE_ORDER = {"S": 7, "A+": 6, "A": 5, "B+": 4, "B": 3, "C": 2, "D": 1}
 
-def _score_to_grade(score):
-    if score is None:
-        return None
-    s = float(score)
-    for threshold, label in _GRADE_THRESHOLDS:
-        if s >= threshold:
-            return label
+def _pct_to_grade(pct):
+    for cutoff, g in _GRADE_PCT_CUTS:
+        if pct >= cutoff: return g
     return "D"
+
+def _apply_floor(grade, raw):
+    if grade is None or raw is None: return grade
+    for th, cap in _ABSOLUTE_FLOOR:
+        if raw < th:
+            if _GRADE_ORDER.get(grade, 0) > _GRADE_ORDER.get(cap, 0): return cap
+            return grade
+    return grade
 
 
 def get_rating_history(ticker: str, limit: int = 20) -> list[dict]:
-    """
-    종목의 최근 등급 변동 이력을 조회한다. (Quant + AI)
-
-    Returns:
-        [{ date, grade, signal, score, l1, l2, l3, type }, ...]
-    """
     result = []
 
     # ── 1. Quant 이력 (stock_rating_history) ──
     try:
-        sql_quant = """
-            SELECT
-                rh.rating_date   AS date,
-                rh.grade,
-                rh.signal,
-                rh.weighted_score AS score,
-                rh.layer1_score   AS l1,
-                rh.layer2_score   AS l2,
-                rh.layer3_score   AS l3
-            FROM stock_rating_history rh
-            JOIN stocks s ON rh.stock_id = s.stock_id
-            WHERE s.ticker = %s
-              AND s.is_active = TRUE
-            ORDER BY rh.rating_date DESC
-            LIMIT %s
-        """
         with get_cursor() as cur:
-            cur.execute(sql_quant, (ticker.upper(), limit))
-            rows = cur.fetchall()
-
-        for row in rows:
-            item = dict(row)
-            if item.get("date"):
-                item["date"] = str(item["date"])
-            for k in ("score", "l1", "l2", "l3"):
-                if item.get(k) is not None:
-                    item[k] = float(item[k])
-            item["type"] = "quant"
-            result.append(item)
+            cur.execute("""
+                SELECT rh.rating_date AS date, rh.grade, rh.signal,
+                       rh.weighted_score AS score,
+                       rh.layer1_score AS l1, rh.layer2_score AS l2, rh.layer3_score AS l3
+                FROM stock_rating_history rh
+                JOIN stocks s ON rh.stock_id = s.stock_id
+                WHERE s.ticker = %s AND s.is_active = TRUE
+                ORDER BY rh.rating_date DESC LIMIT %s
+            """, (ticker.upper(), limit))
+            for row in cur.fetchall():
+                item = dict(row)
+                if item.get("date"): item["date"] = str(item["date"])
+                for k in ("score", "l1", "l2", "l3"):
+                    if item.get(k) is not None: item[k] = float(item[k])
+                item["type"] = "quant"
+                result.append(item)
     except Exception as e:
-        print(f"[rating_history] ⚠️ Quant 이력 조회 실패: {e}")
+        print(f"[rating_history] ⚠️ Quant 이력 실패: {e}")
 
-    # ── 2. AI 이력 (ai_scores_daily) ──
+    # ── 2. AI 이력 (ai_scores_daily + 횡단면 백분위) ──
     try:
-        sql_ai = """
-            SELECT
-                ad.calc_date       AS date,
-                ad.ensemble_score  AS score,
-                ad.ai_score,
-                ad.stat_score
-            FROM ai_scores_daily ad
-            JOIN stocks s ON ad.stock_id = s.stock_id
-            WHERE s.ticker = %s
-              AND s.is_active = TRUE
-            ORDER BY ad.calc_date DESC
-            LIMIT %s
-        """
-        with get_cursor() as cur:
-            cur.execute(sql_ai, (ticker.upper(), limit))
-            rows = cur.fetchall()
+        import numpy as np
+        from scipy import stats as sp_stats
 
-        for row in rows:
-            item = dict(row)
-            if item.get("date"):
-                item["date"] = str(item["date"])
-            ens = float(item["score"]) if item.get("score") is not None else None
-            item["score"] = ens
-            item["grade"] = _score_to_grade(ens)
-            item["ai_score"] = float(item["ai_score"]) if item.get("ai_score") is not None else None
-            item["stat_score"] = float(item["stat_score"]) if item.get("stat_score") is not None else None
-            item["type"] = "ai"
-            result.append(item)
+        with get_cursor() as cur:
+            # 해당 종목의 stock_id
+            cur.execute("SELECT stock_id FROM stocks WHERE UPPER(ticker) = %s AND is_active = TRUE",
+                        (ticker.upper(),))
+            srow = cur.fetchone()
+            if not srow:
+                return result
+            target_id = srow["stock_id"]
+
+            # 해당 종목의 AI 이력
+            cur.execute("""
+                SELECT calc_date, ensemble_score, ai_score, stat_score
+                FROM ai_scores_daily WHERE stock_id = %s
+                ORDER BY calc_date DESC LIMIT %s
+            """, (target_id, limit))
+            target_rows = [dict(r) for r in cur.fetchall()]
+
+            if not target_rows:
+                return result
+
+            # 각 날짜별로 전 종목 ensemble 분포에서 백분위 계산
+            dates = list(set(str(r["calc_date"]) for r in target_rows))
+
+            for calc_date_str in dates:
+                cur.execute("""
+                    SELECT stock_id, ensemble_score
+                    FROM ai_scores_daily WHERE calc_date = %s AND ensemble_score IS NOT NULL
+                """, (calc_date_str,))
+                all_ens = {r["stock_id"]: float(r["ensemble_score"]) for r in cur.fetchall()}
+
+                if len(all_ens) < 5:
+                    continue
+
+                # 전 종목 ensemble → percentile
+                ids = list(all_ens.keys())
+                scores_arr = np.array([all_ens[sid] for sid in ids], dtype=float)
+                median = np.median(scores_arr)
+                mad = np.median(np.abs(scores_arr - median))
+                if mad < 1e-8:
+                    std = np.std(scores_arr)
+                    if std < 1e-8:
+                        from scipy.stats import rankdata
+                        ranks = rankdata(scores_arr, method="average")
+                        pcts = (ranks - 1) / max(len(ranks) - 1, 1) * 100.0
+                    else:
+                        z = np.clip((scores_arr - np.mean(scores_arr)) / std, -3.0, 3.0)
+                        pcts = sp_stats.norm.cdf(z) * 100.0
+                else:
+                    z = np.clip((scores_arr - median) / (1.4826 * mad), -3.0, 3.0)
+                    pcts = sp_stats.norm.cdf(z) * 100.0
+
+                pct_map = {ids[i]: float(pcts[i]) for i in range(len(ids))}
+
+                # target 종목의 해당 날짜 행에 등급 할당
+                target_pct = pct_map.get(target_id)
+                if target_pct is None:
+                    continue
+
+                for trow in target_rows:
+                    if str(trow["calc_date"]) == calc_date_str:
+                        ens = float(trow["ensemble_score"]) if trow["ensemble_score"] else None
+                        grade = _pct_to_grade(target_pct)
+                        grade = _apply_floor(grade, ens)
+                        result.append({
+                            "date": calc_date_str,
+                            "score": ens,
+                            "grade": grade,
+                            "ai_score": float(trow["ai_score"]) if trow.get("ai_score") else None,
+                            "stat_score": float(trow["stat_score"]) if trow.get("stat_score") else None,
+                            "type": "ai",
+                        })
     except Exception as e:
-        print(f"[rating_history] ⚠️ AI 이력 조회 실패: {e}")
+        print(f"[rating_history] ⚠️ AI 이력 실패: {e}")
+        import traceback; traceback.print_exc()
 
     return result

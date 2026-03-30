@@ -1,12 +1,11 @@
 """
 stock_service.py — 종목 서비스 v5.0
 ====================================
-v5.0 Changes:
-  - AI 테이블: xgboost_predictions → ai_scores_daily
-  - ensemble 등급: 횡단면 백분위(Cross-Sectional Percentile) 기반
-    (batch_final_score의 adaptive_scoring과 동일 방법론)
-  - ai_grade, ai_signal 필드 추가
-  - except pass → 에러 로깅
+v5.0:
+  - AI: xgboost_predictions → ai_scores_daily
+  - AI 등급: 횡단면 백분위(Cross-Sectional Percentile)
+  - L3: technical_indicators에서 직접 보정
+  - 에러 로깅 (except pass 제거)
 """
 from typing import Optional
 from db_pool import get_cursor
@@ -20,71 +19,46 @@ SECTOR_KO_MAP = {
 }
 
 
-# ═══════════════════════════════════════════════════════════
-#  횡단면 백분위 기반 등급 (batch_final_score와 동일)
-# ═══════════════════════════════════════════════════════════
-
+# ═══════════════════════════════════════════════════════
+#  횡단면 백분위 등급 (batch_final_score 동일 방법론)
+# ═══════════════════════════════════════════════════════
 _GRADE_PCT_CUTS = [
     (97, "S"), (92, "A+"), (82, "A"), (65, "B+"),
     (40, "B"), (15, "C"), (0, "D"),
 ]
-
-_ABSOLUTE_FLOOR = [
-    (25, "D"), (30, "C"), (35, "B"), (40, "B+"),
-]
-
+_ABSOLUTE_FLOOR = [(25, "D"), (30, "C"), (35, "B"), (40, "B+")]
 _GRADE_ORDER = {"S": 7, "A+": 6, "A": 5, "B+": 4, "B": 3, "C": 2, "D": 1}
-
 _GRADE_TO_SIGNAL = {
     "S": "STRONG_BUY", "A+": "STRONG_BUY",
-    "A": "BUY", "B+": "BUY",
-    "B": "HOLD",
-    "C": "SELL",
-    "D": "STRONG_SELL",
+    "A": "BUY", "B+": "BUY", "B": "HOLD",
+    "C": "SELL", "D": "STRONG_SELL",
 }
 
-
 def _pct_to_grade(pct):
-    if pct is None:
-        return None
-    for cutoff, grade in _GRADE_PCT_CUTS:
-        if pct >= cutoff:
-            return grade
+    if pct is None: return None
+    for cutoff, g in _GRADE_PCT_CUTS:
+        if pct >= cutoff: return g
     return "D"
 
-
-def _apply_floor(grade, raw_score):
-    if grade is None or raw_score is None:
-        return grade
-    for threshold, cap in _ABSOLUTE_FLOOR:
-        if raw_score < threshold:
-            if _GRADE_ORDER.get(grade, 0) > _GRADE_ORDER.get(cap, 0):
-                return cap
+def _apply_floor(grade, raw):
+    if grade is None or raw is None: return grade
+    for th, cap in _ABSOLUTE_FLOOR:
+        if raw < th:
+            if _GRADE_ORDER.get(grade, 0) > _GRADE_ORDER.get(cap, 0): return cap
             return grade
     return grade
 
-
 def _cross_sectional_grades(ai_map):
-    """
-    전 종목 ensemble에 횡단면 백분위 등급 부여.
-    MAD Z-Score → Normal CDF → Percentile → Grade → Floor → Signal
-    """
+    """전 종목 ensemble에 횡단면 백분위 등급/시그널 부여."""
     import numpy as np
     from scipy import stats as sp_stats
-
     tickers, scores = [], []
     for tk, d in ai_map.items():
         if d.get("ensemble") is not None:
-            tickers.append(tk)
-            scores.append(d["ensemble"])
-
-    if len(tickers) < 5:
-        return  # 데이터 부족 → 등급 없이 반환
-
+            tickers.append(tk); scores.append(d["ensemble"])
+    if len(tickers) < 5: return
     arr = np.array(scores, dtype=float)
-    median = np.median(arr)
-    mad = np.median(np.abs(arr - median))
-
+    median = np.median(arr); mad = np.median(np.abs(arr - median))
     if mad < 1e-8:
         std = np.std(arr)
         if std < 1e-8:
@@ -97,41 +71,32 @@ def _cross_sectional_grades(ai_map):
     else:
         z = np.clip((arr - median) / (1.4826 * mad), -3.0, 3.0)
         pcts = sp_stats.norm.cdf(z) * 100.0
-
     for i, tk in enumerate(tickers):
-        pct = float(pcts[i])
-        grade = _pct_to_grade(pct)
+        grade = _pct_to_grade(float(pcts[i]))
         grade = _apply_floor(grade, scores[i])
         ai_map[tk]["ai_grade"] = grade
         ai_map[tk]["ai_signal"] = _GRADE_TO_SIGNAL.get(grade, "HOLD")
 
-
-# (legacy 호환) 절대값 기반 시그널
+# legacy
 _SIGNAL_THRESHOLDS = [
     (80, "STRONG_BUY"), (65, "BUY"), (50, "OUTPERFORM"),
-    (40, "HOLD"), (30, "UNDERPERFORM"), (20, "SELL"),
-    (0, "STRONG_SELL"),
+    (40, "HOLD"), (30, "UNDERPERFORM"), (20, "SELL"), (0, "STRONG_SELL"),
 ]
-
 def _score_to_signal(score):
-    if score is None:
-        return None
-    for threshold, label in _SIGNAL_THRESHOLDS:
-        if score >= threshold:
-            return label
+    if score is None: return None
+    for th, label in _SIGNAL_THRESHOLDS:
+        if score >= th: return label
     return "STRONG_SELL"
-
-
-# ═══════════════════════════════════════════════════════════
-#  GET /api/stocks
-# ═══════════════════════════════════════════════════════════
 
 def get_stock_list(
     sector:  Optional[str] = None,
     country: Optional[str] = None,
     grade:   Optional[str] = None,
 ) -> list[dict]:
-    """메인 종목 목록 조회."""
+    """
+    메인 종목 목록 조회.
+    v4.2: signal을 investment_opinion(한국어) 대신 signal(영문키)로 직접 반환
+    """
     conditions = ["1=1"]
     params: list = []
 
@@ -191,18 +156,35 @@ def get_stock_list(
                 item[key] = float(item[key])
         result.append(item)
 
-    # ── AI 데이터 보충 (ai_scores_daily + 횡단면 백분위 등급) ──
+    # ── L3 보정 (stock_final_scores가 0일 때 technical_indicators에서 직접) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
                 SELECT s.ticker,
-                       xp.ai_score,
-                       xp.ensemble_score
+                       COALESCE(ti.layer3_total_score, ti.layer3_technical_score) AS l3_direct
                 FROM (
                     SELECT DISTINCT ON (stock_id)
-                        stock_id, ai_score, ensemble_score
-                    FROM ai_scores_daily
+                        stock_id, layer3_total_score, layer3_technical_score
+                    FROM technical_indicators
                     ORDER BY stock_id, calc_date DESC
+                ) ti
+                JOIN stocks s ON s.stock_id = ti.stock_id
+            """)
+            l3_map = {r["ticker"]: float(r["l3_direct"]) for r in cur.fetchall() if r["l3_direct"] is not None}
+        for item in result:
+            if (item.get("l3") is None or item.get("l3") == 0) and item.get("ticker") in l3_map:
+                item["l3"] = l3_map[item["ticker"]]
+    except Exception as e:
+        print(f"[stock_service] ⚠️ L3 보정 실패: {e}")
+
+    # ── AI 데이터 보충 (ai_scores_daily + 횡단면 백분위) ──
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT s.ticker, xp.ai_score, xp.ensemble_score
+                FROM (
+                    SELECT DISTINCT ON (stock_id) stock_id, ai_score, ensemble_score
+                    FROM ai_scores_daily ORDER BY stock_id, calc_date DESC
                 ) xp
                 JOIN stocks s ON s.stock_id = xp.stock_id
             """)
@@ -210,16 +192,8 @@ def get_stock_list(
             for r in cur.fetchall():
                 ai_s = float(r["ai_score"]) if r["ai_score"] is not None else None
                 ens = float(r["ensemble_score"]) if r["ensemble_score"] is not None else None
-                ai_map[r["ticker"]] = {
-                    "ai_score": ai_s,
-                    "ensemble": ens,
-                    "ai_grade": None,
-                    "ai_signal": None,
-                }
-
-        # 횡단면 백분위 기반 등급 계산
+                ai_map[r["ticker"]] = {"ai_score": ai_s, "ensemble": ens, "ai_grade": None, "ai_signal": None}
         _cross_sectional_grades(ai_map)
-
         for item in result:
             ai = ai_map.get(item.get("ticker"), {})
             item["ai_score"] = ai.get("ai_score")
@@ -227,10 +201,11 @@ def get_stock_list(
             item["ai_grade"] = ai.get("ai_grade")
             item["ai_signal"] = ai.get("ai_signal")
     except Exception as e:
-        print(f"[stock_service] ⚠️ AI 데이터 로드 실패: {e}")
+        print(f"[stock_service] ⚠️ AI 데이터 실패: {e}")
         traceback.print_exc()
 
-    # ── Conviction 보충 (daily_stock_score) ──
+
+    # ── Conviction 보충 (daily_stock_score — 테이블 없으면 skip) ──
     try:
         with get_cursor() as cur:
             cur.execute("""
@@ -263,6 +238,8 @@ def get_stock_list(
         pass
 
     return result
+
+
 
 def get_sector_list() -> list[dict]:
     """
@@ -569,6 +546,24 @@ def get_stock_detail(ticker: str) -> dict | None:
     for f in float_fields:
         if row.get(f) is not None:
             row[f] = float(row[f])
+
+
+    # ── L3 보정 (get_stock_detail) ──
+    if (row.get("l3") is None or row.get("l3") == 0):
+        try:
+            with get_cursor() as cur:
+                cur.execute("""
+                    SELECT COALESCE(layer3_total_score, layer3_technical_score) AS l3
+                    FROM technical_indicators
+                    WHERE stock_id = (SELECT stock_id FROM stocks WHERE UPPER(ticker) = %s)
+                    ORDER BY calc_date DESC LIMIT 1
+                """, (ticker.upper(),))
+                l3r = cur.fetchone()
+                if l3r and l3r["l3"] is not None:
+                    row["l3"] = float(l3r["l3"])
+        except Exception:
+            pass
+
 
     return {
         "header": {

@@ -128,7 +128,12 @@ def calc_section_b(stock_id: int, calc_date: date) -> dict:
         short_score = 5.0
 
     # 2. 풋콜 비율 점수 (7점) — 현재 데이터 소스 없음 → 중립
-    put_call_score = 3.5  # 중립 (7점 만점의 50%)
+    put_call_score = 3.5  # 기본 중립
+    try:
+        from batch.batch_options_flow import get_put_call_score
+        put_call_score = get_put_call_score(stock_id, calc_date)
+    except Exception:
+        pass  # Fallback: 3.5 유지
 
     # 3. 구조적 시그널 점수 (8점) — technical_indicators에서 이미 계산됨
     struct_score = 0.0

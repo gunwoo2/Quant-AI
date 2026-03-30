@@ -150,6 +150,7 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
     print("\n── Step 2/7: 리스크 상태 평가 ──")
     current_positions = _load_current_positions()
     stocks = _load_stock_data(calc_date)
+    stocks = enrich_with_ensemble_data(stocks, calc_date)
     account_value = _get_account_value(current_positions, stocks, cfg)
 
     # Drawdown 평가
