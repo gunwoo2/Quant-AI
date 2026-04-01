@@ -223,7 +223,8 @@ def _attempt_retrain(calc_date, current_ic, reasons):
             "reason": "insufficient_improvement",
         })
 
-        return {"action": "KEPT_OLD", "old_ic": old_ic, "new_ic": new_ic,
+        print(f"  [AUTOPILOT] ❌ REJECT — 기존 모델 유지")
+        return {"action": "REJECT_KEPT_OLD", "old_ic": old_ic, "new_ic": new_ic,
                 "improvement": improvement}
 
 

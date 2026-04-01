@@ -247,6 +247,16 @@ def run_final_score(calc_date: date = None):
     adj_l1, adj_l2, adj_l3 = W_L1, W_L2, W_L3
     adj_l1, adj_l2, adj_l3 = _get_dq_adjusted_weights(adj_l1, adj_l2, adj_l3)
     adj_l1, adj_l2, adj_l3 = _get_regime_adjusted_weights(adj_l1, adj_l2, adj_l3)
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT action FROM ic_guard_actions WHERE calc_date=%s ORDER BY id DESC LIMIT 1", (calc_date,))
+            gr = cur.fetchone()
+            if gr and gr["action"] == "BLOCK_IMMEDIATE":
+                adj_l1, adj_l2, adj_l3 = min(adj_l1*1.5, 0.8), adj_l2*0.5, adj_l3*0.5
+                print(f"  [IC GUARD] BLOCK → AI weight ↓")
+            elif gr and gr["action"] == "REDUCE_50PCT":
+                adj_l1, adj_l2, adj_l3 = adj_l1*1.2, adj_l2*0.8, adj_l3*0.8
+    except: pass
     print(f"[FINAL] ▶ 시작 calc_date={calc_date} (v5.0 + DQ Gate + Regime)")
     print(f"[FINAL] 가중치 (IC): L1={W_L1:.4f}, L2={W_L2:.4f}, L3={W_L3:.4f}")
     print(f"[FINAL] 가중치 (조정): L1={adj_l1:.4f}, L2={adj_l2:.4f}, L3={adj_l3:.4f}")

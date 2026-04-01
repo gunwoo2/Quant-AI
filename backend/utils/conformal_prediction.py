@@ -19,6 +19,8 @@ import logging
 logger = logging.getLogger("conformal_prediction")
 
 
+MIN_CALIBRATION_SIZE = 100
+
 class ConformalPredictor:
     """
     Split Conformal Prediction (가장 실용적인 변형).

@@ -366,8 +366,8 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti_prev.section_a_technical AS tech_prev,
                 sfs_prev.weighted_score AS score_prev,
                 -- 기술적 원시값 (5개)
-                ti.rsi_14, ti.macd_histogram, ti.bb_pctb,
-                ti.atr_pct, ti.volume_ratio_20d,
+                ti.rsi_14, ti.macd_histogram, ti.bb_width,
+                COALESCE(ti.atr_pct, 2.0) AS atr_pct, COALESCE(ti.volume_surge_ratio, 1.0) AS volume_ratio_20d,
                 -- 등급 변경 이력
                 sfs.calc_date AS score_date
                 {label_select}
@@ -386,7 +386,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
             ) l2 ON TRUE
             LEFT JOIN LATERAL (
                 SELECT section_a_technical, section_b_flow, section_c_macro,
-                       rsi_14, macd_histogram, bb_pctb, atr_pct, volume_ratio_20d
+                       rsi_14, macd_histogram, bb_width, COALESCE(atr_pct, 2.0) AS atr_pct, COALESCE(volume_surge_ratio, 1.0) AS volume_ratio_20d
                 FROM technical_indicators
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
@@ -492,7 +492,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         # ── Technical Raw (5개) ──
         rsi = _f(r.get("rsi_14"))
         macd_hist = _f(r.get("macd_histogram"))
-        bb_pctb = _f(r.get("bb_pctb"))
+        bb_pctb = _f(r.get("bb_width"))
         atr_pct = _f(r.get("atr_pct"))
         vol_ratio = _f(r.get("volume_ratio_20d"))
 
@@ -601,20 +601,7 @@ def _get_macro_data(target_date: date) -> dict:
             if row:
                 if row.get("cross_asset_total"): result["macro_score"] = float(row["cross_asset_total"])
                 if row.get("risk_appetite_score"): result["risk_appetite"] = float(row["risk_appetite_score"])
-
-            # VIX: stock_prices에서 별도 조회
-            try:
-                cur.execute("""
-                    SELECT close_price FROM stock_prices sp
-                    JOIN stocks s ON s.stock_id = sp.stock_id
-                    WHERE s.ticker = 'VIX' AND sp.price_date <= %s
-                    ORDER BY sp.price_date DESC LIMIT 1
-                """, (target_date,))
-                vrow = cur.fetchone()
-                if vrow and vrow.get("close_price"):
-                    result["vix_close"] = float(vrow["close_price"])
-            except Exception:
-                pass
+                if True: pass
     except Exception as e:
         logger.warning(f"[XGB-v2] 매크로 조회 실패: {e}")
     return result

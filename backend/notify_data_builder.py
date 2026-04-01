@@ -117,7 +117,7 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
         # ── L3 서브스코어 (기술적 지표) ──
         with get_cursor() as cur:
             cur.execute("""
-                SELECT rsi_14, macd_signal, bb_position,
+                SELECT rsi_14, macd_signal, bb_width,
                        adx_14, obv_trend,
                        COALESCE(layer3_total_score, layer3_technical_score) as l3_total,
                        trend_score, momentum_score as tech_momentum,
@@ -223,64 +223,6 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
 
     except Exception as e:
         logger.warning(f"[BUY-RATIONALE] {ticker} 보강 실패: {e}")
-
-
-    # ── AI Enrichment (구 notify_ai_patch 병합) ──
-    try:
-        # 1) Signal Half-Life
-        with get_cursor() as cur:
-            cur.execute("""
-                SELECT half_life_days FROM signal_halflife
-                WHERE grade = %s
-                ORDER BY calc_date DESC LIMIT 1
-            """, (result.get("grade", "B"),))
-            hl = cur.fetchone()
-        if hl:
-            result["signal_halflife"] = hl["half_life_days"]
-            result["signal_expiry"] = f"{hl['half_life_days']}일"
-
-        # 2) Layer Agreement (L1/L2/L3 일치도)
-        l1_s = float(result.get("layer1_score") or 0)
-        l2_s = float(result.get("layer2_score") or 0)
-        l3_s = float(result.get("layer3_score") or 0)
-        agree_count = sum(1 for s in [l1_s, l2_s, l3_s] if s >= 60)
-        result["layer_agreement"] = round(agree_count / 3, 2)
-        result["layer_agreement_label"] = (
-            "🟢 FULL AGREE" if agree_count == 3 else
-            "🟡 PARTIAL" if agree_count == 2 else "🔴 WEAK"
-        )
-
-        # 3) Factor Tags (ai_scores_daily)
-        with get_cursor() as cur:
-            cur.execute("""
-                SELECT shap_top5_pos FROM ai_scores_daily
-                WHERE stock_id = %s AND calc_date <= %s
-                ORDER BY calc_date DESC LIMIT 1
-            """, (stock_id, calc_date))
-            ft = cur.fetchone()
-        if ft and ft.get("shap_top5_pos"):
-            raw_tags = ft["shap_top5_pos"]
-            if isinstance(raw_tags, list):
-                result["factor_tags"] = [t.get("feature", t) if isinstance(t, dict) else str(t) for t in raw_tags[:3]]
-            elif isinstance(raw_tags, str):
-                result["factor_tags"] = [raw_tags]
-
-        # 4) Conviction v5 (다차원 확신도)
-        ai_sc = float(result.get("ai_score") or 50)
-        ic_val = float(result.get("ic") or 0)
-        hl_days = float(result.get("signal_halflife") or 5)
-        conviction_v5 = round(
-            0.30 * min(float(result.get("score") or 0) / 100, 1) +
-            0.25 * min(ai_sc / 100, 1) +
-            0.20 * result["layer_agreement"] +
-            0.15 * min(max(ic_val, 0) / 0.1, 1) +
-            0.10 * (1.0 if hl_days >= 7 else 0.5),
-            3
-        )
-        result["conviction_v5"] = conviction_v5
-
-    except Exception as e:
-        logger.warning(f"[AI-ENRICH] {ticker} 보강 실패: {e}")
 
     return result
 
@@ -783,7 +725,7 @@ def build_risk_dashboard(calc_date: date) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT pp.stock_id, pp.quantity * pp.avg_price, s.ticker, s.sector
+                SELECT pp.stock_id, pp.shares * pp.entry_price, s.ticker, s.sector
                 FROM portfolio_positions pp
                 JOIN stocks s ON pp.stock_id = s.stock_id
                 WHERE pp.status = 'OPEN' AND pp.portfolio_id = 1
@@ -1005,7 +947,7 @@ def build_weekly_brinson(calc_date: date) -> dict:
         week_ago = calc_date - timedelta(days=7)
         with get_cursor() as cur:
             cur.execute("""
-                SELECT COUNT(*) FILTER (WHERE pnl_pct > 0) AS wins,
+                SELECT COUNT(*) FILTER (WHERE realized_pct > 0) AS wins,
                        COUNT(*) AS total
                 FROM trading_signals
                 WHERE calc_date >= %s AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
@@ -1019,26 +961,26 @@ def build_weekly_brinson(calc_date: date) -> dict:
         # Best / Worst
         with get_cursor() as cur:
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.realized_pct
                 FROM trading_signals ts JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.pnl_pct IS NOT NULL
-                ORDER BY ts.pnl_pct DESC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.realized_pct IS NOT NULL
+                ORDER BY ts.realized_pct DESC LIMIT 1
             """, (week_ago,))
             best = cur.fetchone()
             if best:
                 result["best_ticker"] = best["ticker"]
-                result["best_pnl"] = round(float(best["pnl_pct"]), 1)
+                result["best_pnl"] = round(float(best.get("realized_pct", 0)), 1)
 
             cur.execute("""
-                SELECT s.ticker, ts.pnl_pct
+                SELECT s.ticker, ts.realized_pct
                 FROM trading_signals ts JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.pnl_pct IS NOT NULL
-                ORDER BY ts.pnl_pct ASC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.realized_pct IS NOT NULL
+                ORDER BY ts.realized_pct ASC LIMIT 1
             """, (week_ago,))
             worst = cur.fetchone()
             if worst:
                 result["worst_ticker"] = worst["ticker"]
-                result["worst_pnl"] = round(float(worst["pnl_pct"]), 1)
+                result["worst_pnl"] = round(float(worst.get("realized_pct", 0)), 1)
 
         # ── Brinson Attribution ──
         # 수익 = 시장효과(β) + 종목선택(α) + 현금드래그
@@ -1161,8 +1103,8 @@ def build_ai_morning_data(calc_date: date) -> dict:
             cur.execute("""
                 SELECT s.ticker, xp.ai_score, xp.ensemble_score,
                        fs.grade, fs.weighted_score,
-                       xp.shap_top5_pos
-                FROM ai_scores_daily xp
+                       xp.shap_top_positive
+                FROM xgboost_predictions xp
                 JOIN stocks s ON xp.stock_id = s.stock_id
                 LEFT JOIN (
                     SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
@@ -1172,7 +1114,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
                 ORDER BY xp.ai_score DESC LIMIT 5
             """, (calc_date,))
             for row in cur.fetchall():
-                shap_pos = row.get("shap_top5_pos") or ""
+                shap_pos = row.get("shap_top_positive") or ""
                 result["ai_top"].append({
                     "ticker": row["ticker"],
                     "ai_score": _safe_float(row["ai_score"]),
@@ -1184,8 +1126,8 @@ def build_ai_morning_data(calc_date: date) -> dict:
             # AI Score Bottom 3 (하락 경고)
             cur.execute("""
                 SELECT s.ticker, xp.ai_score, fs.grade, fs.weighted_score,
-                       xp.shap_top5_neg
-                FROM ai_scores_daily xp
+                       xp.shap_top_negative
+                FROM xgboost_predictions xp
                 JOIN stocks s ON xp.stock_id = s.stock_id
                 LEFT JOIN (
                     SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
@@ -1195,7 +1137,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
                 ORDER BY xp.ai_score ASC LIMIT 3
             """, (calc_date,))
             for row in cur.fetchall():
-                shap_neg = row.get("shap_top5_neg") or ""
+                shap_neg = row.get("shap_top_negative") or ""
                 result["ai_bottom"].append({
                     "ticker": row["ticker"],
                     "ai_score": _safe_float(row["ai_score"]),
@@ -1258,15 +1200,15 @@ def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ai_score, ensemble_score, shap_all
-                FROM ai_scores_daily
+                SELECT ai_score, ensemble_score, shap_values
+                FROM xgboost_predictions
                 WHERE stock_id = %s AND calc_date = %s
             """, (stock_id, calc_date))
             row = cur.fetchone()
             if row:
                 result["ai_score"] = _safe_float(row.get("ai_score"))
                 result["ensemble_score"] = _safe_float(row.get("ensemble_score"))
-                shap_raw = row.get("shap_all")
+                shap_raw = row.get("shap_values")
                 if shap_raw:
                     import json
                     if isinstance(shap_raw, str):
@@ -1322,7 +1264,7 @@ def build_ai_risk_data(calc_date: date) -> dict:
         with get_cursor() as cur:
             cur.execute("""
                 SELECT grade, holding_period, avg_return, hit_rate, ic_value, signal_status
-                FROM alpha_decay_matrix
+                FROM alpha_decay_daily
                 WHERE calc_date = %s AND signal_status = 'DEAD'
                 ORDER BY grade
             """, (calc_date,))
@@ -1368,7 +1310,7 @@ def build_ai_batch_summary(calc_date: date) -> dict:
                     result["feature_top3"] = [{"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi]
 
             cur.execute("""
-                SELECT COUNT(*) as cnt FROM ai_scores_daily WHERE calc_date = %s
+                SELECT COUNT(*) as cnt FROM xgboost_predictions WHERE calc_date = %s
             """, (calc_date,))
             result["predict_count"] = cur.fetchone()["cnt"]
 

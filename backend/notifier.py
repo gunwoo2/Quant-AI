@@ -375,6 +375,26 @@ def notify_morning_briefing(
 
     # ★ v4.1: AI 데이터 필드 추가
     ai_morning = kwargs.get("ai_morning") or {}
+
+    # v5.0: Ensemble Disagreement + HMM Regime 표시
+    if ai_morning.get("ensemble_disagreement") is not None:
+        dis = ai_morning["ensemble_disagreement"]
+        hi = ai_morning.get("ensemble_high_dis", 0)
+        dis_emoji = "🟢" if dis < 0.2 else "🟡" if dis < 0.35 else "🔴"
+        my_fields.append({
+            "name": f"{dis_emoji} Ensemble 합의도",
+            "value": f"평균 불일치: `{dis:.3f}`\n고불일치 종목: `{hi}개`",
+            "inline": True,
+        })
+    if ai_morning.get("hmm_regime"):
+        regime = ai_morning["hmm_regime"]
+        conf = ai_morning.get("hmm_confidence", 0)
+        fb = " (Fallback)" if ai_morning.get("hmm_fallback") else ""
+        my_fields.append({
+            "name": "🌍 HMM Regime",
+            "value": f"`{regime}`{fb}\n확신도: `{conf:.0%}`",
+            "inline": True,
+        })
     if ai_morning.get("ai_top"):
         top_lines = []
         for t in ai_morning["ai_top"][:5]:
@@ -561,32 +581,6 @@ def _send_buy_premium(today_str: str, regime: str, buy_signals: list):
             {"name": "손절가", "value": f"${s.get('stop_loss', 0):,.2f} (-{s.get('stop_pct', 10)}%)", "inline": True},
             {"name": "섹터", "value": s.get("sector", "N/A"), "inline": True},
         ]
-
-        # ── AI Enrichment 필드 (Step 4에서 builder가 추가한 데이터) ──
-        if s.get("conviction_v5") is not None:
-            cv5 = s["conviction_v5"]
-            bar = "█" * int(cv5 * 10) + "░" * (10 - int(cv5 * 10))
-            fields.append({"name": "🧠 AI Conviction", "value": f"`{bar}` {cv5:.0%}", "inline": True})
-
-        if s.get("layer_agreement_label"):
-            fields.append({"name": "📐 Layer 일치", "value": s["layer_agreement_label"], "inline": True})
-
-        if s.get("signal_expiry"):
-            fields.append({"name": "⏳ 유효기간", "value": s["signal_expiry"], "inline": True})
-
-        if s.get("factor_tags"):
-            tags = s["factor_tags"]
-            if isinstance(tags, list):
-                tags_str = " ".join(f"`{t}`" for t in tags[:3])
-            else:
-                tags_str = str(tags)
-            fields.append({"name": "🏷️ Key Factors", "value": tags_str, "inline": False})
-
-        if s.get("rr_ratio"):
-            rr = s["rr_ratio"]
-            rr_emoji = "🟢" if rr >= 2 else "🟡" if rr >= 1.5 else "🔴"
-            tp = s.get("target_price", 0)
-            fields.append({"name": f"{rr_emoji} R:R", "value": f"1:{rr} (목표 ${tp:,.2f})", "inline": True})
 
         because_text = '\n'.join(because_lines)
         embeds.append({
@@ -870,6 +864,7 @@ def notify_risk_warning(
     defense_status: dict = None,
     stress_test: dict = None,
     correlation: dict = None,
+    **kwargs,
 ):
     today_str = calc_date.strftime("%Y-%m-%d")
     dd = drawdown or {}
@@ -938,7 +933,7 @@ def notify_risk_warning(
         my_fields.append({"name": "🛡️ 자동 방어", "value": "\n".join(d_lines), "inline": False})
 
     # ★ v4.1: AI IC + Alpha Decay 필드
-    _ai_risk = ai_risk or {}
+    _ai_risk = kwargs.get("ai_risk") or {}
     if _ai_risk.get("ic_details"):
         ic_lines = []
         for d in _ai_risk["ic_details"]:
@@ -952,10 +947,21 @@ def notify_risk_warning(
             decay_lines.append(f"💀 {d['grade']}등급 {d['period']}: avg {d['avg_return']:+.2f}% hit {d['hit']:.0f}% IC {d['ic']:+.4f}")
         my_fields.append({"name": "🔴 Alpha Decay (DEAD)", "value": "\n".join(decay_lines), "inline": False})
 
-    _send_discord([{
+    
+    # v5.0 AI Risk
+    _ai_risk = kwargs.get("ai_risk") or {}
+    _ai_fields = []
+    if _ai_risk.get("ic_details"):
+        _ic = [f"  {d['factor']}: IC={d.get('ic',0):.4f}" for d in _ai_risk.get("ic_details",[]) if d.get("status")=="DANGER"]
+        if _ic: _ai_fields.append({"name":"🧠 AI IC Warning","value":"\n".join(_ic[:5]),"inline":False})
+    if _ai_risk.get("decay_dead"):
+        _dd = [f"  {d.get('grade','?')}등급 ({d.get('period','?')})" for d in _ai_risk.get("decay_dead",[])[:3]]
+        if _dd: _ai_fields.append({"name":"📉 Alpha Decay","value":"\n".join(_dd),"inline":False})
+
+_send_discord([{
         "title": f"⚠️ 리스크 대시보드 — {today_str}",
         "color": level_color,
-        "fields": my_fields,
+        "fields": my_fields + _ai_fields,
         "footer": {"text": f"{FOOTER_BASE} | 리스크 대시보드"},
     }], "MY", "RISK")
     print(f"[NOTIFY] ⚠️ MY_RISK → 풀 대시보드 ({risk_level})")
