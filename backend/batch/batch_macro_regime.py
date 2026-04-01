@@ -299,7 +299,7 @@ def _get_today_indicators(calc_date):
         with get_cursor() as cur:
             cols = ", ".join(HMM_FEATURES)
             cur.execute(f"""
-                SELECT {cols}, vix_close, spy_close
+                SELECT {cols}, spy_close
                 FROM cross_asset_daily
                 WHERE calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
@@ -312,7 +312,7 @@ def _get_today_indicators(calc_date):
         result = {}
         for f in HMM_FEATURES:
             result[f] = float(row[f]) if row[f] is not None else 0.0
-        result["vix_close"] = float(row["vix_close"]) if row.get("vix_close") else 20.0
+        result["vix_close"] = 20.0  # default, VIX not in cross_asset_daily
         result["spy_close"] = float(row["spy_close"]) if row.get("spy_close") else 0.0
         return result
 

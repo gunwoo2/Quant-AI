@@ -333,7 +333,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         label_where = "AND fr.return_10d IS NOT NULL"
 
     # 현재값 + 5일전값 조회 (시계열 delta 계산용)
-    params = [target_date, target_date, target_date, target_date, target_date]
+    params = [target_date, target_date, target_date, target_date]
     if with_label:
         params.append(target_date)  # forward_returns calc_date
 
@@ -366,15 +366,8 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti_prev.section_a_technical AS tech_prev,
                 sfs_prev.weighted_score AS score_prev,
                 -- 기술적 원시값 (5개)
-                ti.rsi_14,
-                ti.macd_histogram,
-                CASE WHEN ti.bb_upper IS NOT NULL AND ti.bb_upper > ti.bb_lower
-                     THEN ROUND((((ti.bb_upper + ti.bb_lower) / 2.0 - ti.bb_lower) / NULLIF(ti.bb_upper - ti.bb_lower, 0) * 100)::numeric, 2)
-                     ELSE NULL END AS bb_pctb,
-                CASE WHEN ti.bb_width IS NOT NULL
-                     THEN ROUND(ti.bb_width::numeric, 2)
-                     ELSE NULL END AS atr_pct,
-                COALESCE(ti.volume_surge_ratio, 1.0) AS volume_ratio_20d,
+                ti.rsi_14, ti.macd_histogram, ti.bb_pctb,
+                ti.atr_pct, ti.volume_ratio_20d,
                 -- 등급 변경 이력
                 sfs.calc_date AS score_date
                 {label_select}
@@ -600,15 +593,28 @@ def _get_macro_data(target_date: date) -> dict:
                 result["regime_num"] = REGIME_MAP.get(row["regime"], 1)
 
             cur.execute("""
-                SELECT macro_score, risk_appetite, vix_close
+                SELECT cross_asset_total, risk_appetite_score
                 FROM cross_asset_daily
                 WHERE calc_date <= %s ORDER BY calc_date DESC LIMIT 1
             """, (target_date,))
             row = cur.fetchone()
             if row:
-                if row.get("macro_score"): result["macro_score"] = float(row["macro_score"])
-                if row.get("risk_appetite"): result["risk_appetite"] = float(row["risk_appetite"])
-                if row.get("vix_close"): result["vix_close"] = float(row["vix_close"])
+                if row.get("cross_asset_total"): result["macro_score"] = float(row["cross_asset_total"])
+                if row.get("risk_appetite_score"): result["risk_appetite"] = float(row["risk_appetite_score"])
+
+            # VIX: stock_prices에서 별도 조회
+            try:
+                cur.execute("""
+                    SELECT close_price FROM stock_prices sp
+                    JOIN stocks s ON s.stock_id = sp.stock_id
+                    WHERE s.ticker = 'VIX' AND sp.price_date <= %s
+                    ORDER BY sp.price_date DESC LIMIT 1
+                """, (target_date,))
+                vrow = cur.fetchone()
+                if vrow and vrow.get("close_price"):
+                    result["vix_close"] = float(vrow["close_price"])
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"[XGB-v2] 매크로 조회 실패: {e}")
     return result
@@ -970,7 +976,7 @@ def _get_stat_score(cur, stock_id, calc_date):
         """, (stock_id, calc_date))
         row = cur.fetchone()
         return round(float(row["weighted_score"]), 2) if row and row["weighted_score"] else None
-    except Exception as e:
+    except:
         return None
 
 
@@ -1008,8 +1014,8 @@ def _get_ai_weight() -> float:
                     return min(0.50, AI_WEIGHT_DEFAULT + 0.10)
                 elif ic_ai < ic_stat * 0.5:
                     return max(0.10, AI_WEIGHT_DEFAULT - 0.10)
-    except Exception as e:
-        logger.debug(f"Handled: {e}")
+    except:
+        pass
     return AI_WEIGHT_DEFAULT
 
 
@@ -1054,8 +1060,8 @@ def get_stock_explanation(stock_id: int, calc_date: date = None) -> dict:
                     "top_negative": row["shap_top5_neg"] or [],
                     "all_shap": row["shap_all"] or {},
                 }
-    except Exception as e:
-        logger.debug(f"Handled: {e}")
+    except:
+        pass
     return {"ai_score": None, "top_positive": [], "top_negative": []}
 
 

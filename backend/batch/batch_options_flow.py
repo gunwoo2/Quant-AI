@@ -32,6 +32,16 @@ from db_pool import get_cursor
 
 logger = logging.getLogger("batch_options_flow")
 
+def _clamp(val, lo, hi):
+    if val is None: return None
+    try: return max(lo, min(hi, float(val)))
+    except: return None
+
+def _clamp_int(val, lo, hi):
+    if val is None: return None
+    try: return max(lo, min(hi, int(float(val))))
+    except: return None
+
 try:
     import yfinance as yf
     _HAS_YF = True
@@ -352,7 +362,7 @@ def run_options_flow(calc_date=None):
         iv_rank, iv_pctile = _calc_iv_rank(stock_id, ticker, data.get("iv_current"), calc_date)
 
         # 점수
-        score = _calc_options_score(data.get("put_call_ratio"), iv_rank, data.get("iv_skew"))
+        score = _calc_options_score(_clamp(data.get("put_call_ratio"), 0, 999), iv_rank, data.get("iv_skew"))
 
         # DB 저장
         try:
@@ -374,10 +384,10 @@ def run_options_flow(calc_date=None):
                         created_at=NOW()
                 """, (
                     stock_id, calc_date, ticker,
-                    data.get("iv_current"), iv_rank, iv_pctile,
-                    data.get("put_volume"), data.get("call_volume"),
-                    data.get("put_call_ratio"),
-                    data.get("atm_iv"), data.get("otm_put_iv"),
+                    _clamp(data.get("iv_current"), -9999, 9999), _clamp(iv_rank, -99, 9999), _clamp(iv_pctile, -99, 9999),
+                    _clamp_int(data.get("put_volume"), 0, 2000000000), _clamp_int(data.get("call_volume"), 0, 2000000000),
+                    _clamp(data.get("put_call_ratio"), 0, 999),
+                    _clamp(data.get("atm_iv"), -9999, 9999), _clamp(data.get("otm_put_iv"), -9999, 9999),
                     data.get("iv_skew"), score,
                     "FULL" if iv_rank is not None else "PARTIAL",
                     json.dumps(data, default=str),

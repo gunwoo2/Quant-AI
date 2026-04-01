@@ -557,7 +557,6 @@ def _s_notify_all(calc_date, results, start_time):
                 fear_greed=fear_greed,
                 portfolio_summary=portfolio_summary,
                 ai_morning=ai_morning,
-                ai_risk=ai_risk_data,
             )
             print(f"  ✅ 모닝 브리핑 → MY_MORNING + PUB_MORNING")
         except Exception as e:
@@ -606,7 +605,6 @@ def _s_notify_all(calc_date, results, start_time):
                 defense_status=risk_data.get("defense"),
                 stress_test=risk_data.get("stress_test"),
                 correlation=risk_data.get("correlation"),
-                ai_risk=ai_risk_data,
             )
             print(f"  ✅ 리스크 → MY_RISK + PUB_RISK ({risk_data.get('risk_level', '?')})")
         except Exception as e:

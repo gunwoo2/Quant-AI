@@ -65,11 +65,12 @@ def _get_model_health(calc_date):
         with get_cursor() as cur:
             # 최근 5일 평균 IC
             cur.execute("""
-                SELECT AVG(ic_value) AS avg_ic
-                FROM factor_ic_daily
-                WHERE factor_name = 'total' AND horizon = '20d'
-                  AND calc_date >= %s - INTERVAL '10 days'
-                ORDER BY calc_date DESC LIMIT 5
+                SELECT AVG(ic_value) AS avg_ic FROM (
+                    SELECT ic_value FROM factor_ic_daily
+                    WHERE factor_name = 'total' AND horizon = '20d'
+                      AND calc_date >= %s - INTERVAL '10 days'
+                    ORDER BY calc_date DESC LIMIT 5
+                ) sub
             """, (calc_date,))
             row = cur.fetchone()
             health["current_ic"] = float(row["avg_ic"]) if row and row["avg_ic"] else None
@@ -202,26 +203,20 @@ def _attempt_retrain(calc_date, current_ic, reasons):
         print(f"  [AUTOPILOT] ⚠️ 개선 부족 → 기존 모델 유지 "
               f"(IC: {old_ic:.4f} → {new_ic:.4f}, +{(improvement-1)*100:.1f}% < 10%)")
 
-        # 새 모델 비활성 + 이전 모델 명시적 복원
+        # 새 모델 비활성 (이전 모델 복원)
         try:
             with get_cursor() as cur:
-                # 방금 생성된 (현재 활성) 모델 비활성
-                cur.execute("""
-                    UPDATE ml_model_meta SET is_active = FALSE
-                    WHERE is_active = TRUE
-                    AND trained_date = (SELECT MAX(trained_date) FROM ml_model_meta WHERE is_active = TRUE)
-                """)
-                # 직전 모델 복원 (oos_ic가 가장 높은 비활성 모델)
+                # 가장 최근 활성 모델 말고 그 이전 모델을 다시 활성화
                 cur.execute("""
                     UPDATE ml_model_meta SET is_active = TRUE
                     WHERE id = (
                         SELECT id FROM ml_model_meta
-                        WHERE is_active = FALSE AND oos_ic IS NOT NULL
-                        ORDER BY oos_ic DESC, trained_date DESC LIMIT 1
+                        WHERE is_active = FALSE
+                        ORDER BY trained_date DESC LIMIT 1
                     )
                 """)
-        except Exception as e:
-            logger.warning(f"[AUTOPILOT] 롤백 실패: {e}")
+        except Exception:
+            pass
 
         _log_telemetry(calc_date, "AUTOPILOT", "model_kept", old_ic, {
             "new_ic": round(new_ic, 6), "improvement": round(improvement, 4),
