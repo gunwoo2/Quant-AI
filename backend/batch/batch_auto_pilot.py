@@ -65,11 +65,12 @@ def _get_model_health(calc_date):
         with get_cursor() as cur:
             # 최근 5일 평균 IC
             cur.execute("""
-                SELECT AVG(ic_value) AS avg_ic
-                FROM factor_ic_daily
-                WHERE factor_name = 'total' AND horizon = '20d'
-                  AND calc_date >= %s - INTERVAL '10 days'
-                ORDER BY calc_date DESC LIMIT 5
+                SELECT AVG(ic_value) AS avg_ic FROM (
+                    SELECT ic_value FROM factor_ic_daily
+                    WHERE factor_name = 'total' AND horizon = '20d'
+                      AND calc_date >= %s - INTERVAL '10 days'
+                    ORDER BY calc_date DESC LIMIT 5
+                ) sub
             """, (calc_date,))
             row = cur.fetchone()
             health["current_ic"] = float(row["avg_ic"]) if row and row["avg_ic"] else None
