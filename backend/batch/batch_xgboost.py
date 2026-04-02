@@ -344,7 +344,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         query = f"""
             SELECT
                 s.stock_id,
-                s.sector_code,
+                s.sector_id AS sector_code,
                 -- 현재 L1 서브팩터 (4개)
                 l1.moat_score, l1.value_score, l1.momentum_score, l1.stability_score,
                 -- 현재 L2 서브팩터 (3개)
@@ -357,7 +357,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti.section_c_macro,
                 -- 현재 종합점수 (시계열 delta용)
                 sfs.weighted_score,
-                sfs.grade AS current_grade,
+                sfs.current_grade,
                 -- 5일전 서브팩터 (delta 계산용)
                 l1_prev.moat_score AS moat_prev,
                 l1_prev.value_score AS value_prev,
@@ -918,7 +918,7 @@ def _build_features_v1(target_date):
     ]
     with get_cursor() as cur:
         cur.execute("""
-            SELECT s.stock_id, s.sector_code,
+            SELECT s.stock_id, s.sector_id AS sector_code,
                    sfs.weighted_score, sfs.layer1_score, sfs.layer2_score, sfs.layer3_score,
                    l1.moat_score, l1.value_score, l1.momentum_score, l1.stability_score,
                    l2.news_sentiment_score AS news_score, l2.analyst_rating_score AS analyst_score,

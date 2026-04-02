@@ -196,11 +196,12 @@ def run_put_call(calc_date: date = None):
     # ── 종목 목록 조회 (시총 상위 순) ──
     with get_cursor() as cur:
         cur.execute("""
-            SELECT DISTINCT s.stock_id, s.ticker
+            SELECT s.stock_id, s.ticker
             FROM stocks s
             LEFT JOIN stock_prices_realtime sp ON s.stock_id = sp.stock_id
+            LEFT JOIN stock_final_scores sfs ON s.stock_id = sfs.stock_id
             WHERE s.is_active = TRUE
-            ORDER BY sp.volume_today DESC NULLS LAST
+            ORDER BY sp.current_price DESC NULLS LAST
         """)
         all_stocks = [dict(r) for r in cur.fetchall()]
 
