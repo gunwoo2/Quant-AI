@@ -54,7 +54,7 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
             # Moat
             cur.execute("""
                 SELECT roic_score, gpa_score, fcf_margin_score,
-                       net_debt_ebitda_score, f_score_points, total_moat_score
+                       net_debt_ebitda_score, section_a_fundamental, total_moat_score
                 FROM quant_moat_scores
                 WHERE stock_id = %s ORDER BY calc_date DESC LIMIT 1
             """, (stock_id,))
@@ -71,7 +71,7 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
 
             # Momentum
             cur.execute("""
-                SELECT f_score_raw, f_score_points, earnings_surprise_score,
+                SELECT f_score_raw, section_a_fundamental, earnings_surprise_score,
                        earnings_revision_score, total_momentum_score
                 FROM quant_momentum_scores
                 WHERE stock_id = %s ORDER BY calc_date DESC LIMIT 1
@@ -1089,31 +1089,31 @@ def build_ai_morning_data(calc_date: date) -> dict:
             "ai_bottom": [...],     # AI Score 하위 3종목
             "feature_top3": [...],  # Feature Importance Top 3
             "model_auc": float,     # 최근 학습 AUC
-            "ai_weight": float,     # AI 가중치
+            "NULL AS ai_weight": float,     # AI 가중치
             "grade_dist": {...},    # 등급 분포
         }
     """
     from db_pool import get_cursor
     result = {
         "ai_top": [], "ai_bottom": [], "feature_top3": [],
-        "model_auc": None, "ai_weight": None, "grade_dist": {},
+        "model_auc": None, "NULL AS ai_weight": None, "grade_dist": {},
     }
 
     try:
         with get_cursor() as cur:
             # AI Score Top 5 (상승)
             cur.execute("""
-                SELECT s.ticker, xp.ai_score, xp.ensemble_score,
+                SELECT s.ticker, sfs.weighted_score, sfs.conviction_score,
                        fs.grade, fs.weighted_score,
                        xp.shap_top_positive
-                FROM stock_final_scores xp
-                JOIN stocks s ON xp.stock_id = s.stock_id
+                FROM stock_final_scores sfs
+                JOIN stocks s ON sfs.stock_id = s.stock_id
                 LEFT JOIN (
                     SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
                     FROM stock_final_scores ORDER BY stock_id, calc_date DESC
-                ) fs ON xp.stock_id = fs.stock_id
-                WHERE xp.calc_date = %s AND xp.ai_score IS NOT NULL
-                ORDER BY xp.ai_score DESC LIMIT 5
+                ) fs ON sfs.stock_id = fs.stock_id
+                WHERE sfs.calc_date = %s AND sfs.weighted_score IS NOT NULL
+                ORDER BY sfs.weighted_score DESC LIMIT 5
             """, (calc_date,))
             for row in cur.fetchall():
                 shap_pos = row.get("shap_top_positive") or ""
@@ -1127,16 +1127,16 @@ def build_ai_morning_data(calc_date: date) -> dict:
 
             # AI Score Bottom 3 (하락 경고)
             cur.execute("""
-                SELECT s.ticker, xp.ai_score, fs.grade, fs.weighted_score,
+                SELECT s.ticker, sfs.weighted_score, fs.grade, fs.weighted_score,
                        xp.shap_top_negative
-                FROM stock_final_scores xp
-                JOIN stocks s ON xp.stock_id = s.stock_id
+                FROM stock_final_scores sfs
+                JOIN stocks s ON sfs.stock_id = s.stock_id
                 LEFT JOIN (
                     SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
                     FROM stock_final_scores ORDER BY stock_id, calc_date DESC
-                ) fs ON xp.stock_id = fs.stock_id
-                WHERE xp.calc_date = %s AND xp.ai_score IS NOT NULL
-                ORDER BY xp.ai_score ASC LIMIT 3
+                ) fs ON sfs.stock_id = fs.stock_id
+                WHERE sfs.calc_date = %s AND sfs.weighted_score IS NOT NULL
+                ORDER BY sfs.weighted_score ASC LIMIT 3
             """, (calc_date,))
             for row in cur.fetchall():
                 shap_neg = row.get("shap_top_negative") or ""
@@ -1149,16 +1149,16 @@ def build_ai_morning_data(calc_date: date) -> dict:
 
             # 모델 메타 (최근 학습 결과)
             cur.execute("""
-                SELECT train_auc, ai_weight, feature_importance
-                FROM system_telemetry
+                SELECT valid_auc, NULL AS ai_weight, NULL AS feature_importance
+                FROM ml_model_meta
                 WHERE is_active = TRUE
                 ORDER BY created_at DESC LIMIT 1
             """)
             model = cur.fetchone()
             if model:
-                result["model_auc"] = _safe_float(model.get("train_auc"))
-                result["ai_weight"] = _safe_float(model.get("ai_weight"))
-                fi = model.get("feature_importance")
+                result["model_auc"] = _safe_float(model.get("valid_auc"))
+                result["NULL AS ai_weight"] = _safe_float(model.get("NULL AS ai_weight"))
+                fi = model.get("NULL AS feature_importance")
                 if fi and isinstance(fi, (dict, str)):
                     import json
                     if isinstance(fi, str):
@@ -1265,7 +1265,7 @@ def build_ai_risk_data(calc_date: date) -> dict:
         # Alpha Decay DEAD
         with get_cursor() as cur:
             cur.execute("""
-                SELECT grade, period, avg_return, hit_rate, ic_value, signal_status
+                SELECT grade, horizon_days, avg_return, hit_rate, ic_value, signal_status
                 FROM alpha_decay_daily
                 WHERE calc_date = %s AND signal_status = 'DEAD'
                 ORDER BY grade
@@ -1273,7 +1273,7 @@ def build_ai_risk_data(calc_date: date) -> dict:
             for row in cur.fetchall():
                 result["decay_dead"].append({
                     "grade": row["grade"],
-                    "period": row["period"],
+                    "period": row["horizon_days"],
                     "hit": round(_safe_float(row["hit_rate"]) * 100, 1),
                     "ic": round(_safe_float(row["ic_value"]), 4),
                     "avg_return": round(_safe_float(row["avg_return"]) * 100, 2),
@@ -1290,20 +1290,20 @@ def build_ai_batch_summary(calc_date: date) -> dict:
     배치 완료용 AI 요약 (AUC + Feature Top + 추론 건수).
     """
     from db_pool import get_cursor
-    result = {"auc": None, "ai_weight": None, "predict_count": 0, "feature_top3": []}
+    result = {"auc": None, "NULL AS ai_weight": None, "predict_count": 0, "feature_top3": []}
 
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT train_auc, ai_weight, feature_importance
-                FROM system_telemetry
+                SELECT valid_auc, NULL AS ai_weight, NULL AS feature_importance
+                FROM ml_model_meta
                 WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1
             """)
             model = cur.fetchone()
             if model:
-                result["auc"] = _safe_float(model.get("train_auc"))
-                result["ai_weight"] = _safe_float(model.get("ai_weight"))
-                fi = model.get("feature_importance")
+                result["auc"] = _safe_float(model.get("valid_auc"))
+                result["NULL AS ai_weight"] = _safe_float(model.get("NULL AS ai_weight"))
+                fi = model.get("NULL AS feature_importance")
                 if fi:
                     import json
                     if isinstance(fi, str):
