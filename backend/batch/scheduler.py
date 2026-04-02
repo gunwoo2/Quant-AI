@@ -257,16 +257,32 @@ def _s_notify_all(calc_date, results, start_time):
         if rows:
             latest = rows[0]
             regime = latest["regime"]
-            regime_detail = {
-                "spy_price": float(latest["spy_price"] or 0),
-                "sma_200": float(latest.get("spy_ma200") or 0),
-                "vix_close": float(latest["vix_close"] or 0),
-                "regime_multiplier": float(latest.get("regime_multiplier") or 1.0),
-            }
+            
+            spy_price = float(latest["spy_price"] or 0)
+            sma_200 = float(latest.get("spy_ma200") or 0)
+            vix_now = float(latest["vix_close"] or 0)
+            
+            # ★ BUG-09 FIX: 전일 대비 변동 계산
+            spy_vs_sma200 = round((spy_price / sma_200 - 1) * 100, 1) if sma_200 > 0 else 0
+            
+            prev_vix = 0
+            prev_spy = 0
             if len(rows) >= 2:
-                prev_regime = rows[1]["regime"]
-                if prev_regime != regime:
-                    regime_changed = True
+                prev_vix = float(rows[1].get("vix_close") or 0)
+                prev_spy = float(rows[1].get("spy_price") or 0)
+            
+            vix_change = round(((vix_now / prev_vix - 1) * 100) if prev_vix > 0 else 0, 1)
+            futures_change = round(((spy_price / prev_spy - 1) * 100) if prev_spy > 0 else 0, 2)
+            
+            regime_detail = {
+                "spy_price": spy_price,
+                "sma_200": sma_200,
+                "vix_close": vix_now,
+                "regime_multiplier": float(latest.get("regime_multiplier") or 1.0),
+                "spy_vs_sma200": spy_vs_sma200,       # ★ 추가
+                "futures_change": futures_change,       # ★ 추가
+                "vix_change": vix_change,               # ★ 추가
+            }
 
         # ── 매수 시그널 ──
         with get_cursor() as cur:
@@ -294,27 +310,43 @@ def _s_notify_all(calc_date, results, start_time):
                 })
 
         # ── 매도 시그널 ──
+        # ── 매도 시그널 ──  [v5.1 FIX]
         with get_cursor() as cur:
             cur.execute("""
                 SELECT ts.*, s.ticker, sec.sector_name AS sector, s.stock_id
                 FROM trading_signals ts
                 JOIN stocks s ON ts.stock_id = s.stock_id
                 LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
-                WHERE ts.signal_date = %s AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
+                WHERE ts.signal_date = %s 
+                  AND ts.signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
                 ORDER BY ts.final_score DESC NULLS LAST
             """, (calc_date,))
             for row in cur.fetchall():
+                # ★ FIX: pnl_pct 재계산 (DB에 없거나 0일 때 대비)
+                entry_p = float(row.get("entry_price") or 0)
+                curr_p = float(row.get("current_price") or 0)
+                db_pnl = float(row.get("pnl_pct") or 0)
+                
+                if db_pnl != 0:
+                    pnl_pct = db_pnl
+                elif entry_p > 0 and curr_p > 0:
+                    pnl_pct = (curr_p - entry_p) / entry_p * 100
+                else:
+                    pnl_pct = 0
+
                 sig = {
                     "stock_id": row["stock_id"],
                     "ticker": row["ticker"],
-                    "price": float(row.get("current_price") or 0),
-                    "entry_price": float(row.get("entry_price") or 0),
-                    "pnl_pct": 0,
+                    "price": curr_p,
+                    "entry_price": entry_p,
+                    "pnl_pct": round(pnl_pct, 2),
                     "reason": row.get("sell_reason", row.get("signal_type", "SELL")),
                     "shares": int(row.get("shares") or 0),
                     "holding_days": int(row.get("holding_days") or 0),
                 }
-                if row.get("signal_type") == 'STOP_LOSS' and 0 < -15:
+                
+                # ★ BUG-05 FIX: 0 < -15 → pnl_pct < -15
+                if row.get("signal_type") == 'STOP_LOSS' and pnl_pct < -15:
                     fire_signals.append(sig)
                 else:
                     sell_signals_raw.append(sig)

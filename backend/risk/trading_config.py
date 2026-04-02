@@ -12,13 +12,13 @@ from typing import Dict, Optional
 #  국면별 파라미터 테이블
 # ═══════════════════════════════════════════════════════════
 
-REGIME_PARAMS = {
+REGIME_PARAMS_FIX = {
     "BULL": {
         "max_positions":       20,
         "max_position_pct":    0.10,
         "cash_minimum":        0.10,
-        "buy_score_min":       65,
-        "buy_l3_min":          50,
+        "buy_score_min":       58,      # 65 → 58 (상위 ~15% percentile)
+        "buy_l3_min":          45,      # 50 → 45
         "buy_rsi_max":         75,
         "stop_loss_atr_mult":  2.0,
         "trailing_stop_atr_mult": 3.0,
@@ -30,7 +30,6 @@ REGIME_PARAMS = {
         "max_sector_names":    11,
         "correlation_max":     0.80,
         "turnover_budget_monthly": 0.30,
-        # 블렌딩 비율 (RP / HK / Conv)
         "blend_rp": 0.30,
         "blend_hk": 0.40,
         "blend_conv": 0.30,
@@ -39,8 +38,8 @@ REGIME_PARAMS = {
         "max_positions":       15,
         "max_position_pct":    0.08,
         "cash_minimum":        0.20,
-        "buy_score_min":       70,
-        "buy_l3_min":          55,
+        "buy_score_min":       62,      # ★ 70 → 62 (상위 ~10% = 약 53개 종목 후보)
+        "buy_l3_min":          50,      # 55 → 50
         "buy_rsi_max":         70,
         "stop_loss_atr_mult":  1.8,
         "trailing_stop_atr_mult": 2.5,
@@ -60,8 +59,8 @@ REGIME_PARAMS = {
         "max_positions":       10,
         "max_position_pct":    0.06,
         "cash_minimum":        0.35,
-        "buy_score_min":       80,
-        "buy_l3_min":          65,
+        "buy_score_min":       68,      # 80 → 68 (상위 ~3%)
+        "buy_l3_min":          58,      # 65 → 58
         "buy_rsi_max":         65,
         "stop_loss_atr_mult":  1.5,
         "trailing_stop_atr_mult": 2.0,
@@ -81,8 +80,8 @@ REGIME_PARAMS = {
         "max_positions":       5,
         "max_position_pct":    0.04,
         "cash_minimum":        0.60,
-        "buy_score_min":       90,
-        "buy_l3_min":          75,
+        "buy_score_min":       72,      # 90 → 72 (상위 ~1%)
+        "buy_l3_min":          65,      # 75 → 65
         "buy_rsi_max":         60,
         "stop_loss_atr_mult":  1.2,
         "trailing_stop_atr_mult": 1.5,
@@ -99,6 +98,7 @@ REGIME_PARAMS = {
         "blend_conv": 0.20,
     },
 }
+
 
 # 등급별 확신도 배수
 GRADE_CONVICTION = {
@@ -181,8 +181,8 @@ class DynamicConfig(TradingConfig):
             if hasattr(self, key):
                 setattr(self, key, value)
 
-    def apply_dd_override(self, dd_mode: str):
-        """DD 모드에 따라 추가 제한 적용"""
+    def apply_dd_override_FIX(self, dd_mode: str):
+        """DD 모드에 따라 추가 제한 적용 — v5.1 FIX"""
         self.dd_mode = dd_mode
 
         if dd_mode == "NORMAL":
@@ -192,9 +192,9 @@ class DynamicConfig(TradingConfig):
 
         elif dd_mode == "CAUTION":
             self._dd_buy_allowed = True
-            self.buy_score_min = min(self.buy_score_min + 5, 95)
-            self.position_size_mult *= 0.7
-            self.trailing_stop_atr_mult = max(self.trailing_stop_atr_mult - 0.5, 1.0)
+            self.buy_score_min = min(self.buy_score_min + 2, 95)    # ★ +5 → +2
+            self.position_size_mult *= 0.8                            # ★ 0.7 → 0.8 (덜 공격적 축소)
+            self.trailing_stop_atr_mult = max(self.trailing_stop_atr_mult - 0.3, 1.0)  # ★ -0.5 → -0.3
 
         elif dd_mode == "WARNING":
             self._dd_buy_allowed = False

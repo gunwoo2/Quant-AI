@@ -406,32 +406,36 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
         print(f"  ⚠️ Audit 저장 실패: {e}")
 
     # ── Step 7/7: Discord 알림 ──
-    print(f"\n── Step 7/7: Discord 알림 ──")
-    try:
-        from notifier import notify_daily_signals
-        portfolio_summary = {
-            "total_value": account_value,
-            "cash_pct": max(0, (account_value - current_invested) / account_value * 100) if account_value > 0 else 100,
-            "num_positions": num_existing + len(buy_signals),
-            "daily_return": 0,
-            "vs_spy": 0,
-        }
-        notify_daily_signals(
-            calc_date=calc_date,
-            regime=regime,
-            regime_detail=regime_result,
-            buy_signals=buy_signals,
-            sell_signals=sell_signals,
-            portfolio_summary=portfolio_summary,
-        )
-    except Exception as e:
-        print(f"  ⚠️ 알림 실패: {e}")
+    # print(f"\n── Step 7/7: Discord 알림 ──")
+    # try:
+    #     from notifier import notify_daily_signals
+    #     portfolio_summary = {
+    #         "total_value": account_value,
+    #         "cash_pct": max(0, (account_value - current_invested) / account_value * 100) if account_value > 0 else 100,
+    #         "num_positions": num_existing + len(buy_signals),
+    #         "daily_return": 0,
+    #         "vs_spy": 0,
+    #     }
+    #     notify_daily_signals(
+    #         calc_date=calc_date,
+    #         regime=regime,
+    #         regime_detail=regime_result,
+    #         buy_signals=buy_signals,
+    #         sell_signals=sell_signals,
+    #         portfolio_summary=portfolio_summary,
+    #     )
+    # except Exception as e:
+    #     print(f"  ⚠️ 알림 실패: {e}")
 
-    # 국면 전환 알림
-    try:
-        _check_regime_change(calc_date, regime)
-    except Exception:
-        pass
+    # # 국면 전환 알림
+    # try:
+    #     _check_regime_change(calc_date, regime)
+    # except Exception:
+    #     pass
+
+    # ── Step 7/7: 알림은 scheduler Step 8에서 통합 발송 ──
+    print(f"\n── Step 7/7: 알림 스킵 (scheduler Step 8에서 통합 발송) ──")
+    print(f"  BUY={len(buy_signals)} SELL={len(sell_signals)} → _s_notify_all()에서 전송")
 
 
     # ── ★ v3.6: 긴급 매도 + 반등 기회 알림 ──
@@ -800,47 +804,86 @@ def _update_trailing_stop(position_id: int, new_trailing: float, current_price: 
         """, (new_trailing, current_price, position_id))
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# [BUG-01 FIX] _save_signals() — SELL에 핵심 데이터 필드 추가
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# ■ 변경 전 (버그):
+#   INSERT INTO trading_signals
+#       (stock_id, signal_date, signal_type, sell_reason, final_score, current_price)
+#   VALUES (%s, %s, 'SELL', %s, %s, %s)
+#
+# ■ 변경 후 (수정):
+
 def _save_signals(calc_date, buy_signals, sell_signals, stocks, regime):
-    """trading_signals 테이블에 저장"""
+    """trading_signals 테이블에 저장 — v5.1 FIX: SELL에 핵심 필드 추가"""
+    from db_pool import get_cursor
     with get_cursor() as cur:
-        # BUY
+        # BUY — 기존과 동일
         for s in buy_signals:
             stock = stocks.get(s["ticker"], {})
             cur.execute("""
                 INSERT INTO trading_signals
                     (stock_id, signal_date, signal_type, signal_strength,
-                     grade_condition, momentum_condition, rsi_condition, trend_condition, regime_condition,
-                     final_score, layer3_score, rsi_value, atr_14, current_price)
-                VALUES (%s, %s, 'BUY', %s, TRUE, TRUE, TRUE, TRUE, TRUE, %s, %s, %s, %s, %s)
+                     grade_condition, momentum_condition, rsi_condition, 
+                     trend_condition, regime_condition,
+                     final_score, layer3_score, rsi_value, atr_14, current_price,
+                     grade, shares, amount, weight_pct, stop_loss, stop_pct)
+                VALUES (%s, %s, 'BUY', %s, TRUE, TRUE, TRUE, TRUE, TRUE, 
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (stock_id, signal_date) DO UPDATE SET
                     signal_type = EXCLUDED.signal_type,
                     signal_strength = EXCLUDED.signal_strength,
                     final_score = EXCLUDED.final_score,
-                    current_price = EXCLUDED.current_price
+                    current_price = EXCLUDED.current_price,
+                    grade = EXCLUDED.grade,
+                    shares = EXCLUDED.shares,
+                    amount = EXCLUDED.amount,
+                    weight_pct = EXCLUDED.weight_pct,
+                    stop_loss = EXCLUDED.stop_loss,
+                    stop_pct = EXCLUDED.stop_pct
             """, (
                 s["stock_id"], calc_date, s["score"],
                 stock.get("final_score", 0), stock.get("layer3_score", 0),
                 stock.get("rsi_14", 50), stock.get("atr_14", 0),
                 s["price"],
+                s.get("grade", ""),
+                s.get("shares", 0),
+                s.get("amount", 0),
+                s.get("weight", 0),
+                s.get("stop_loss", 0),
+                s.get("stop_pct", 10),
             ))
 
-        # SELL
+        # ★★★ SELL — BUG-01 FIX: entry_price, shares, pnl_pct, holding_days 추가 ★★★
         for s in sell_signals:
             cur.execute("""
                 INSERT INTO trading_signals
-                    (stock_id, signal_date, signal_type, sell_reason, final_score, current_price)
-                VALUES (%s, %s, 'SELL', %s, %s, %s)
+                    (stock_id, signal_date, signal_type, sell_reason, 
+                     final_score, current_price,
+                     entry_price, shares, pnl_pct, holding_days)
+                VALUES (%s, %s, 'SELL', %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (stock_id, signal_date) DO UPDATE SET
                     signal_type = 'SELL',
                     sell_reason = EXCLUDED.sell_reason,
-                    current_price = EXCLUDED.current_price
+                    current_price = EXCLUDED.current_price,
+                    entry_price = EXCLUDED.entry_price,
+                    shares = EXCLUDED.shares,
+                    pnl_pct = EXCLUDED.pnl_pct,
+                    holding_days = EXCLUDED.holding_days
             """, (
                 s["stock_id"], calc_date, s["reason"],
                 stocks.get(s["ticker"], {}).get("final_score", 0),
                 s["price"],
+                s.get("entry_price", 0),
+                s.get("shares", 0),
+                s.get("pnl_pct", 0),
+                s.get("holding_days", 0),
             ))
 
     print(f"  ✅ 시그널 DB 저장 (BUY={len(buy_signals)}, SELL={len(sell_signals)})")
+
 
 
 def _process_sells(calc_date, sell_signals):

@@ -346,16 +346,13 @@ def _check_correlation(stock_id: int, ticker: str) -> Optional[dict]:
 #  2. SELL — MAE/MFE + 점수 변화 + 역대 성과
 # ═══════════════════════════════════════════════════════════
 
-def build_sell_analysis(stock_id: int, ticker: str, calc_date: date,
-                        base_signal: dict) -> dict:
+def build_sell_analysis(stock_id: int, ticker: str, calc_date, base_signal: dict) -> dict:
     """
     매도 시그널에 v4 분석 데이터 보강.
-    
-    추가:
-      - MAE/MFE (Maximum Adverse/Favorable Excursion)
-      - 매입 시 점수 vs 현재 점수 추적
-      - 역대 같은 사유 매도의 성과 통계
+    ★ v5.1 FIX: entry_price, shares, holding_days, pnl_pct를 
+                 portfolio_positions에서 복원하여 result에 설정.
     """
+    from db_pool import get_cursor
     result = dict(base_signal)
 
     try:
@@ -364,9 +361,9 @@ def build_sell_analysis(stock_id: int, ticker: str, calc_date: date,
 
         # ── MAE/MFE 계산 ──
         with get_cursor() as cur:
-            # 포지션 매입일 조회
             cur.execute("""
-                SELECT entry_date, entry_price, highest_price, lowest_price
+                SELECT entry_date, entry_price, shares, highest_price, 
+                       COALESCE(lowest_price, entry_price) AS lowest_price
                 FROM portfolio_positions
                 WHERE stock_id = %s AND portfolio_id = 1
                 ORDER BY entry_date DESC LIMIT 1
@@ -377,6 +374,15 @@ def build_sell_analysis(stock_id: int, ticker: str, calc_date: date,
             ep = float(pos["entry_price"] or entry_price)
             highest = float(pos["highest_price"] or current_price)
             lowest = float(pos["lowest_price"] or current_price)
+
+            # ★★★ BUG-01 CORE FIX: 누락 필드 복원 ★★★
+            result["entry_price"] = ep
+            result["shares"] = int(float(pos.get("shares") or result.get("shares", 0)))
+            if pos.get("entry_date"):
+                result["holding_days"] = (calc_date - pos["entry_date"]).days
+            if ep > 0:
+                result["pnl_pct"] = round((current_price - ep) / ep * 100, 2)
+            # ★★★ END BUG-01 FIX ★★★
 
             mfe = ((highest - ep) / ep * 100) if ep > 0 else 0
             mae = ((lowest - ep) / ep * 100) if ep > 0 else 0
@@ -394,42 +400,45 @@ def build_sell_analysis(stock_id: int, ticker: str, calc_date: date,
         if pos and pos.get("entry_date"):
             entry_date = pos["entry_date"]
             with get_cursor() as cur:
-                # 매입일 점수
                 cur.execute("""
                     SELECT weighted_score, grade, layer1_score, layer2_score, layer3_score
                     FROM stock_final_scores
                     WHERE stock_id = %s AND calc_date <= %s
                     ORDER BY calc_date DESC LIMIT 1
                 """, (stock_id, entry_date))
-                entry_scores = _row_to_dict(cur.fetchone())
+                entry_scores = cur.fetchone()
 
-                # 현재 점수
                 cur.execute("""
                     SELECT weighted_score, grade, layer1_score, layer2_score, layer3_score
                     FROM stock_final_scores
                     WHERE stock_id = %s ORDER BY calc_date DESC LIMIT 1
                 """, (stock_id,))
-                current_scores = _row_to_dict(cur.fetchone())
+                current_scores = cur.fetchone()
 
             if entry_scores and current_scores:
-                result["entry_score"] = _safe_float(entry_scores.get("weighted_score"))
+                _sf = lambda v: float(v) if v is not None else 0.0
+                result["entry_score"] = _sf(entry_scores.get("weighted_score"))
                 result["entry_grade"] = entry_scores.get("grade", "?")
-                result["current_score"] = _safe_float(current_scores.get("weighted_score"))
+                result["current_score"] = _sf(current_scores.get("weighted_score"))
                 result["current_grade"] = current_scores.get("grade", "?")
-                result["entry_l1"] = _safe_float(entry_scores.get("layer1_score"))
-                result["entry_l2"] = _safe_float(entry_scores.get("layer2_score"))
-                result["entry_l3"] = _safe_float(entry_scores.get("layer3_score"))
-                result["current_l1"] = _safe_float(current_scores.get("layer1_score"))
-                result["current_l2"] = _safe_float(current_scores.get("layer2_score"))
-                result["current_l3"] = _safe_float(current_scores.get("layer3_score"))
+                result["entry_l1"] = _sf(entry_scores.get("layer1_score"))
+                result["entry_l2"] = _sf(entry_scores.get("layer2_score"))
+                result["entry_l3"] = _sf(entry_scores.get("layer3_score"))
+                result["current_l1"] = _sf(current_scores.get("layer1_score"))
+                result["current_l2"] = _sf(current_scores.get("layer2_score"))
+                result["current_l3"] = _sf(current_scores.get("layer3_score"))
 
-        # ── 역대 같은 사유 매도 성과 (Devil's Advocate) ──
+        # ── 역대 같은 사유 매도 성과 ──
         reason = result.get("reason", "")
         if reason:
-            result["historical_reason_stats"] = _calc_historical_reason_stats(reason)
+            try:
+                result["historical_reason_stats"] = _calc_historical_reason_stats(reason)
+            except Exception:
+                pass
 
     except Exception as e:
-        logger.warning(f"[SELL-ANALYSIS] {ticker} 보강 실패: {e}")
+        import logging
+        logging.getLogger("notify_builder").warning(f"[SELL-ANALYSIS] {ticker} 보강 실패: {e}")
 
     return result
 
@@ -1080,19 +1089,8 @@ def _get_prices(stock_id: int, days: int = 60) -> list:
 #  AI Module 데이터 빌더 (v4.1 — XGBoost + SHAP + IC + Decay)
 # ══════════════════════════════════════════════════════════════════
 
-def build_ai_morning_data(calc_date: date) -> dict:
-    """
-    모닝 브리핑용 AI 요약 데이터 수집.
-    Returns:
-        {
-            "ai_top": [...],        # AI Score 상위 5종목
-            "ai_bottom": [...],     # AI Score 하위 3종목
-            "feature_top3": [...],  # Feature Importance Top 3
-            "model_auc": float,     # 최근 학습 AUC
-            "ai_weight": float,     # AI 가중치
-            "grade_dist": {...},    # 등급 분포
-        }
-    """
+def build_ai_morning_data(calc_date) -> dict:
+    """모닝 브리핑용 AI 요약 — v5.1 FIX: 컬럼명 + 안전접근"""
     from db_pool import get_cursor
     result = {
         "ai_top": [], "ai_bottom": [], "feature_top3": [],
@@ -1101,88 +1099,84 @@ def build_ai_morning_data(calc_date: date) -> dict:
 
     try:
         with get_cursor() as cur:
-            # AI Score Top 5 (상승)
+            # ★ FIX: ai_scores_daily JOIN으로 실제 ai_score 가져오기
+            #         없으면 weighted_score를 대체 사용
             cur.execute("""
-                SELECT s.ticker, sfs.weighted_score, sfs.conviction_score,
-                       fs.grade, fs.weighted_score,
-                       NULL AS shap_top_positive
+                SELECT s.ticker, 
+                       sfs.weighted_score,
+                       sfs.grade,
+                       COALESCE(ai.ai_score, sfs.weighted_score) AS ai_score
                 FROM stock_final_scores sfs
                 JOIN stocks s ON sfs.stock_id = s.stock_id
-                LEFT JOIN (
-                    SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
-                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
-                ) fs ON sfs.stock_id = fs.stock_id
+                LEFT JOIN ai_scores_daily ai 
+                    ON ai.stock_id = sfs.stock_id AND ai.calc_date = sfs.calc_date
                 WHERE sfs.calc_date = %s AND sfs.weighted_score IS NOT NULL
-                ORDER BY sfs.weighted_score DESC LIMIT 5
+                ORDER BY COALESCE(ai.ai_score, sfs.weighted_score) DESC 
+                LIMIT 5
             """, (calc_date,))
             for row in cur.fetchall():
-                shap_pos = row.get("shap_top_positive") or ""
                 result["ai_top"].append({
                     "ticker": row["ticker"],
-                    "ai_score": _safe_float(row["ai_score"]),
+                    "ai_score": float(row["ai_score"]) if row.get("ai_score") else 0,
                     "grade": row.get("grade", "?"),
-                    "score": _safe_float(row.get("weighted_score")),
-                    "shap_reason": shap_pos[:60] if isinstance(shap_pos, str) else "",
+                    "score": float(row["weighted_score"]) if row.get("weighted_score") else 0,
+                    "shap_reason": "",
                 })
 
-            # AI Score Bottom 3 (하락 경고)
+            # Bottom 3
             cur.execute("""
-                SELECT s.ticker, sfs.weighted_score, fs.grade, fs.weighted_score,
-                       NULL AS shap_top_negative
+                SELECT s.ticker, 
+                       sfs.weighted_score,
+                       sfs.grade,
+                       COALESCE(ai.ai_score, sfs.weighted_score) AS ai_score
                 FROM stock_final_scores sfs
                 JOIN stocks s ON sfs.stock_id = s.stock_id
-                LEFT JOIN (
-                    SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
-                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
-                ) fs ON sfs.stock_id = fs.stock_id
+                LEFT JOIN ai_scores_daily ai 
+                    ON ai.stock_id = sfs.stock_id AND ai.calc_date = sfs.calc_date
                 WHERE sfs.calc_date = %s AND sfs.weighted_score IS NOT NULL
-                ORDER BY sfs.weighted_score ASC LIMIT 3
+                ORDER BY COALESCE(ai.ai_score, sfs.weighted_score) ASC 
+                LIMIT 3
             """, (calc_date,))
             for row in cur.fetchall():
-                shap_neg = row.get("shap_top_negative") or ""
                 result["ai_bottom"].append({
                     "ticker": row["ticker"],
-                    "ai_score": _safe_float(row["ai_score"]),
+                    "ai_score": float(row["ai_score"]) if row.get("ai_score") else 0,
                     "grade": row.get("grade", "?"),
-                    "shap_reason": shap_neg[:60] if isinstance(shap_neg, str) else "",
+                    "shap_reason": "",
                 })
 
-            # 모델 메타 (최근 학습 결과)
+            # ★ FIX: ml_model_meta에 ai_weight 없을 수 있음 → COALESCE 사용
             cur.execute("""
-                SELECT valid_auc, ai_weight, NULL AS feature_importance
+                SELECT valid_auc, 
+                       COALESCE(ai_weight, 0.30) AS ai_weight,
+                       feature_importance
                 FROM ml_model_meta
                 WHERE is_active = TRUE
                 ORDER BY created_at DESC LIMIT 1
             """)
             model = cur.fetchone()
             if model:
-                result["model_auc"] = _safe_float(model.get("valid_auc"))
-                result["ai_weight"] = _safe_float(model.get("ai_weight"))
-                fi = model.get("NULL AS feature_importance")
+                result["model_auc"] = float(model["valid_auc"]) if model.get("valid_auc") else None
+                result["ai_weight"] = float(model["ai_weight"]) if model.get("ai_weight") else 0.30
+                fi = model.get("feature_importance")
                 if fi and isinstance(fi, (dict, str)):
                     import json
                     if isinstance(fi, str):
-                        fi = json.loads(fi)
-                    sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)[:3]
-                    result["feature_top3"] = [{"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi]
-
-            # 등급 분포
-            cur.execute("""
-                SELECT grade, COUNT(*) as cnt
-                FROM (
-                    SELECT DISTINCT ON (stock_id) stock_id, grade
-                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
-                ) sub
-                WHERE grade IS NOT NULL
-                GROUP BY grade ORDER BY grade
-            """)
-            for row in cur.fetchall():
-                result["grade_dist"][row["grade"]] = row["cnt"]
+                        try:
+                            fi = json.loads(fi)
+                        except Exception:
+                            fi = {}
+                    if isinstance(fi, dict):
+                        sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)[:3]
+                        result["feature_top3"] = [
+                            {"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi
+                        ]
 
     except Exception as e:
         print(f"  [AI-BUILDER] 모닝 데이터 실패: {e}")
 
     return result
+
 
 
 def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
@@ -1229,30 +1223,22 @@ def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
     return result
 
 
-def build_ai_risk_data(calc_date: date) -> dict:
-    """
-    IC + Alpha Decay 데이터 (리스크 경고용).
-    Returns:
-        {
-            "ic_danger": bool,
-            "ic_details": [{"layer": "L1", "ic": 0.27, "status": "OK"}, ...],
-            "decay_dead": [{"grade": "A+", "hit": 40, "ic": -0.19}, ...],
-        }
-    """
+def build_ai_risk_data(calc_date) -> dict:
+    """IC + Alpha Decay 데이터 — v5.1 FIX: 컬럼명 수정"""
     from db_pool import get_cursor
     result = {"ic_danger": False, "ic_details": [], "decay_dead": []}
 
     try:
-        # IC 데이터
         with get_cursor() as cur:
+            # ★ FIX: decay_ic → ic_value (factor_ic_daily 실제 컬럼명)
             cur.execute("""
-                SELECT factor_name, decay_ic
+                SELECT factor_name, ic_value
                 FROM factor_ic_daily
                 WHERE calc_date = %s AND horizon = '5d'
                 ORDER BY factor_name
             """, (calc_date,))
             for row in cur.fetchall():
-                ic_val = _safe_float(row["decay_ic"])
+                ic_val = float(row["ic_value"]) if row.get("ic_value") is not None else 0.0
                 status = "DANGER" if ic_val < 0 else "OK"
                 if ic_val < 0:
                     result["ic_danger"] = True
@@ -1262,21 +1248,24 @@ def build_ai_risk_data(calc_date: date) -> dict:
                     "status": status,
                 })
 
-        # Alpha Decay DEAD
+        # Alpha Decay DEAD — alpha_decay_daily에는 signal_status가 없을 수 있음
+        # profit_factor < 0.5 OR (decay_ic < 0 AND hit_rate < 0.5) → DEAD 판정
         with get_cursor() as cur:
             cur.execute("""
-                SELECT grade, horizon_days, avg_return, hit_rate, decay_ic, signal_status
+                SELECT grade, horizon_days, avg_return, hit_rate, 
+                       decay_ic, profit_factor
                 FROM alpha_decay_daily
-                WHERE calc_date = %s AND signal_status = 'DEAD'
+                WHERE calc_date = %s 
+                  AND (profit_factor < 0.5 OR (decay_ic < 0 AND hit_rate < 0.45))
                 ORDER BY grade
             """, (calc_date,))
             for row in cur.fetchall():
                 result["decay_dead"].append({
                     "grade": row["grade"],
-                    "period": row["horizon_days"],
-                    "hit": round(_safe_float(row["hit_rate"]) * 100, 1),
-                    "ic": round(_safe_float(row["decay_ic"]), 4),
-                    "avg_return": round(_safe_float(row["avg_return"]) * 100, 2),
+                    "period": row.get("horizon_days", 0),
+                    "hit": round(float(row["hit_rate"] or 0) * 100, 1),
+                    "ic": round(float(row["decay_ic"] or 0), 4),
+                    "avg_return": round(float(row["avg_return"] or 0) * 100, 2),
                 })
 
     except Exception as e:
@@ -1285,36 +1274,46 @@ def build_ai_risk_data(calc_date: date) -> dict:
     return result
 
 
-def build_ai_batch_summary(calc_date: date) -> dict:
-    """
-    배치 완료용 AI 요약 (AUC + Feature Top + 추론 건수).
-    """
+
+def build_ai_batch_summary(calc_date) -> dict:
+    """배치 완료용 AI 요약 — v5.1 FIX: ai_weight COALESCE + 컬럼명"""
     from db_pool import get_cursor
     result = {"auc": None, "ai_weight": None, "predict_count": 0, "feature_top3": []}
 
     try:
         with get_cursor() as cur:
+            # ★ FIX: ai_weight → COALESCE, NULL AS feature_importance → feature_importance
             cur.execute("""
-                SELECT valid_auc, ai_weight, NULL AS feature_importance
+                SELECT valid_auc, 
+                       COALESCE(ai_weight, 0.30) AS ai_weight,
+                       feature_importance
                 FROM ml_model_meta
-                WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1
+                WHERE is_active = TRUE 
+                ORDER BY created_at DESC LIMIT 1
             """)
             model = cur.fetchone()
             if model:
-                result["auc"] = _safe_float(model.get("valid_auc"))
-                result["ai_weight"] = _safe_float(model.get("ai_weight"))
-                fi = model.get("NULL AS feature_importance")
+                result["auc"] = float(model["valid_auc"]) if model.get("valid_auc") else None
+                result["ai_weight"] = float(model["ai_weight"]) if model.get("ai_weight") else 0.30
+                fi = model.get("feature_importance")
                 if fi:
                     import json
                     if isinstance(fi, str):
-                        fi = json.loads(fi)
-                    sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)[:3]
-                    result["feature_top3"] = [{"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi]
+                        try:
+                            fi = json.loads(fi)
+                        except Exception:
+                            fi = {}
+                    if isinstance(fi, dict):
+                        sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)[:3]
+                        result["feature_top3"] = [
+                            {"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi
+                        ]
 
             cur.execute("""
                 SELECT COUNT(*) as cnt FROM stock_final_scores WHERE calc_date = %s
             """, (calc_date,))
-            result["predict_count"] = cur.fetchone()["cnt"]
+            row = cur.fetchone()
+            result["predict_count"] = row["cnt"] if row else 0
 
     except Exception as e:
         print(f"  [AI-BUILDER] batch summary 실패: {e}")

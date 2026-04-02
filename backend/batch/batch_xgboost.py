@@ -357,7 +357,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti.section_c_macro,
                 -- 현재 종합점수 (시계열 delta용)
                 sfs.weighted_score,
-                sfs.current_grade,
+                sfs.grade AS current_grade,
                 -- 5일전 서브팩터 (delta 계산용)
                 l1_prev.moat_score AS moat_prev,
                 l1_prev.value_score AS value_prev,
@@ -392,7 +392,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ORDER BY calc_date DESC LIMIT 1
             ) ti ON TRUE
             LEFT JOIN LATERAL (
-                SELECT weighted_score, current_grade, calc_date
+                SELECT weighted_score, grade AS current_grade, calc_date
                 FROM stock_final_scores
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
