@@ -128,12 +128,40 @@ def calc_section_b(stock_id: int, calc_date: date) -> dict:
         short_score = 5.0
 
     # 2. 풋콜 비율 점수 (7점) — 현재 데이터 소스 없음 → 중립
-    put_call_score = 3.5  # 기본 중립
+    # 2. 풋콜 비율 점수 (7점) — put_call_daily 테이블에서 실데이터
+    put_call_score = 3.5  # 기본값 (데이터 없으면 중립)
     try:
-        from batch.batch_options_flow import get_put_call_score
-        put_call_score = get_put_call_score(stock_id, calc_date)
-    except Exception:
-        pass  # Fallback: 3.5 유지
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT put_call_ratio, pc_score 
+                FROM put_call_daily
+                WHERE stock_id = %s AND calc_date = %s
+                LIMIT 1
+            """, (stock_id, calc_date))
+            pc_row = cur.fetchone()
+            
+            if pc_row and pc_row.get("pc_score") is not None:
+                # pc_score는 0~7 범위 (batch_put_call.py에서 계산)
+                put_call_score = float(pc_row["pc_score"])
+            elif pc_row and pc_row.get("put_call_ratio") is not None:
+                # pc_score가 없으면 ratio에서 직접 계산
+                ratio = float(pc_row["put_call_ratio"])
+                # ratio > 1.5 → 극도의 풋 (역발상 매수 신호) → 높은 점수
+                # ratio < 0.5 → 극도의 콜 (과열 → 위험) → 낮은 점수
+                if ratio >= 2.0:
+                    put_call_score = 7.0    # 극도의 공포 → 매수 기회
+                elif ratio >= 1.5:
+                    put_call_score = 6.0
+                elif ratio >= 1.0:
+                    put_call_score = 4.5
+                elif ratio >= 0.7:
+                    put_call_score = 3.5    # 중립
+                elif ratio >= 0.5:
+                    put_call_score = 2.0
+                else:
+                    put_call_score = 1.0    # 극도의 탐욕 → 위험
+    except Exception as e:
+        pass  # 실패 시 기본값 3.5 유지
 
     # 3. 구조적 시그널 점수 (8점) — technical_indicators에서 이미 계산됨
     struct_score = 0.0

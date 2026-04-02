@@ -247,16 +247,6 @@ def run_final_score(calc_date: date = None):
     adj_l1, adj_l2, adj_l3 = W_L1, W_L2, W_L3
     adj_l1, adj_l2, adj_l3 = _get_dq_adjusted_weights(adj_l1, adj_l2, adj_l3)
     adj_l1, adj_l2, adj_l3 = _get_regime_adjusted_weights(adj_l1, adj_l2, adj_l3)
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT action FROM ic_guard_actions WHERE calc_date=%s ORDER BY id DESC LIMIT 1", (calc_date,))
-            gr = cur.fetchone()
-            if gr and gr["action"] == "BLOCK_IMMEDIATE":
-                adj_l1, adj_l2, adj_l3 = min(adj_l1*1.5, 0.8), adj_l2*0.5, adj_l3*0.5
-                print(f"  [IC GUARD] BLOCK → AI weight ↓")
-            elif gr and gr["action"] == "REDUCE_50PCT":
-                adj_l1, adj_l2, adj_l3 = adj_l1*1.2, adj_l2*0.8, adj_l3*0.8
-    except: pass
     print(f"[FINAL] ▶ 시작 calc_date={calc_date} (v5.0 + DQ Gate + Regime)")
     print(f"[FINAL] 가중치 (IC): L1={W_L1:.4f}, L2={W_L2:.4f}, L3={W_L3:.4f}")
     print(f"[FINAL] 가중치 (조정): L1={adj_l1:.4f}, L2={adj_l2:.4f}, L3={adj_l3:.4f}")
@@ -265,7 +255,7 @@ def run_final_score(calc_date: date = None):
     stocks = []
     with get_cursor() as cur:
         cur.execute("""
-            SELECT s.stock_id, s.ticker,
+            SELECT s.stock_id, s.ticker, s.sector_id,
                    l1.layer1_score,
                    l2.layer2_total_score,
                    COALESCE(l3.layer3_total_score, l3.layer3_technical_score) AS layer3_score
@@ -350,8 +340,37 @@ def run_final_score(calc_date: date = None):
     all_l2 = np.array([s["l2_raw"] or 50.0 for s in stocks])
     all_l3 = np.array([s["l3_raw"] or 50.0 for s in stocks])
 
-    # ② Percentile Rank (Barra MAD Z-Score 기반)
-    pct_weighted = compute_cross_sectional_percentiles(all_weighted)
+    # ①-b 섹터 중립화 (Sector-Relative Z-Score)
+    from collections import defaultdict
+    import math
+
+    def _norm_cdf(z):
+        """scipy 없이 정규분포 CDF 계산"""
+        return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+
+    sector_groups = defaultdict(list)
+    for idx, s in enumerate(stocks):
+        sid = s.get("sector_id", 0) or 0
+        sector_groups[sid].append(idx)
+
+    sector_zscore = np.zeros(len(stocks))
+    for sid, indices in sector_groups.items():
+        if len(indices) < 3:
+            for idx in indices:
+                sector_zscore[idx] = (all_weighted[idx] - np.mean(all_weighted)) / max(np.std(all_weighted), 0.1)
+        else:
+            sector_scores = all_weighted[indices]
+            mu, sigma = np.mean(sector_scores), max(np.std(sector_scores), 0.1)
+            for idx in indices:
+                sector_zscore[idx] = (all_weighted[idx] - mu) / sigma
+
+    SECTOR_NEUTRAL_WEIGHT = 0.30
+    sector_pct = np.array([_norm_cdf(z) * 100 for z in sector_zscore])
+    blended_weighted = all_weighted * (1 - SECTOR_NEUTRAL_WEIGHT) + sector_pct * SECTOR_NEUTRAL_WEIGHT
+    print(f"  [SECTOR-NEUTRAL] {len(sector_groups)}개 섹터 중립화 (blend={SECTOR_NEUTRAL_WEIGHT:.0%})")
+
+    # ② Percentile Rank (Barra MAD Z-Score 기반) — 섹터 중립화 적용
+    pct_weighted = compute_cross_sectional_percentiles(blended_weighted)
     pct_l1 = compute_cross_sectional_percentiles(all_l1)
     pct_l2 = compute_cross_sectional_percentiles(all_l2)
     pct_l3 = compute_cross_sectional_percentiles(all_l3)
@@ -522,3 +541,4 @@ if __name__ == "__main__":
     from db_pool import init_pool
     init_pool()
     run_final_score()
+

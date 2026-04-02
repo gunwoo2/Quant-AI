@@ -45,6 +45,14 @@ try:
 except ImportError:
     _HAS_V5_PATCH = False
 
+
+# ── v5.1: 거래 비용 모델 ──
+try:
+    from transaction_cost_v5 import TransactionCostModel, estimate_round_trip_cost
+    _tc_model = TransactionCostModel()
+except ImportError:
+    _tc_model = None
+
 # ── signal 패키지 (Python 내장 signal 충돌 우회) ──
 def _import_signal_module(name):
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -213,7 +221,17 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
         )
 
         if risk.should_sell:
-            pnl_pct = (stock["current_price"] - pos["entry_price"]) / pos["entry_price"] * 100
+            gross_pnl_pct = (stock["current_price"] - pos["entry_price"]) / pos["entry_price"] * 100
+            # v5.1: 거래 비용 차감
+            if _tc_model is not None and pos.get("shares", 0) > 0:
+                buy_cost = _tc_model.estimate_cost(pos["entry_price"], pos["shares"], "BUY",
+                                                    stock.get("volume_20d_avg", 1_000_000))
+                sell_cost = _tc_model.estimate_cost(stock["current_price"], pos["shares"], "SELL",
+                                                     stock.get("volume_20d_avg", 1_000_000))
+                cost_pct = (buy_cost.total_cost + sell_cost.total_cost) / (pos["entry_price"] * pos["shares"]) * 100
+                pnl_pct = gross_pnl_pct - cost_pct
+            else:
+                pnl_pct = gross_pnl_pct
             sell_signals.append({
                 "ticker": ticker,
                 "company_name": stock.get("company_name", ""),
@@ -310,7 +328,22 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
             audit.add(rec)
             continue
 
-        # 통과! BUY 후보
+        # 통과! BUY 후보 — 거래 비용 필터
+        if _tc_model is not None:
+            expected_return = (final_score - 50) * 0.1
+            vol_20d = stock.get("volume_20d_avg", 1_000_000)
+            profitable, net_ret = _tc_model.is_profitable_after_cost(
+                entry_price=price,
+                expected_return_pct=expected_return,
+                shares=max(int(10000 / price), 1) if price > 0 else 1,
+                volume_20d=vol_20d,
+                atr_pct=atr / price * 100 if price > 0 else 2.0,
+            )
+            if not profitable:
+                rec.decision = "SKIP"
+                audit.add(rec)
+                continue
+
         rec.decision = "BUY_CANDIDATE"
         audit.add(rec)
 
@@ -406,36 +439,32 @@ def run_trading_signals(calc_date: date = None, dry_run: bool = True):
         print(f"  ⚠️ Audit 저장 실패: {e}")
 
     # ── Step 7/7: Discord 알림 ──
-    # print(f"\n── Step 7/7: Discord 알림 ──")
-    # try:
-    #     from notifier import notify_daily_signals
-    #     portfolio_summary = {
-    #         "total_value": account_value,
-    #         "cash_pct": max(0, (account_value - current_invested) / account_value * 100) if account_value > 0 else 100,
-    #         "num_positions": num_existing + len(buy_signals),
-    #         "daily_return": 0,
-    #         "vs_spy": 0,
-    #     }
-    #     notify_daily_signals(
-    #         calc_date=calc_date,
-    #         regime=regime,
-    #         regime_detail=regime_result,
-    #         buy_signals=buy_signals,
-    #         sell_signals=sell_signals,
-    #         portfolio_summary=portfolio_summary,
-    #     )
-    # except Exception as e:
-    #     print(f"  ⚠️ 알림 실패: {e}")
+    print(f"\n── Step 7/7: Discord 알림 ──")
+    try:
+        from notifier import notify_daily_signals
+        portfolio_summary = {
+            "total_value": account_value,
+            "cash_pct": max(0, (account_value - current_invested) / account_value * 100) if account_value > 0 else 100,
+            "num_positions": num_existing + len(buy_signals),
+            "daily_return": 0,
+            "vs_spy": 0,
+        }
+        notify_daily_signals(
+            calc_date=calc_date,
+            regime=regime,
+            regime_detail=regime_result,
+            buy_signals=buy_signals,
+            sell_signals=sell_signals,
+            portfolio_summary=portfolio_summary,
+        )
+    except Exception as e:
+        print(f"  ⚠️ 알림 실패: {e}")
 
-    # # 국면 전환 알림
-    # try:
-    #     _check_regime_change(calc_date, regime)
-    # except Exception:
-    #     pass
-
-    # ── Step 7/7: 알림은 scheduler Step 8에서 통합 발송 ──
-    print(f"\n── Step 7/7: 알림 스킵 (scheduler Step 8에서 통합 발송) ──")
-    print(f"  BUY={len(buy_signals)} SELL={len(sell_signals)} → _s_notify_all()에서 전송")
+    # 국면 전환 알림
+    try:
+        _check_regime_change(calc_date, regime)
+    except Exception:
+        pass
 
 
     # ── ★ v3.6: 긴급 매도 + 반등 기회 알림 ──
@@ -804,86 +833,47 @@ def _update_trailing_stop(position_id: int, new_trailing: float, current_price: 
         """, (new_trailing, current_price, position_id))
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [BUG-01 FIX] _save_signals() — SELL에 핵심 데이터 필드 추가
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#
-# ■ 변경 전 (버그):
-#   INSERT INTO trading_signals
-#       (stock_id, signal_date, signal_type, sell_reason, final_score, current_price)
-#   VALUES (%s, %s, 'SELL', %s, %s, %s)
-#
-# ■ 변경 후 (수정):
-
 def _save_signals(calc_date, buy_signals, sell_signals, stocks, regime):
-    """trading_signals 테이블에 저장 — v5.1 FIX: SELL에 핵심 필드 추가"""
-    from db_pool import get_cursor
+    """trading_signals 테이블에 저장"""
     with get_cursor() as cur:
-        # BUY — 기존과 동일
+        # BUY
         for s in buy_signals:
             stock = stocks.get(s["ticker"], {})
             cur.execute("""
                 INSERT INTO trading_signals
                     (stock_id, signal_date, signal_type, signal_strength,
-                     grade_condition, momentum_condition, rsi_condition, 
-                     trend_condition, regime_condition,
-                     final_score, layer3_score, rsi_value, atr_14, current_price,
-                     grade, shares, amount, weight_pct, stop_loss, stop_pct)
-                VALUES (%s, %s, 'BUY', %s, TRUE, TRUE, TRUE, TRUE, TRUE, 
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s)
+                     grade_condition, momentum_condition, rsi_condition, trend_condition, regime_condition,
+                     final_score, layer3_score, rsi_value, atr_14, current_price)
+                VALUES (%s, %s, 'BUY', %s, TRUE, TRUE, TRUE, TRUE, TRUE, %s, %s, %s, %s, %s)
                 ON CONFLICT (stock_id, signal_date) DO UPDATE SET
                     signal_type = EXCLUDED.signal_type,
                     signal_strength = EXCLUDED.signal_strength,
                     final_score = EXCLUDED.final_score,
-                    current_price = EXCLUDED.current_price,
-                    grade = EXCLUDED.grade,
-                    shares = EXCLUDED.shares,
-                    amount = EXCLUDED.amount,
-                    weight_pct = EXCLUDED.weight_pct,
-                    stop_loss = EXCLUDED.stop_loss,
-                    stop_pct = EXCLUDED.stop_pct
+                    current_price = EXCLUDED.current_price
             """, (
                 s["stock_id"], calc_date, s["score"],
                 stock.get("final_score", 0), stock.get("layer3_score", 0),
                 stock.get("rsi_14", 50), stock.get("atr_14", 0),
                 s["price"],
-                s.get("grade", ""),
-                s.get("shares", 0),
-                s.get("amount", 0),
-                s.get("weight", 0),
-                s.get("stop_loss", 0),
-                s.get("stop_pct", 10),
             ))
 
-        # ★★★ SELL — BUG-01 FIX: entry_price, shares, pnl_pct, holding_days 추가 ★★★
+        # SELL
         for s in sell_signals:
             cur.execute("""
                 INSERT INTO trading_signals
-                    (stock_id, signal_date, signal_type, sell_reason, 
-                     final_score, current_price,
-                     entry_price, shares, pnl_pct, holding_days)
-                VALUES (%s, %s, 'SELL', %s, %s, %s, %s, %s, %s, %s)
+                    (stock_id, signal_date, signal_type, sell_reason, final_score, current_price)
+                VALUES (%s, %s, 'SELL', %s, %s, %s)
                 ON CONFLICT (stock_id, signal_date) DO UPDATE SET
                     signal_type = 'SELL',
                     sell_reason = EXCLUDED.sell_reason,
-                    current_price = EXCLUDED.current_price,
-                    entry_price = EXCLUDED.entry_price,
-                    shares = EXCLUDED.shares,
-                    pnl_pct = EXCLUDED.pnl_pct,
-                    holding_days = EXCLUDED.holding_days
+                    current_price = EXCLUDED.current_price
             """, (
                 s["stock_id"], calc_date, s["reason"],
                 stocks.get(s["ticker"], {}).get("final_score", 0),
                 s["price"],
-                s.get("entry_price", 0),
-                s.get("shares", 0),
-                s.get("pnl_pct", 0),
-                s.get("holding_days", 0),
             ))
 
     print(f"  ✅ 시그널 DB 저장 (BUY={len(buy_signals)}, SELL={len(sell_signals)})")
-
 
 
 def _process_sells(calc_date, sell_signals):
