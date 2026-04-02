@@ -367,7 +367,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 sfs_prev.weighted_score AS score_prev,
                 -- 기술적 원시값 (5개)
                 ti.rsi_14, ti.macd_histogram, ti.bb_width,
-                COALESCE(ti.bb_squeeze, 0)::float AS atr_pct, COALESCE(ti.volume_surge_ratio, 1.0) AS volume_ratio_20d,
+                COALESCE(ti.trend_slope_90d, 0) AS atr_pct, COALESCE(ti.volume_surge_ratio, 1.0) AS volume_ratio_20d,
                 -- 등급 변경 이력
                 sfs.calc_date AS score_date
                 {label_select}
@@ -386,7 +386,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
             ) l2 ON TRUE
             LEFT JOIN LATERAL (
                 SELECT section_a_technical, section_b_flow, section_c_macro,
-                       rsi_14, macd_histogram, bb_width, COALESCE(bb_squeeze, 0)::float AS atr_pct, COALESCE(volume_surge_ratio, 1.0) AS volume_ratio_20d
+                       rsi_14, macd_histogram, bb_width, COALESCE(trend_slope_90d, 0) AS atr_pct, COALESCE(volume_surge_ratio, 1.0) AS volume_ratio_20d
                 FROM technical_indicators
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1

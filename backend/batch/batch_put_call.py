@@ -121,6 +121,7 @@ def _fetch_pc_ratio(ticker: str, max_days: int = MAX_EXPIRY_DAYS) -> dict:
         expirations = tk.options  # ['2026-04-03', '2026-04-10', ...]
 
         if not expirations:
+            print(f"    [P/C] {ticker}: 옵션 만기 없음 (yfinance 문제?)")
             return None
 
         today = date.today()
@@ -161,8 +162,9 @@ def _fetch_pc_ratio(ticker: str, max_days: int = MAX_EXPIRY_DAYS) -> dict:
                     total_put_oi += int(valid_puts['openInterest'].sum())
                     total_put_vol += int(puts['volume'].fillna(0).sum())
 
-            except Exception:
-                continue  # 개별 만기 실패 시 다음으로
+            except Exception as chain_err:
+                print(f"    [P/C] {ticker}/{exp_str}: {chain_err}")
+                continue
 
         if total_call_oi == 0:
             return None
@@ -212,7 +214,7 @@ def run_put_call(calc_date: date = None):
     # ── 1단계: 시장 전체 P/C (SPY) ──
     print(f"[P/C] 📡 시장 P/C 수집 중 (SPY)...")
     market_pc = _fetch_pc_ratio(MARKET_TICKER, max_days=30)
-    market_ratio = market_pc["pc_ratio_oi"] if market_pc else 0.85  # 기본 중립
+    market_ratio = (market_pc.get("pc_ratio_oi") or 0.85) if market_pc else 0.85  # 기본 중립
     market_score = score_put_call(market_ratio)
     print(f"[P/C] 📊 시장 P/C (SPY): ratio={market_ratio}, score={market_score}/7")
 

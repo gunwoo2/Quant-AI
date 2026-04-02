@@ -1089,14 +1089,14 @@ def build_ai_morning_data(calc_date: date) -> dict:
             "ai_bottom": [...],     # AI Score 하위 3종목
             "feature_top3": [...],  # Feature Importance Top 3
             "model_auc": float,     # 최근 학습 AUC
-            "NULL AS ai_weight": float,     # AI 가중치
+            "ai_weight": float,     # AI 가중치
             "grade_dist": {...},    # 등급 분포
         }
     """
     from db_pool import get_cursor
     result = {
         "ai_top": [], "ai_bottom": [], "feature_top3": [],
-        "model_auc": None, "NULL AS ai_weight": None, "grade_dist": {},
+        "model_auc": None, "ai_weight": None, "grade_dist": {},
     }
 
     try:
@@ -1105,7 +1105,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
             cur.execute("""
                 SELECT s.ticker, sfs.weighted_score, sfs.conviction_score,
                        fs.grade, fs.weighted_score,
-                       xp.shap_top_positive
+                       NULL AS shap_top_positive
                 FROM stock_final_scores sfs
                 JOIN stocks s ON sfs.stock_id = s.stock_id
                 LEFT JOIN (
@@ -1128,7 +1128,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
             # AI Score Bottom 3 (하락 경고)
             cur.execute("""
                 SELECT s.ticker, sfs.weighted_score, fs.grade, fs.weighted_score,
-                       xp.shap_top_negative
+                       NULL AS shap_top_negative
                 FROM stock_final_scores sfs
                 JOIN stocks s ON sfs.stock_id = s.stock_id
                 LEFT JOIN (
@@ -1149,7 +1149,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
 
             # 모델 메타 (최근 학습 결과)
             cur.execute("""
-                SELECT valid_auc, NULL AS ai_weight, NULL AS feature_importance
+                SELECT valid_auc, ai_weight, NULL AS feature_importance
                 FROM ml_model_meta
                 WHERE is_active = TRUE
                 ORDER BY created_at DESC LIMIT 1
@@ -1157,7 +1157,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
             model = cur.fetchone()
             if model:
                 result["model_auc"] = _safe_float(model.get("valid_auc"))
-                result["NULL AS ai_weight"] = _safe_float(model.get("NULL AS ai_weight"))
+                result["ai_weight"] = _safe_float(model.get("ai_weight"))
                 fi = model.get("NULL AS feature_importance")
                 if fi and isinstance(fi, (dict, str)):
                     import json
@@ -1246,13 +1246,13 @@ def build_ai_risk_data(calc_date: date) -> dict:
         # IC 데이터
         with get_cursor() as cur:
             cur.execute("""
-                SELECT factor_name, ic_value
+                SELECT factor_name, decay_ic
                 FROM factor_ic_daily
                 WHERE calc_date = %s AND horizon = '5d'
                 ORDER BY factor_name
             """, (calc_date,))
             for row in cur.fetchall():
-                ic_val = _safe_float(row["ic_value"])
+                ic_val = _safe_float(row["decay_ic"])
                 status = "DANGER" if ic_val < 0 else "OK"
                 if ic_val < 0:
                     result["ic_danger"] = True
@@ -1265,7 +1265,7 @@ def build_ai_risk_data(calc_date: date) -> dict:
         # Alpha Decay DEAD
         with get_cursor() as cur:
             cur.execute("""
-                SELECT grade, horizon_days, avg_return, hit_rate, ic_value, signal_status
+                SELECT grade, horizon_days, avg_return, hit_rate, decay_ic, signal_status
                 FROM alpha_decay_daily
                 WHERE calc_date = %s AND signal_status = 'DEAD'
                 ORDER BY grade
@@ -1275,7 +1275,7 @@ def build_ai_risk_data(calc_date: date) -> dict:
                     "grade": row["grade"],
                     "period": row["horizon_days"],
                     "hit": round(_safe_float(row["hit_rate"]) * 100, 1),
-                    "ic": round(_safe_float(row["ic_value"]), 4),
+                    "ic": round(_safe_float(row["decay_ic"]), 4),
                     "avg_return": round(_safe_float(row["avg_return"]) * 100, 2),
                 })
 
@@ -1290,19 +1290,19 @@ def build_ai_batch_summary(calc_date: date) -> dict:
     배치 완료용 AI 요약 (AUC + Feature Top + 추론 건수).
     """
     from db_pool import get_cursor
-    result = {"auc": None, "NULL AS ai_weight": None, "predict_count": 0, "feature_top3": []}
+    result = {"auc": None, "ai_weight": None, "predict_count": 0, "feature_top3": []}
 
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT valid_auc, NULL AS ai_weight, NULL AS feature_importance
+                SELECT valid_auc, ai_weight, NULL AS feature_importance
                 FROM ml_model_meta
                 WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1
             """)
             model = cur.fetchone()
             if model:
                 result["auc"] = _safe_float(model.get("valid_auc"))
-                result["NULL AS ai_weight"] = _safe_float(model.get("NULL AS ai_weight"))
+                result["ai_weight"] = _safe_float(model.get("ai_weight"))
                 fi = model.get("NULL AS feature_importance")
                 if fi:
                     import json
