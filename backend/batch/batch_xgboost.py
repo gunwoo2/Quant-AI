@@ -333,7 +333,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         label_where = "AND fr.return_10d IS NOT NULL"
 
     # 현재값 + 5일전값 조회 (시계열 delta 계산용)
-    params = [target_date, target_date, target_date, target_date]
+    params = [target_date, target_date, target_date, target_date, target_date]
     if with_label:
         params.append(target_date)  # forward_returns calc_date
 
@@ -366,8 +366,8 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti_prev.section_a_technical AS tech_prev,
                 sfs_prev.weighted_score AS score_prev,
                 -- 기술적 원시값 (5개)
-                ti.rsi_14, ti.macd_histogram, ti.bb_width,
-                COALESCE(ti.atr_pct, 2.0) AS atr_pct, COALESCE(ti.volume_surge_ratio, 1.0) AS volume_ratio_20d,
+                ti.rsi_14, ti.macd_histogram, ti.bb_pctb,
+                ti.atr_pct, ti.volume_ratio_20d,
                 -- 등급 변경 이력
                 sfs.calc_date AS score_date
                 {label_select}
@@ -386,7 +386,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
             ) l2 ON TRUE
             LEFT JOIN LATERAL (
                 SELECT section_a_technical, section_b_flow, section_c_macro,
-                       rsi_14, macd_histogram, bb_width, COALESCE(atr_pct, 2.0) AS atr_pct, COALESCE(volume_surge_ratio, 1.0) AS volume_ratio_20d
+                       rsi_14, macd_histogram, bb_pctb, atr_pct, volume_ratio_20d
                 FROM technical_indicators
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
@@ -492,7 +492,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         # ── Technical Raw (5개) ──
         rsi = _f(r.get("rsi_14"))
         macd_hist = _f(r.get("macd_histogram"))
-        bb_pctb = _f(r.get("bb_width"))
+        bb_pctb = _f(r.get("bb_pctb"))
         atr_pct = _f(r.get("atr_pct"))
         vol_ratio = _f(r.get("volume_ratio_20d"))
 
@@ -593,15 +593,15 @@ def _get_macro_data(target_date: date) -> dict:
                 result["regime_num"] = REGIME_MAP.get(row["regime"], 1)
 
             cur.execute("""
-                SELECT cross_asset_total, risk_appetite_score
+                SELECT macro_score, risk_appetite, vix_close
                 FROM cross_asset_daily
                 WHERE calc_date <= %s ORDER BY calc_date DESC LIMIT 1
             """, (target_date,))
             row = cur.fetchone()
             if row:
-                if row.get("cross_asset_total"): result["macro_score"] = float(row["cross_asset_total"])
-                if row.get("risk_appetite_score"): result["risk_appetite"] = float(row["risk_appetite_score"])
-                if True: pass
+                if row.get("macro_score"): result["macro_score"] = float(row["macro_score"])
+                if row.get("risk_appetite"): result["risk_appetite"] = float(row["risk_appetite"])
+                if row.get("vix_close"): result["vix_close"] = float(row["vix_close"])
     except Exception as e:
         logger.warning(f"[XGB-v2] 매크로 조회 실패: {e}")
     return result

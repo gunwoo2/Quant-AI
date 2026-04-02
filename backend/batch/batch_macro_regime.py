@@ -299,7 +299,7 @@ def _get_today_indicators(calc_date):
         with get_cursor() as cur:
             cols = ", ".join(HMM_FEATURES)
             cur.execute(f"""
-                SELECT {cols}, spy_close
+                SELECT {cols}, vix_close, spy_close
                 FROM cross_asset_daily
                 WHERE calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
@@ -312,21 +312,7 @@ def _get_today_indicators(calc_date):
         result = {}
         for f in HMM_FEATURES:
             result[f] = float(row[f]) if row[f] is not None else 0.0
-        result["vix_close"] = 25.0
-            try:
-                cur.execute("""SELECT 
-                    COALESCE((SELECT close_price FROM stock_prices sp JOIN stocks s ON s.stock_id=sp.stock_id WHERE s.ticker='TLT' AND sp.price_date<=%s ORDER BY sp.price_date DESC LIMIT 1),0) as tlt,
-                    COALESCE((SELECT close_price FROM stock_prices sp JOIN stocks s ON s.stock_id=sp.stock_id WHERE s.ticker='SHY' AND sp.price_date<=%s ORDER BY sp.price_date DESC LIMIT 1),0) as shy,
-                    COALESCE((SELECT close_price FROM stock_prices sp JOIN stocks s ON s.stock_id=sp.stock_id WHERE s.ticker='LQD' AND sp.price_date<=%s ORDER BY sp.price_date DESC LIMIT 1),0) as lqd,
-                    COALESCE((SELECT close_price FROM stock_prices sp JOIN stocks s ON s.stock_id=sp.stock_id WHERE s.ticker='HYG' AND sp.price_date<=%s ORDER BY sp.price_date DESC LIMIT 1),0) as hyg
-                """, (calc_date, calc_date, calc_date, calc_date))
-                br = cur.fetchone()
-                if br:
-                    tlt, shy = float(br["tlt"] or 0), float(br["shy"] or 0)
-                    lqd, hyg = float(br["lqd"] or 0), float(br["hyg"] or 0)
-                    if shy > 0 and tlt > 0: result["yield_curve"] = round(shy / tlt, 4)
-                    if lqd > 0 and hyg > 0: result["credit_spread"] = round(lqd / hyg, 4)
-            except Exception: pass
+        result["vix_close"] = float(row["vix_close"]) if row.get("vix_close") else 20.0
         result["spy_close"] = float(row["spy_close"]) if row.get("spy_close") else 0.0
         return result
 

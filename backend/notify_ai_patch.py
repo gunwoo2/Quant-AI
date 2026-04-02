@@ -282,36 +282,6 @@ def enrich_morning_with_ai(calc_date: date) -> dict:
     except Exception:
         pass
 
-    # ── v5.0: Ensemble Disagreement + HMM Regime ──
-    try:
-        with get_cursor() as cur:
-            cur.execute("""
-                SELECT AVG(ensemble_disagreement) as avg_dis,
-                       COUNT(*) FILTER (WHERE ensemble_disagreement > 0.3) as hi_cnt
-                FROM stock_final_scores
-                WHERE calc_date = %s AND ensemble_disagreement IS NOT NULL
-            """, (calc_date,))
-            dr = cur.fetchone()
-            if dr and dr["avg_dis"]:
-                result["ensemble_disagreement"] = round(float(dr["avg_dis"]), 3)
-                result["ensemble_high_dis"] = int(dr["hi_cnt"] or 0)
-    except Exception:
-        pass
-
-    try:
-        with get_cursor() as cur:
-            cur.execute("""
-                SELECT dominant_regime, confidence, equity_impact, is_fallback
-                FROM macro_regime_daily WHERE calc_date = %s
-            """, (calc_date,))
-            rr = cur.fetchone()
-            if rr:
-                result["hmm_regime"] = rr["dominant_regime"]
-                result["hmm_confidence"] = round(float(rr["confidence"] or 0), 2)
-                result["hmm_fallback"] = bool(rr["is_fallback"])
-    except Exception:
-        pass
-
     return result
 
 

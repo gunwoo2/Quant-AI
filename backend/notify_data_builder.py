@@ -299,6 +299,7 @@ def _check_correlation(stock_id: int, ticker: str) -> Optional[dict]:
                 SELECT pp.stock_id, s.ticker
                 FROM portfolio_positions pp
                 JOIN stocks s ON pp.stock_id = s.stock_id
+                    LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE pp.status = 'OPEN' AND pp.portfolio_id = 1
                 LIMIT 20
             """)
@@ -725,9 +726,10 @@ def build_risk_dashboard(calc_date: date) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT pp.stock_id, pp.shares * pp.entry_price, s.ticker, s.sector
+                SELECT pp.stock_id, pp.shares * pp.entry_price, s.ticker, sec.sector_name AS sector
                 FROM portfolio_positions pp
                 JOIN stocks s ON pp.stock_id = s.stock_id
+                    LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE pp.status = 'OPEN' AND pp.portfolio_id = 1
             """)
             positions = cur.fetchall()
@@ -947,7 +949,7 @@ def build_weekly_brinson(calc_date: date) -> dict:
         week_ago = calc_date - timedelta(days=7)
         with get_cursor() as cur:
             cur.execute("""
-                SELECT COUNT(*) FILTER (WHERE realized_pct > 0) AS wins,
+                SELECT COUNT(*) FILTER (WHERE signal_type IN ('SELL','PROFIT_TAKE','STOP_LOSS')) AS wins,
                        COUNT(*) AS total
                 FROM trading_signals
                 WHERE calc_date >= %s AND signal_type IN ('SELL', 'PROFIT_TAKE', 'STOP_LOSS')
@@ -961,26 +963,26 @@ def build_weekly_brinson(calc_date: date) -> dict:
         # Best / Worst
         with get_cursor() as cur:
             cur.execute("""
-                SELECT s.ticker, ts.realized_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.realized_pct IS NOT NULL
-                ORDER BY ts.realized_pct DESC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.final_score IS NOT NULL
+                ORDER BY ts.final_score DESC LIMIT 1
             """, (week_ago,))
             best = cur.fetchone()
             if best:
                 result["best_ticker"] = best["ticker"]
-                result["best_pnl"] = round(float(best.get("realized_pct", 0)), 1)
+                result["best_pnl"] = round(float(best.get("final_score", 0)), 1)
 
             cur.execute("""
-                SELECT s.ticker, ts.realized_pct
+                SELECT s.ticker, ts.final_score
                 FROM trading_signals ts JOIN stocks s ON ts.stock_id = s.stock_id
-                WHERE ts.signal_date >= %s AND ts.realized_pct IS NOT NULL
-                ORDER BY ts.realized_pct ASC LIMIT 1
+                WHERE ts.signal_date >= %s AND ts.final_score IS NOT NULL
+                ORDER BY ts.final_score ASC LIMIT 1
             """, (week_ago,))
             worst = cur.fetchone()
             if worst:
                 result["worst_ticker"] = worst["ticker"]
-                result["worst_pnl"] = round(float(worst.get("realized_pct", 0)), 1)
+                result["worst_pnl"] = round(float(worst.get("final_score", 0)), 1)
 
         # ── Brinson Attribution ──
         # 수익 = 시장효과(β) + 종목선택(α) + 현금드래그
@@ -1104,7 +1106,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
                 SELECT s.ticker, xp.ai_score, xp.ensemble_score,
                        fs.grade, fs.weighted_score,
                        xp.shap_top_positive
-                FROM xgboost_predictions xp
+                FROM stock_final_scores xp
                 JOIN stocks s ON xp.stock_id = s.stock_id
                 LEFT JOIN (
                     SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
@@ -1127,7 +1129,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
             cur.execute("""
                 SELECT s.ticker, xp.ai_score, fs.grade, fs.weighted_score,
                        xp.shap_top_negative
-                FROM xgboost_predictions xp
+                FROM stock_final_scores xp
                 JOIN stocks s ON xp.stock_id = s.stock_id
                 LEFT JOIN (
                     SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
@@ -1148,7 +1150,7 @@ def build_ai_morning_data(calc_date: date) -> dict:
             # 모델 메타 (최근 학습 결과)
             cur.execute("""
                 SELECT train_auc, ai_weight, feature_importance
-                FROM xgboost_models
+                FROM system_telemetry
                 WHERE is_active = TRUE
                 ORDER BY created_at DESC LIMIT 1
             """)
@@ -1201,7 +1203,7 @@ def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
         with get_cursor() as cur:
             cur.execute("""
                 SELECT ai_score, ensemble_score, shap_values
-                FROM xgboost_predictions
+                FROM stock_final_scores
                 WHERE stock_id = %s AND calc_date = %s
             """, (stock_id, calc_date))
             row = cur.fetchone()
@@ -1263,7 +1265,7 @@ def build_ai_risk_data(calc_date: date) -> dict:
         # Alpha Decay DEAD
         with get_cursor() as cur:
             cur.execute("""
-                SELECT grade, holding_period, avg_return, hit_rate, ic_value, signal_status
+                SELECT grade, period, avg_return, hit_rate, ic_value, signal_status
                 FROM alpha_decay_daily
                 WHERE calc_date = %s AND signal_status = 'DEAD'
                 ORDER BY grade
@@ -1271,7 +1273,7 @@ def build_ai_risk_data(calc_date: date) -> dict:
             for row in cur.fetchall():
                 result["decay_dead"].append({
                     "grade": row["grade"],
-                    "period": row["holding_period"],
+                    "period": row["period"],
                     "hit": round(_safe_float(row["hit_rate"]) * 100, 1),
                     "ic": round(_safe_float(row["ic_value"]), 4),
                     "avg_return": round(_safe_float(row["avg_return"]) * 100, 2),
@@ -1294,7 +1296,7 @@ def build_ai_batch_summary(calc_date: date) -> dict:
         with get_cursor() as cur:
             cur.execute("""
                 SELECT train_auc, ai_weight, feature_importance
-                FROM xgboost_models
+                FROM system_telemetry
                 WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1
             """)
             model = cur.fetchone()
@@ -1310,7 +1312,7 @@ def build_ai_batch_summary(calc_date: date) -> dict:
                     result["feature_top3"] = [{"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi]
 
             cur.execute("""
-                SELECT COUNT(*) as cnt FROM xgboost_predictions WHERE calc_date = %s
+                SELECT COUNT(*) as cnt FROM stock_final_scores WHERE calc_date = %s
             """, (calc_date,))
             result["predict_count"] = cur.fetchone()["cnt"]
 
