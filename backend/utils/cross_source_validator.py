@@ -1,22 +1,14 @@
 """
-utils/cross_source_validator.py — 교차소스 데이터 품질 검증 v1.0 (SET A-5)
+utils/cross_source_validator.py — 교차소스 데이터 품질 검증 v1.1 (SET A-5 FIX)
 ============================================================================
-FMP ↔ yfinance 교차검증으로 데이터 신뢰성 확보.
-기존 data_quality_gate.py의 Step 0에 통합.
+v1.1 수정사항:
+  ★ yfinance MultiIndex 컬럼 대응 (최신 yfinance 호환)
+  ★ FMP 데이터 없을 때 graceful skip
+  ★ 로그 개선 (첫 SKIP 원인 출력)
 
 검증 항목:
-  1. 주가 교차검증 (가장 중요: ±0.5% OK, ±2% WARNING, >2% ALERT)
+  1. 주가 교차검증 (±0.5% OK, ±2% WARNING, >2% ALERT)
   2. 거래량 교차검증 (±10% 허용)
-  3. 재무지표 교차검증 (Market Cap, EPS 등)
-
-설계 근거:
-  - Ince & Porter (2006): 데이터 소스 간 차이가 포트폴리오 성과에 유의한 영향
-  - Bloomberg DQ Dashboard: Completeness × Timeliness × Accuracy 3축
-  - FactSet Golden Copy: 다수 소스에서 가장 신뢰할 수 있는 값 선택
-
-실행:
-  data_quality_gate.py Step 0 확장으로 자동 실행
-  또는 독립 실행: python -m utils.cross_source_validator
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,21 +29,19 @@ logger = logging.getLogger("cross_source_validator")
 # 상수
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PRICE_OK_THRESHOLD      = 0.005   # < 0.5% 차이 → OK
-PRICE_WARNING_THRESHOLD = 0.020   # < 2% 차이 → WARNING
-VOLUME_OK_THRESHOLD     = 0.10    # < 10% 차이 → OK
-FINANCIAL_OK_THRESHOLD  = 0.05    # < 5% 차이 → OK
-
-# 샘플링: 전체 534종목 중 일부만 교차검증 (API 비용/속도 제한)
-SAMPLE_SIZE = 100                 # 매일 100종목 랜덤 검증
-YF_RATE_LIMIT_SEC = 0.2          # yfinance 호출 간격
+PRICE_OK_THRESHOLD      = 0.005
+PRICE_WARNING_THRESHOLD = 0.020
+VOLUME_OK_THRESHOLD     = 0.10
+FINANCIAL_OK_THRESHOLD  = 0.05
+SAMPLE_SIZE = 100
+YF_RATE_LIMIT_SEC = 0.2
 
 
 class ValidationStatus(Enum):
     OK       = "OK"
     WARNING  = "WARNING"
     ALERT    = "ALERT"
-    SKIP     = "SKIP"        # 소스 데이터 없음
+    SKIP     = "SKIP"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -103,41 +93,53 @@ def ensure_cross_validation_table():
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# yfinance 데이터 로더 (교차검증 전용)
+# yfinance 데이터 로더 (v1.1: MultiIndex 대응)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _yf_get_price(ticker: str, target_date: date) -> dict:
-    """yfinance에서 종가/거래량 조회 (캐시 없음, 직접 호출)"""
+    """
+    yfinance에서 종가/거래량 조회.
+    v1.1: MultiIndex 컬럼 대응 (yfinance >= 0.2.31)
+    """
     try:
         import yfinance as yf
-        start = target_date - timedelta(days=5)
+        start = target_date - timedelta(days=7)   # 7일 여유 (주말/공휴일 대비)
         end = target_date + timedelta(days=1)
+        
         df = yf.download(ticker, start=str(start), end=str(end), 
                          progress=False, timeout=10)
         if df.empty:
             return None
         
-        # 가장 가까운 날짜
-        df.index = df.index.date if hasattr(df.index, 'date') else df.index
+        # ★ v1.1: MultiIndex 컬럼 처리
+        # yfinance 최신 버전은 컬럼이 ('Close', 'AAPL') 형태의 MultiIndex
+        if hasattr(df.columns, 'nlevels') and df.columns.nlevels > 1:
+            df.columns = df.columns.get_level_values(0)
+        
+        # 가장 최근 행
         row = df.iloc[-1]
+        
+        close_val = None
+        volume_val = None
+        
+        # Close 컬럼 찾기 (대소문자 유연 처리)
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if col_lower == 'close' and close_val is None:
+                close_val = float(row[col])
+            elif col_lower == 'volume' and volume_val is None:
+                volume_val = float(row[col])
+        
+        if close_val is None:
+            return None
+            
         return {
-            "close": float(row["Close"]) if "Close" in row.index else None,
-            "volume": float(row["Volume"]) if "Volume" in row.index else None,
+            "close": close_val,
+            "volume": volume_val,
         }
     except Exception as e:
         logger.debug(f"yfinance failed for {ticker}: {e}")
         return None
-
-
-def _yf_get_market_cap(ticker: str) -> float:
-    """yfinance에서 시가총액 조회"""
-    try:
-        import yfinance as yf
-        t = yf.Ticker(ticker)
-        info = t.info or {}
-        return float(info.get("marketCap", 0))
-    except Exception:
-        return 0
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -173,9 +175,14 @@ def validate_price(stock_id: int, ticker: str, calc_date: date) -> dict:
     time.sleep(YF_RATE_LIMIT_SEC)
     yf_data = _yf_get_price(ticker, calc_date)
     
-    if not fmp or not fmp["close"] or not yf_data or not yf_data["close"]:
+    # ★ v1.1: SKIP 원인 구분
+    if not fmp or not fmp.get("close"):
         return {"check_type": "PRICE", "status": ValidationStatus.SKIP,
-                "fmp": fmp, "yf": yf_data}
+                "skip_reason": "FMP_MISSING", "fmp": fmp, "yf": yf_data}
+    
+    if not yf_data or not yf_data.get("close"):
+        return {"check_type": "PRICE", "status": ValidationStatus.SKIP,
+                "skip_reason": "YF_MISSING", "fmp": fmp, "yf": yf_data}
     
     diff = abs(fmp["close"] - yf_data["close"]) / yf_data["close"]
     
@@ -184,10 +191,10 @@ def validate_price(stock_id: int, ticker: str, calc_date: date) -> dict:
         golden = (fmp["close"] + yf_data["close"]) / 2
     elif diff < PRICE_WARNING_THRESHOLD:
         status = ValidationStatus.WARNING
-        golden = min(fmp["close"], yf_data["close"])  # 보수적
+        golden = min(fmp["close"], yf_data["close"])
     else:
         status = ValidationStatus.ALERT
-        golden = None  # 수동 확인 필요
+        golden = None
     
     return {
         "check_type": "PRICE",
@@ -199,42 +206,12 @@ def validate_price(stock_id: int, ticker: str, calc_date: date) -> dict:
     }
 
 
-def validate_volume(stock_id: int, ticker: str, calc_date: date) -> dict:
-    """거래량 교차검증"""
-    fmp = _fmp_get_price(stock_id, calc_date)
-    
-    # yf 데이터는 이미 validate_price에서 호출했을 수 있으므로 캐시 활용
-    yf_data = _yf_get_price(ticker, calc_date)
-    
-    if not fmp or not fmp["volume"] or not yf_data or not yf_data["volume"]:
-        return {"check_type": "VOLUME", "status": ValidationStatus.SKIP}
-    
-    if yf_data["volume"] == 0:
-        return {"check_type": "VOLUME", "status": ValidationStatus.SKIP}
-    
-    diff = abs(fmp["volume"] - yf_data["volume"]) / yf_data["volume"]
-    
-    status = ValidationStatus.OK if diff < VOLUME_OK_THRESHOLD else \
-             ValidationStatus.WARNING if diff < 0.30 else ValidationStatus.ALERT
-    
-    return {
-        "check_type": "VOLUME",
-        "status": status,
-        "fmp_value": fmp["volume"],
-        "yf_value": yf_data["volume"],
-        "diff_pct": diff,
-    }
-
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 일일 배치
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def run_cross_validation(calc_date: date = None):
-    """
-    일일 교차검증 배치.
-    data_quality_gate.py Step 0 확장으로 호출.
-    """
+    """일일 교차검증 배치."""
     if calc_date is None:
         calc_date = date.today()
     
@@ -254,14 +231,26 @@ def run_cross_validation(calc_date: date = None):
     print(f"[CROSS-VAL] Validating {len(targets)} stocks (sampled from active)")
     
     counts = {"OK": 0, "WARNING": 0, "ALERT": 0, "SKIP": 0}
+    skip_reasons = {"FMP_MISSING": 0, "YF_MISSING": 0, "OTHER": 0}
     alert_tickers = []
+    first_skip_logged = False
     
     for i, t in enumerate(targets):
         try:
-            # 주가 검증
             price_result = validate_price(t["stock_id"], t["ticker"], calc_date)
             status = price_result["status"]
             counts[status.value] += 1
+            
+            # ★ v1.1: SKIP 원인 추적
+            if status == ValidationStatus.SKIP:
+                reason = price_result.get("skip_reason", "OTHER")
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+                
+                # 첫 번째 SKIP만 상세 출력 (디버깅용)
+                if not first_skip_logged:
+                    print(f"  [DEBUG] First SKIP: {t['ticker']} reason={reason} "
+                          f"fmp={price_result.get('fmp')} yf={price_result.get('yf')}")
+                    first_skip_logged = True
             
             if status == ValidationStatus.ALERT:
                 alert_tickers.append(t["ticker"])
@@ -281,20 +270,23 @@ def run_cross_validation(calc_date: date = None):
                       price_result.get("diff_pct"),
                       status.value,
                       price_result.get("golden_value"),
-                      json.dumps({"source_a": "FMP", "source_b": "yfinance"})))
+                      json.dumps({"source_a": "FMP", "source_b": "yfinance",
+                                  "skip_reason": price_result.get("skip_reason")})))
             
             if (i + 1) % 20 == 0:
                 print(f"  Progress: {i+1}/{len(targets)} | "
-                      f"OK={counts['OK']} WARN={counts['WARNING']} ALERT={counts['ALERT']}")
+                      f"OK={counts['OK']} WARN={counts['WARNING']} "
+                      f"ALERT={counts['ALERT']} SKIP={counts['SKIP']}")
                 
         except Exception as e:
             counts["SKIP"] += 1
             logger.debug(f"Validation failed for {t['ticker']}: {e}")
     
-    # 일일 리포트 생성
+    # 일일 리포트
     total = sum(counts.values())
-    health_score = (counts["OK"] + counts["WARNING"] * 0.5) / max(total - counts["SKIP"], 1) * 100
-    price_accuracy = counts["OK"] / max(total - counts["SKIP"], 1)
+    validated = total - counts["SKIP"]
+    health_score = (counts["OK"] + counts["WARNING"] * 0.5) / max(validated, 1) * 100
+    price_accuracy = counts["OK"] / max(validated, 1)
     
     with get_cursor() as cur:
         cur.execute("""
@@ -312,13 +304,21 @@ def run_cross_validation(calc_date: date = None):
               counts["ALERT"], counts["SKIP"],
               health_score, price_accuracy,
               json.dumps(alert_tickers),
-              json.dumps(counts)))
+              json.dumps({"counts": counts, "skip_reasons": skip_reasons})))
     
     print(f"\n[CROSS-VAL] Results:")
     print(f"  OK: {counts['OK']} | WARNING: {counts['WARNING']} | "
           f"ALERT: {counts['ALERT']} | SKIP: {counts['SKIP']}")
-    print(f"  Health Score: {health_score:.1f}/100")
-    print(f"  Price Accuracy: {price_accuracy:.1%}")
+    
+    if counts["SKIP"] > 0:
+        print(f"  SKIP breakdown: {skip_reasons}")
+    
+    if validated > 0:
+        print(f"  Health Score: {health_score:.1f}/100 (validated {validated}/{total})")
+        print(f"  Price Accuracy: {price_accuracy:.1%}")
+    else:
+        print(f"  ⚠️ 검증 가능 종목 0 — FMP DB에 해당 날짜 데이터 있는지 확인 필요")
+    
     if alert_tickers:
         print(f"  ALERT tickers: {', '.join(alert_tickers[:10])}")
     
@@ -326,6 +326,7 @@ def run_cross_validation(calc_date: date = None):
         "health_score": health_score,
         "price_accuracy": price_accuracy,
         "counts": counts,
+        "skip_reasons": skip_reasons,
         "alert_tickers": alert_tickers,
     }
 

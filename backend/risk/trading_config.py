@@ -171,6 +171,7 @@ class TradingConfig:
     sector_max_pct: float = 0.30
     position_size_mult: float = 0.80
     rebalance_freq_days: int = 7
+    initial_capital: float = 100000.0       # v5.1 FIX: batch_trading_signals 호환
 
 
 class DynamicConfig(TradingConfig):

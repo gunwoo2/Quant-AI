@@ -502,10 +502,159 @@ def run_portfolio_backtest(run_id: str = None, rebal_freq: int = 21):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Walk-Forward Backtest Engine")
-    parser.add_argument("--track", choices=["ic", "portfolio", "both"], default="both")
+    parser.add_argument("--track", choices=["ic", "portfolio", "both", "quick"], default="quick")
+    parser.add_argument("--horizon", type=int, default=10, help="Forward return horizon (days)")
     args = parser.parse_args()
     
-    if args.track in ("ic", "both"):
+    if args.track == "quick":
+        run_quick_ic_test(horizon_days=args.horizon)
+    elif args.track in ("ic", "both"):
         run_ic_backtest()
     if args.track in ("portfolio", "both"):
         run_portfolio_backtest()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Quick IC Test (데이터 부족 시 사용)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def run_quick_ic_test(horizon_days: int = 10):
+    """
+    stock_final_scores 데이터가 적을 때 사용하는 간단한 IC 테스트.
+    현재 보유 데이터 전체를 사용하여 Score vs Forward Return의 IC 계산.
+    Walk-Forward가 아닌 단순 IC이므로 OOS 검증은 아님.
+    """
+    from scipy.stats import spearmanr
+    
+    print(f"\n{'='*55}")
+    print(f"  QUICK IC TEST (horizon={horizon_days}d)")
+    print(f"{'='*55}")
+    
+    with get_cursor() as cur:
+        # 먼저 데이터 범위 확인
+        cur.execute("""
+            SELECT MIN(calc_date) as mn, MAX(calc_date) as mx, COUNT(*) as cnt
+            FROM stock_final_scores
+        """)
+        info = cur.fetchone()
+        print(f"  Final Scores: {info['mn']} ~ {info['mx']} ({info['cnt']} rows)")
+        
+        if info['cnt'] < 100:
+            print(f"  ⚠️ 데이터 {info['cnt']}건으로 IC 테스트 불가 (최소 100건 필요)")
+            print(f"  → 배치를 더 돌려서 데이터를 축적하세요")
+            return None
+        
+        # Score vs Forward Return 조회
+        cur.execute("""
+            SELECT
+                f.stock_id,
+                f.weighted_score,
+                f.layer1_score,
+                f.layer2_score,
+                f.layer3_score,
+                f.percentile_rank,
+                f.grade,
+                f.calc_date,
+                COALESCE(
+                    (SELECT p2.close_price FROM stock_prices_daily p2 
+                     WHERE p2.stock_id = f.stock_id AND p2.trade_date >= f.calc_date + %s
+                     ORDER BY p2.trade_date ASC LIMIT 1),
+                    0
+                ) AS future_price,
+                COALESCE(
+                    (SELECT p1.close_price FROM stock_prices_daily p1
+                     WHERE p1.stock_id = f.stock_id AND p1.trade_date <= f.calc_date
+                     ORDER BY p1.trade_date DESC LIMIT 1),
+                    0
+                ) AS base_price
+            FROM stock_final_scores f
+            WHERE f.calc_date <= (
+                SELECT MAX(calc_date) FROM stock_final_scores
+            ) - %s
+        """, (horizon_days, horizon_days))
+        rows = [dict(r) for r in cur.fetchall()]
+    
+    if not rows:
+        print(f"  ⚠️ Forward return 계산 가능한 데이터 없음")
+        print(f"  → calc_date + {horizon_days}일 이후 가격이 없습니다")
+        return None
+    
+    # Forward Return 계산
+    valid = []
+    for r in rows:
+        bp = float(r.get('base_price', 0) or 0)
+        fp = float(r.get('future_price', 0) or 0)
+        if bp > 0 and fp > 0:
+            r['fwd_return'] = fp / bp - 1
+            valid.append(r)
+    
+    print(f"  Valid samples: {len(valid)} (total {len(rows)})")
+    
+    if len(valid) < 50:
+        print(f"  ⚠️ 유효 데이터 {len(valid)}건 — 부족")
+        return None
+    
+    # IC 계산 (각 Score 유형별)
+    results = {}
+    score_types = {
+        'weighted_score': [float(r.get('weighted_score', 0) or 0) for r in valid],
+        'layer1_score': [float(r.get('layer1_score', 0) or 0) for r in valid],
+        'layer2_score': [float(r.get('layer2_score', 0) or 0) for r in valid],
+        'layer3_score': [float(r.get('layer3_score', 0) or 0) for r in valid],
+    }
+    fwd_rets = [r['fwd_return'] for r in valid]
+    
+    for name, scores in score_types.items():
+        try:
+            ic, pval = spearmanr(scores, fwd_rets)
+            if np.isnan(ic):
+                ic = 0
+        except Exception:
+            ic, pval = 0, 1
+        results[name] = {'ic': float(ic), 'pval': float(pval)}
+    
+    # 등급별 Forward Return (단조성 확인)
+    grade_returns = {}
+    for r in valid:
+        g = r.get('grade', 'D')
+        if g not in grade_returns:
+            grade_returns[g] = []
+        grade_returns[g].append(r['fwd_return'])
+    
+    # 결과 출력
+    print(f"\n  {'Score Type':<20s} {'IC':>8s} {'p-value':>10s} {'Verdict':>12s}")
+    print(f"  {'-'*52}")
+    for name, r in results.items():
+        verdict = "✅ GOOD" if r['ic'] > 0.03 else "⚠️ WEAK" if r['ic'] > 0 else "❌ FAIL"
+        print(f"  {name:<20s} {r['ic']:>+8.4f} {r['pval']:>10.4f} {verdict:>12s}")
+    
+    print(f"\n  등급별 {horizon_days}일 평균 Forward Return:")
+    print(f"  {'Grade':<8s} {'Avg Return':>12s} {'Count':>8s}")
+    print(f"  {'-'*30}")
+    for grade in ['S', 'A+', 'A', 'B+', 'B', 'C', 'D', 'F']:
+        if grade in grade_returns and grade_returns[grade]:
+            avg = np.mean(grade_returns[grade])
+            cnt = len(grade_returns[grade])
+            emoji = "📈" if avg > 0 else "📉"
+            print(f"  {grade:<8s} {avg:>+11.2%} {cnt:>8d} {emoji}")
+    
+    # 단조성 확인
+    grade_order = ['S', 'A+', 'A', 'B+', 'B', 'C', 'D', 'F']
+    avgs = []
+    for g in grade_order:
+        if g in grade_returns and grade_returns[g]:
+            avgs.append(np.mean(grade_returns[g]))
+    
+    is_monotonic = all(avgs[i] >= avgs[i+1] for i in range(len(avgs)-1)) if len(avgs) > 2 else False
+    
+    print(f"\n  등급 단조성: {'✅ 단조적 (S > A > B > C > D)' if is_monotonic else '⚠️ 비단조적 — 등급 체계 검토 필요'}")
+    
+    print(f"\n{'='*55}")
+    ws = results.get('weighted_score', {})
+    overall = "✅ 유효" if ws.get('ic', 0) > 0.03 else "⚠️ 약함" if ws.get('ic', 0) > 0 else "❌ 무효"
+    print(f"  최종 판정: IC={ws.get('ic', 0):+.4f} → {overall}")
+    print(f"  (참고: 이것은 Quick IC이므로 OOS 검증은 아님)")
+    print(f"  (Walk-Forward OOS 검증은 30일+ 데이터 축적 후 재실행)")
+    print(f"{'='*55}")
+    
+    return results
