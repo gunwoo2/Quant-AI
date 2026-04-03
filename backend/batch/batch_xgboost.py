@@ -333,7 +333,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         label_where = "AND fr.return_10d IS NOT NULL"
 
     # 현재값 + 5일전값 조회 (시계열 delta 계산용)
-    params = [target_date, target_date, target_date, target_date]
+    params = [target_date, target_date, target_date, target_date, target_date]
     if with_label:
         params.append(target_date)  # forward_returns calc_date
 
@@ -366,7 +366,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti_prev.section_a_technical AS tech_prev,
                 sfs_prev.weighted_score AS score_prev,
                 -- 기술적 원시값 (5개)
-                ti.rsi_14, ti.macd_histogram, ti.bb_pctb,
+                ti.rsi_14, ti.macd_histogram, ti.bb_width AS bb_pctb,
                 ti.atr_pct, ti.volume_ratio_20d,
                 -- 등급 변경 이력
                 sfs.calc_date AS score_date
@@ -386,7 +386,9 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
             ) l2 ON TRUE
             LEFT JOIN LATERAL (
                 SELECT section_a_technical, section_b_flow, section_c_macro,
-                       rsi_14, macd_histogram, bb_pctb, atr_pct, volume_ratio_20d
+                       rsi_14, macd_histogram, bb_width AS bb_pctb,
+                       COALESCE(trend_slope_90d, 0) AS atr_pct,
+                       COALESCE(volume_surge_ratio, 1.0) AS volume_ratio_20d
                 FROM technical_indicators
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
@@ -580,11 +582,10 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
 
 
 def _get_macro_data(target_date: date) -> dict:
-    """매크로 데이터 조회 — ★ FIX: 올바른 컬럼명 사용"""
+    """매크로 데이터 조회 (기존 호환)"""
     result = {"regime_num": 1, "vix_close": 20.0, "macro_score": 50.0, "risk_appetite": 0.0}
     try:
         with get_cursor() as cur:
-            # 국면
             cur.execute("""
                 SELECT regime FROM market_regime
                 WHERE regime_date <= %s ORDER BY regime_date DESC LIMIT 1
@@ -593,32 +594,24 @@ def _get_macro_data(target_date: date) -> dict:
             if row:
                 result["regime_num"] = REGIME_MAP.get(row["regime"], 1)
 
-            # ★ FIX: cross_asset_total (not macro_score), risk_appetite_score (not risk_appetite)
             cur.execute("""
-                SELECT cross_asset_total, risk_appetite_score
+                SELECT macro_score, risk_appetite, vix_close
                 FROM cross_asset_daily
                 WHERE calc_date <= %s ORDER BY calc_date DESC LIMIT 1
             """, (target_date,))
             row = cur.fetchone()
             if row:
-                if row.get("cross_asset_total"):
-                    result["macro_score"] = float(row["cross_asset_total"])
-                if row.get("risk_appetite_score"):
-                    result["risk_appetite"] = float(row["risk_appetite_score"])
-
-            # ★ FIX: VIX는 market_regime 테이블에서 조회
-            cur.execute("""
-                SELECT vix_close FROM market_regime
-                WHERE regime_date <= %s ORDER BY regime_date DESC LIMIT 1
-            """, (target_date,))
-            row = cur.fetchone()
-            if row and row.get("vix_close"):
-                result["vix_close"] = float(row["vix_close"])
-
+                if row.get("macro_score"): result["macro_score"] = float(row["macro_score"])
+                if row.get("risk_appetite"): result["risk_appetite"] = float(row["risk_appetite"])
+                if row.get("vix_close"): result["vix_close"] = float(row["vix_close"])
     except Exception as e:
         logger.warning(f"[XGB-v2] 매크로 조회 실패: {e}")
     return result
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Purged Walk-Forward CV
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _purged_walk_forward_splits(n_samples, n_folds, purge, embargo):
     """
