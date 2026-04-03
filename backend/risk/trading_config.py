@@ -184,9 +184,9 @@ class DynamicConfig(TradingConfig):
     dd_mode: str = "NORMAL"
 
     # 블렌딩 비율
-    blend_rp: float = 0.40
-    blend_hk: float = 0.30
-    blend_conv: float = 0.30
+    blend_rp: float = 0.15
+    blend_hk: float = 0.10
+    blend_conv: float = 0.75
 
     # 추가 파라미터
     min_holding_days: int = 5
