@@ -1083,26 +1083,18 @@ def _get_prices(stock_id: int, days: int = 60) -> list:
 # ══════════════════════════════════════════════════════════════════
 
 def build_ai_morning_data(calc_date: date) -> dict:
-    """AI 모닝 데이터: Top 5/Bottom 3 + 모델 메타 + 등급 분포."""
+    """AI morning data: Top 5/Bottom 3 + model meta + grade dist."""
     from db_pool import get_cursor
     import json as _json
-    result = {
-        "ai_top": [], "ai_bottom": [], "feature_top3": [],
-        "model_auc": None, "ai_weight": None, "grade_dist": {},
-    }
+    result = {"ai_top": [], "ai_bottom": [], "feature_top3": [], "model_auc": None, "ai_weight": None, "grade_dist": {}}
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT s.ticker, asd.ai_score, asd.ensemble_score,
-                       fs.grade, fs.weighted_score, asd.shap_top5_pos
+                SELECT s.ticker, asd.ai_score, asd.ensemble_score, fs.grade, fs.weighted_score, asd.shap_top5_pos
                 FROM ai_scores_daily asd
                 JOIN stocks s ON asd.stock_id = s.stock_id
-                LEFT JOIN (
-                    SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
-                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
-                ) fs ON asd.stock_id = fs.stock_id
-                WHERE asd.calc_date = %s AND asd.ai_score IS NOT NULL
-                ORDER BY asd.ai_score DESC LIMIT 5
+                LEFT JOIN (SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score FROM stock_final_scores ORDER BY stock_id, calc_date DESC) fs ON asd.stock_id = fs.stock_id
+                WHERE asd.calc_date = %s AND asd.ai_score IS NOT NULL ORDER BY asd.ai_score DESC LIMIT 5
             """, (calc_date,))
             for row in cur.fetchall():
                 shap_pos = row.get("shap_top5_pos")
@@ -1112,28 +1104,16 @@ def build_ai_morning_data(calc_date: date) -> dict:
                     if isinstance(shap_pos, list):
                         parts = []
                         for item in shap_pos[:3]:
-                            if isinstance(item, dict):
-                                parts.append(f"{item.get('feature', item.get('f','?'))}(+{item.get('shap', item.get('v',0)):.2f})")
-                            elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                                parts.append(f"{item[0]}(+{item[1]:.2f})")
+                            if isinstance(item, dict): parts.append(f"{item.get('feature', item.get('f','?'))}(+{item.get('shap', item.get('v',0)):.2f})")
+                            elif isinstance(item, (list, tuple)) and len(item) >= 2: parts.append(f"{item[0]}(+{item[1]:.2f})")
                         shap_str = ", ".join(parts)
-                result["ai_top"].append({
-                    "ticker": row["ticker"],
-                    "ai_score": _safe_float(row.get("ai_score")),
-                    "grade": row.get("grade", "?"),
-                    "score": _safe_float(row.get("weighted_score")),
-                    "shap_reason": shap_str[:60] if shap_str else "",
-                })
+                result["ai_top"].append({"ticker": row["ticker"], "ai_score": _safe_float(row.get("ai_score")), "grade": row.get("grade", "?"), "score": _safe_float(row.get("weighted_score")), "shap_reason": shap_str[:60] if shap_str else ""})
             cur.execute("""
                 SELECT s.ticker, asd.ai_score, fs.grade, fs.weighted_score, asd.shap_top5_neg
                 FROM ai_scores_daily asd
                 JOIN stocks s ON asd.stock_id = s.stock_id
-                LEFT JOIN (
-                    SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
-                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
-                ) fs ON asd.stock_id = fs.stock_id
-                WHERE asd.calc_date = %s AND asd.ai_score IS NOT NULL
-                ORDER BY asd.ai_score ASC LIMIT 3
+                LEFT JOIN (SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score FROM stock_final_scores ORDER BY stock_id, calc_date DESC) fs ON asd.stock_id = fs.stock_id
+                WHERE asd.calc_date = %s AND asd.ai_score IS NOT NULL ORDER BY asd.ai_score ASC LIMIT 3
             """, (calc_date,))
             for row in cur.fetchall():
                 shap_neg = row.get("shap_top5_neg")
@@ -1143,68 +1123,37 @@ def build_ai_morning_data(calc_date: date) -> dict:
                     if isinstance(shap_neg, list):
                         parts = []
                         for item in shap_neg[:3]:
-                            if isinstance(item, dict):
-                                parts.append(f"{item.get('feature', item.get('f','?'))}({item.get('shap', item.get('v',0)):.2f})")
-                            elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                                parts.append(f"{item[0]}({item[1]:.2f})")
+                            if isinstance(item, dict): parts.append(f"{item.get('feature', item.get('f','?'))}({item.get('shap', item.get('v',0)):.2f})")
+                            elif isinstance(item, (list, tuple)) and len(item) >= 2: parts.append(f"{item[0]}({item[1]:.2f})")
                         shap_str = ", ".join(parts)
-                result["ai_bottom"].append({
-                    "ticker": row["ticker"],
-                    "ai_score": _safe_float(row.get("ai_score")),
-                    "grade": row.get("grade", "?"),
-                    "shap_reason": shap_str[:60] if shap_str else "",
-                })
-            cur.execute("""
-                SELECT train_auc, valid_auc, feature_count
-                FROM ml_model_meta WHERE is_active = TRUE
-                ORDER BY created_at DESC LIMIT 1
-            """)
+                result["ai_bottom"].append({"ticker": row["ticker"], "ai_score": _safe_float(row.get("ai_score")), "grade": row.get("grade", "?"), "shap_reason": shap_str[:60] if shap_str else ""})
+            cur.execute("SELECT train_auc, valid_auc, feature_count FROM ml_model_meta WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1")
             model = cur.fetchone()
             if model:
                 result["model_auc"] = _safe_float(model.get("train_auc"))
-                cur.execute("""
-                    SELECT AVG(ai_weight) as avg_weight FROM ai_scores_daily
-                    WHERE calc_date = %s AND ai_weight IS NOT NULL
-                """, (calc_date,))
+                cur.execute("SELECT AVG(ai_weight) as avg_weight FROM ai_scores_daily WHERE calc_date = %s AND ai_weight IS NOT NULL", (calc_date,))
                 wrow = cur.fetchone()
-                if wrow and wrow.get("avg_weight"):
-                    result["ai_weight"] = _safe_float(wrow["avg_weight"])
+                if wrow and wrow.get("avg_weight"): result["ai_weight"] = _safe_float(wrow["avg_weight"])
                 try:
-                    cur.execute("""
-                        SELECT feature_name, importance FROM xgb_feature_importance
-                        ORDER BY importance DESC LIMIT 3
-                    """)
+                    cur.execute("SELECT feature_name, importance FROM xgb_feature_importance ORDER BY importance DESC LIMIT 3")
                     fi_rows = cur.fetchall()
-                    if fi_rows:
-                        result["feature_top3"] = [
-                            {"name": r["feature_name"], "pct": round(float(r["importance"]) * 100, 1)}
-                            for r in fi_rows
-                        ]
-                except Exception:
-                    pass
-            cur.execute("""
-                SELECT grade, COUNT(*) as cnt FROM stock_final_scores
-                WHERE calc_date = %s AND grade IS NOT NULL
-                GROUP BY grade ORDER BY grade
-            """, (calc_date,))
-            for row in cur.fetchall():
-                result["grade_dist"][row["grade"]] = int(row["cnt"])
+                    if fi_rows: result["feature_top3"] = [{"name": r["feature_name"], "pct": round(float(r["importance"]) * 100, 1)} for r in fi_rows]
+                except Exception: pass
+            cur.execute("SELECT grade, COUNT(*) as cnt FROM stock_final_scores WHERE calc_date = %s AND grade IS NOT NULL GROUP BY grade ORDER BY grade", (calc_date,))
+            for row in cur.fetchall(): result["grade_dist"][row["grade"]] = int(row["cnt"])
     except Exception as e:
         logger.warning(f"  [AI-MORNING] data build fail: {e}")
     return result
 
 
 def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
-    """AI signal data for individual stock."""
+    """AI signal data per stock."""
     from db_pool import get_cursor
     import json as _json
     result = {"ai_score": None, "ensemble_score": None, "shap_positive": [], "shap_negative": []}
     try:
         with get_cursor() as cur:
-            cur.execute("""
-                SELECT ai_score, ensemble_score, shap_all, shap_top5_pos, shap_top5_neg
-                FROM ai_scores_daily WHERE stock_id = %s AND calc_date = %s
-            """, (stock_id, calc_date))
+            cur.execute("SELECT ai_score, ensemble_score, shap_all, shap_top5_pos, shap_top5_neg FROM ai_scores_daily WHERE stock_id = %s AND calc_date = %s", (stock_id, calc_date))
             row = cur.fetchone()
             if row:
                 result["ai_score"] = _safe_float(row.get("ai_score"))
@@ -1215,25 +1164,20 @@ def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
                     if isinstance(raw, str): raw = _json.loads(raw)
                     if isinstance(raw, list):
                         for item in raw[:limit]:
-                            if isinstance(item, dict):
-                                items.append({"feature": item.get("feature", item.get("f","?")), "shap": round(float(item.get("shap", item.get("v",0))), 2)})
-                            elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                                items.append({"feature": str(item[0]), "shap": round(float(item[1]), 2)})
+                            if isinstance(item, dict): items.append({"feature": item.get("feature", item.get("f","?")), "shap": round(float(item.get("shap", item.get("v",0))), 2)})
+                            elif isinstance(item, (list, tuple)) and len(item) >= 2: items.append({"feature": str(item[0]), "shap": round(float(item[1]), 2)})
                     elif isinstance(raw, dict):
-                        for k, v in sorted(raw.items(), key=lambda x: abs(x[1]), reverse=True)[:limit]:
-                            items.append({"feature": k, "shap": round(float(v), 2)})
+                        for k, v in sorted(raw.items(), key=lambda x: abs(x[1]), reverse=True)[:limit]: items.append({"feature": k, "shap": round(float(v), 2)})
                     return items
                 result["shap_positive"] = _parse_shap(row.get("shap_top5_pos"))
                 result["shap_negative"] = _parse_shap(row.get("shap_top5_neg"))
-                if (not result["shap_positive"] or not result["shap_negative"]):
+                if not result["shap_positive"] or not result["shap_negative"]:
                     shap_all = row.get("shap_all")
                     if shap_all:
                         if isinstance(shap_all, str): shap_all = _json.loads(shap_all)
                         if isinstance(shap_all, dict):
-                            if not result["shap_positive"]:
-                                result["shap_positive"] = [{"feature": k, "shap": round(v,2)} for k,v in sorted(shap_all.items(), key=lambda x: x[1], reverse=True)[:3] if v > 0]
-                            if not result["shap_negative"]:
-                                result["shap_negative"] = [{"feature": k, "shap": round(v,2)} for k,v in sorted(shap_all.items(), key=lambda x: x[1])[:3] if v < 0]
+                            if not result["shap_positive"]: result["shap_positive"] = [{"feature": k, "shap": round(v,2)} for k,v in sorted(shap_all.items(), key=lambda x: x[1], reverse=True)[:3] if v > 0]
+                            if not result["shap_negative"]: result["shap_negative"] = [{"feature": k, "shap": round(v,2)} for k,v in sorted(shap_all.items(), key=lambda x: x[1])[:3] if v < 0]
     except Exception as e:
         logger.warning(f"  [AI-BUILDER] signal data fail ({stock_id}): {e}")
     return result
@@ -1301,45 +1245,25 @@ def build_ai_risk_data(calc_date: date) -> dict:
     return result
 
 
-
-
 def build_ai_batch_summary(calc_date: date) -> dict:
     """Batch summary: AUC + Feature Top + inference count."""
     from db_pool import get_cursor
     result = {"auc": None, "ai_weight": None, "predict_count": 0, "feature_top3": []}
     try:
         with get_cursor() as cur:
-            cur.execute("""
-                SELECT train_auc, valid_auc, feature_count
-                FROM ml_model_meta WHERE is_active = TRUE
-                ORDER BY created_at DESC LIMIT 1
-            """)
+            cur.execute("SELECT train_auc, valid_auc, feature_count FROM ml_model_meta WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1")
             model = cur.fetchone()
             if model:
                 result["auc"] = _safe_float(model.get("train_auc"))
-                cur.execute("""
-                    SELECT AVG(ai_weight) as avg_w FROM ai_scores_daily
-                    WHERE calc_date = %s AND ai_weight IS NOT NULL
-                """, (calc_date,))
+                cur.execute("SELECT AVG(ai_weight) as avg_w FROM ai_scores_daily WHERE calc_date = %s AND ai_weight IS NOT NULL", (calc_date,))
                 wrow = cur.fetchone()
-                if wrow and wrow.get("avg_w"):
-                    result["ai_weight"] = _safe_float(wrow["avg_w"])
+                if wrow and wrow.get("avg_w"): result["ai_weight"] = _safe_float(wrow["avg_w"])
                 try:
-                    cur.execute("""
-                        SELECT feature_name, importance FROM xgb_feature_importance
-                        ORDER BY importance DESC LIMIT 3
-                    """)
+                    cur.execute("SELECT feature_name, importance FROM xgb_feature_importance ORDER BY importance DESC LIMIT 3")
                     fi_rows = cur.fetchall()
-                    if fi_rows:
-                        result["feature_top3"] = [
-                            {"name": r["feature_name"], "pct": round(float(r["importance"]) * 100, 1)}
-                            for r in fi_rows
-                        ]
-                except Exception:
-                    pass
-            cur.execute("""
-                SELECT COUNT(*) as cnt FROM ai_scores_daily WHERE calc_date = %s
-            """, (calc_date,))
+                    if fi_rows: result["feature_top3"] = [{"name": r["feature_name"], "pct": round(float(r["importance"]) * 100, 1)} for r in fi_rows]
+                except Exception: pass
+            cur.execute("SELECT COUNT(*) as cnt FROM ai_scores_daily WHERE calc_date = %s", (calc_date,))
             result["predict_count"] = cur.fetchone()["cnt"]
     except Exception as e:
         print(f"  [AI-BUILDER] batch summary fail: {e}")
