@@ -499,45 +499,31 @@ def run_portfolio_backtest(run_id: str = None, rebal_freq: int = 21):
 # CLI
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Quick IC Test (데이터 부족 시 사용)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Weight Simulator (배치 재실행 없이 가중치 최적화 테스트)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def run_quick_ic_test(horizon_days: int = 10):
+def run_weight_simulator(horizon_days: int = 10):
     """
-    stock_final_scores 데이터가 적을 때 사용하는 간단한 IC 테스트.
-    현재 보유 데이터 전체를 사용하여 Score vs Forward Return의 IC 계산.
-    Walk-Forward가 아닌 단순 IC이므로 OOS 검증은 아님.
+    DB의 기존 layer1/2/3 점수를 읽어서 
+    다양한 가중치 조합으로 가상 weighted_score를 만들고 IC를 계산.
+    배치 재실행 없이 최적 가중치를 찾는다.
     """
     from scipy.stats import spearmanr
     
-    print(f"\n{'='*55}")
-    print(f"  QUICK IC TEST (horizon={horizon_days}d)")
-    print(f"{'='*55}")
+    print(f"\n{'='*60}")
+    print(f"  WEIGHT SIMULATOR (horizon={horizon_days}d)")
+    print(f"{'='*60}")
     
     with get_cursor() as cur:
-        # 먼저 데이터 범위 확인
-        cur.execute("""
-            SELECT MIN(calc_date) as mn, MAX(calc_date) as mx, COUNT(*) as cnt
-            FROM stock_final_scores
-        """)
-        info = cur.fetchone()
-        print(f"  Final Scores: {info['mn']} ~ {info['mx']} ({info['cnt']} rows)")
-        
-        if info['cnt'] < 100:
-            print(f"  ⚠️ 데이터 {info['cnt']}건으로 IC 테스트 불가 (최소 100건 필요)")
-            print(f"  → 배치를 더 돌려서 데이터를 축적하세요")
-            return None
-        
-        # Score vs Forward Return 조회
         cur.execute("""
             SELECT
                 f.stock_id,
-                f.weighted_score,
                 f.layer1_score,
                 f.layer2_score,
                 f.layer3_score,
-                f.percentile_rank,
-                f.grade,
+                f.weighted_score,
                 f.calc_date,
                 COALESCE(
                     (SELECT p2.close_price FROM stock_prices_daily p2 
@@ -558,101 +544,175 @@ def run_quick_ic_test(horizon_days: int = 10):
         """, (horizon_days, horizon_days))
         rows = [dict(r) for r in cur.fetchall()]
     
-    if not rows:
-        print(f"  ⚠️ Forward return 계산 가능한 데이터 없음")
-        print(f"  → calc_date + {horizon_days}일 이후 가격이 없습니다")
-        return None
-    
     # Forward Return 계산
     valid = []
     for r in rows:
         bp = float(r.get('base_price', 0) or 0)
         fp = float(r.get('future_price', 0) or 0)
+        l1 = float(r.get('layer1_score', 0) or 0)
+        l2 = float(r.get('layer2_score', 0) or 0)
+        l3 = float(r.get('layer3_score', 0) or 0)
         if bp > 0 and fp > 0:
             r['fwd_return'] = fp / bp - 1
+            r['l1'] = l1
+            r['l2'] = l2
+            r['l3'] = l3
             valid.append(r)
     
-    print(f"  Valid samples: {len(valid)} (total {len(rows)})")
-    
+    print(f"  Valid samples: {len(valid)}")
     if len(valid) < 50:
-        print(f"  ⚠️ 유효 데이터 {len(valid)}건 — 부족")
+        print(f"  ⚠️ 데이터 부족")
         return None
     
-    # IC 계산 (각 Score 유형별)
-    results = {}
-    score_types = {
-        'weighted_score': [float(r.get('weighted_score', 0) or 0) for r in valid],
-        'layer1_score': [float(r.get('layer1_score', 0) or 0) for r in valid],
-        'layer2_score': [float(r.get('layer2_score', 0) or 0) for r in valid],
-        'layer3_score': [float(r.get('layer3_score', 0) or 0) for r in valid],
-    }
-    fwd_rets = [r['fwd_return'] for r in valid]
+    fwd = [r['fwd_return'] for r in valid]
+    l1s = [r['l1'] for r in valid]
+    l2s = [r['l2'] for r in valid]
+    l3s = [r['l3'] for r in valid]
     
-    for name, scores in score_types.items():
+    # 현재 가중치 IC (DB에 저장된 weighted_score)
+    ws_current = [float(r.get('weighted_score', 0) or 0) for r in valid]
+    ic_current, _ = spearmanr(ws_current, fwd)
+    
+    # 가중치 조합 탐색
+    print(f"\n  {'L1':>5s} {'L2':>5s} {'L3':>5s} │ {'IC':>8s} │ {'vs Current':>11s}")
+    print(f"  {'-'*45}")
+    
+    best_ic = -999
+    best_weights = None
+    
+    weight_combos = [
+        # (L1, L2, L3)
+        (0.40, 0.30, 0.30),   # 현재
+        (0.33, 0.33, 0.34),   # 균등
+        (0.15, 0.10, 0.75),   # L3 집중
+        (0.10, 0.10, 0.80),   # L3 극대화
+        (0.05, 0.05, 0.90),   # L3 거의 단독
+        (0.00, 0.00, 1.00),   # L3 단독
+        (0.20, 0.10, 0.70),   # L3 중심 + L1 보조
+        (0.10, 0.20, 0.70),   # L3 중심 + L2 보조
+        (0.25, 0.15, 0.60),   # 완만한 L3 증가
+        (0.20, 0.20, 0.60),   # 중간
+        (0.30, 0.10, 0.60),   # L1+L3
+        (0.10, 0.00, 0.90),   # L2 제거
+        (0.00, 0.10, 0.90),   # L1 제거
+        (0.00, 0.00, 1.00),   # 순수 L3
+        # 역방향 테스트 (L1, L2를 뒤집으면?)
+        (-0.20, -0.10, 0.70), # L1, L2 역방향!
+        (-0.15, -0.05, 0.80), # L1, L2 역방향 + L3 집중
+    ]
+    
+    for w1, w2, w3 in weight_combos:
+        virtual_scores = []
+        for r in valid:
+            vs = w1 * r['l1'] + w2 * r['l2'] + w3 * r['l3']
+            virtual_scores.append(vs)
+        
         try:
-            ic, pval = spearmanr(scores, fwd_rets)
+            ic, pval = spearmanr(virtual_scores, fwd)
             if np.isnan(ic):
                 ic = 0
-        except Exception:
-            ic, pval = 0, 1
-        results[name] = {'ic': float(ic), 'pval': float(pval)}
+        except:
+            ic = 0
+        
+        marker = ""
+        if abs(w1 - 0.40) < 0.01 and abs(w2 - 0.30) < 0.01:
+            marker = " ← 현재"
+        if ic > best_ic:
+            best_ic = ic
+            best_weights = (w1, w2, w3)
+            if not marker:
+                marker = " ★"
+        
+        emoji = "✅" if ic > 0.03 else "⚠️" if ic > 0 else "❌"
+        diff = ic - ic_current
+        print(f"  {w1:>5.2f} {w2:>5.2f} {w3:>5.2f} │ {ic:>+8.4f} │ {diff:>+10.4f} {emoji}{marker}")
     
-    # 등급별 Forward Return (단조성 확인)
-    grade_returns = {}
+    print(f"\n  {'='*45}")
+    print(f"  현재 (DB):  IC = {ic_current:+.4f}")
+    print(f"  최적 발견:  IC = {best_ic:+.4f}")
+    print(f"  최적 가중치: L1={best_weights[0]:.2f}, L2={best_weights[1]:.2f}, L3={best_weights[2]:.2f}")
+    improvement = best_ic - ic_current
+    print(f"  개선폭:     {improvement:+.4f}")
+    
+    # 최적 가중치로 등급별 Forward Return 재계산
+    print(f"\n  최적 가중치 기준 등급별 Forward Return:")
+    virtual_best = []
     for r in valid:
-        g = r.get('grade', 'D')
-        if g not in grade_returns:
-            grade_returns[g] = []
-        grade_returns[g].append(r['fwd_return'])
+        vs = best_weights[0]*r['l1'] + best_weights[1]*r['l2'] + best_weights[2]*r['l3']
+        r['virtual_score'] = vs
+        virtual_best.append(r)
     
-    # 결과 출력
-    print(f"\n  {'Score Type':<20s} {'IC':>8s} {'p-value':>10s} {'Verdict':>12s}")
-    print(f"  {'-'*52}")
-    for name, r in results.items():
-        verdict = "✅ GOOD" if r['ic'] > 0.03 else "⚠️ WEAK" if r['ic'] > 0 else "❌ FAIL"
-        print(f"  {name:<20s} {r['ic']:>+8.4f} {r['pval']:>10.4f} {verdict:>12s}")
+    # Percentile 기반 등급 재부여
+    scores = sorted([r['virtual_score'] for r in virtual_best])
+    thresholds = {
+        'S':  np.percentile(scores, 95),
+        'A+': np.percentile(scores, 90),
+        'A':  np.percentile(scores, 80),
+        'B+': np.percentile(scores, 65),
+        'B':  np.percentile(scores, 40),
+        'C':  np.percentile(scores, 20),
+    }
     
-    print(f"\n  등급별 {horizon_days}일 평균 Forward Return:")
+    grade_rets = {}
+    for r in virtual_best:
+        s = r['virtual_score']
+        if s >= thresholds['S']:     g = 'S'
+        elif s >= thresholds['A+']:  g = 'A+'
+        elif s >= thresholds['A']:   g = 'A'
+        elif s >= thresholds['B+']:  g = 'B+'
+        elif s >= thresholds['B']:   g = 'B'
+        elif s >= thresholds['C']:   g = 'C'
+        else:                        g = 'D'
+        
+        if g not in grade_rets:
+            grade_rets[g] = []
+        grade_rets[g].append(r['fwd_return'])
+    
     print(f"  {'Grade':<8s} {'Avg Return':>12s} {'Count':>8s}")
     print(f"  {'-'*30}")
-    for grade in ['S', 'A+', 'A', 'B+', 'B', 'C', 'D', 'F']:
-        if grade in grade_returns and grade_returns[grade]:
-            avg = np.mean(grade_returns[grade])
-            cnt = len(grade_returns[grade])
+    for grade in ['S', 'A+', 'A', 'B+', 'B', 'C', 'D']:
+        if grade in grade_rets and grade_rets[grade]:
+            avg = np.mean(grade_rets[grade])
+            cnt = len(grade_rets[grade])
             emoji = "📈" if avg > 0 else "📉"
             print(f"  {grade:<8s} {avg:>+11.2%} {cnt:>8d} {emoji}")
     
     # 단조성 확인
-    grade_order = ['S', 'A+', 'A', 'B+', 'B', 'C', 'D', 'F']
+    grade_order = ['S', 'A+', 'A', 'B+', 'B', 'C', 'D']
     avgs = []
     for g in grade_order:
-        if g in grade_returns and grade_returns[g]:
-            avgs.append(np.mean(grade_returns[g]))
+        if g in grade_rets and grade_rets[g]:
+            avgs.append(np.mean(grade_rets[g]))
+    is_mono = all(avgs[i] >= avgs[i+1] for i in range(len(avgs)-1)) if len(avgs) > 2 else False
+    print(f"\n  단조성: {'✅ 단조적!' if is_mono else '⚠️ 비단조적'}")
     
-    is_monotonic = all(avgs[i] >= avgs[i+1] for i in range(len(avgs)-1)) if len(avgs) > 2 else False
+    print(f"\n  ★ 권고사항:")
+    if best_weights[0] < 0 or best_weights[1] < 0:
+        print(f"    L1/L2에 음수 가중치가 최적 = 해당 레이어가 역방향.")
+        print(f"    실무에서는 음수 대신 가중치 0으로 설정 권장:")
+        pos_only = [max(0, w) for w in best_weights]
+        total = sum(pos_only) or 1
+        norm = [round(w/total, 2) for w in pos_only]
+        print(f"    → L1={norm[0]:.2f}, L2={norm[1]:.2f}, L3={norm[2]:.2f}")
+    else:
+        print(f"    trading_config.py의 blend 가중치를:")
+        print(f"    blend_rp={best_weights[0]:.2f}, blend_hk={best_weights[1]:.2f}, blend_conv={best_weights[2]:.2f}")
+        print(f"    로 변경 후 배치 재실행하세요.")
     
-    print(f"\n  등급 단조성: {'✅ 단조적 (S > A > B > C > D)' if is_monotonic else '⚠️ 비단조적 — 등급 체계 검토 필요'}")
-    
-    print(f"\n{'='*55}")
-    ws = results.get('weighted_score', {})
-    overall = "✅ 유효" if ws.get('ic', 0) > 0.03 else "⚠️ 약함" if ws.get('ic', 0) > 0 else "❌ 무효"
-    print(f"  최종 판정: IC={ws.get('ic', 0):+.4f} → {overall}")
-    print(f"  (참고: 이것은 Quick IC이므로 OOS 검증은 아님)")
-    print(f"  (Walk-Forward OOS 검증은 30일+ 데이터 축적 후 재실행)")
-    print(f"{'='*55}")
-    
-    return results
+    return {"best_weights": best_weights, "best_ic": best_ic, "current_ic": ic_current}
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Walk-Forward Backtest Engine")
-    parser.add_argument("--track", choices=["ic", "portfolio", "both", "quick"], default="quick")
+    parser.add_argument("--track", choices=["ic", "portfolio", "both", "quick", "simulate"], default="quick")
     parser.add_argument("--horizon", type=int, default=10, help="Forward return horizon (days)")
     args = parser.parse_args()
     
     if args.track == "quick":
         run_quick_ic_test(horizon_days=args.horizon)
+    elif args.track == "simulate":
+        run_weight_simulator(horizon_days=args.horizon)
     elif args.track in ("ic", "both"):
         run_ic_backtest()
     if args.track in ("portfolio", "both"):
