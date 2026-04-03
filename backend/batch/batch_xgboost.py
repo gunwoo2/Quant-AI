@@ -344,7 +344,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         query = f"""
             SELECT
                 s.stock_id,
-                s.sector_code,
+                s.sector_id AS sector_code,
                 -- 현재 L1 서브팩터 (4개)
                 l1.moat_score, l1.value_score, l1.momentum_score, l1.stability_score,
                 -- 현재 L2 서브팩터 (3개)
@@ -357,7 +357,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti.section_c_macro,
                 -- 현재 종합점수 (시계열 delta용)
                 sfs.weighted_score,
-                sfs.current_grade,
+                sfs.grade,
                 -- 5일전 서브팩터 (delta 계산용)
                 l1_prev.moat_score AS moat_prev,
                 l1_prev.value_score AS value_prev,
@@ -366,8 +366,8 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
                 ti_prev.section_a_technical AS tech_prev,
                 sfs_prev.weighted_score AS score_prev,
                 -- 기술적 원시값 (5개)
-                ti.rsi_14, ti.macd_histogram, ti.bb_pctb,
-                ti.atr_pct, ti.volume_ratio_20d,
+                ti.rsi_14, ti.macd_histogram, ti.bb_width,
+                COALESCE(ti.trend_slope_90d, 0) AS atr_pct, COALESCE(ti.volume_surge_ratio, 1.0) AS volume_ratio_20d,
                 -- 등급 변경 이력
                 sfs.calc_date AS score_date
                 {label_select}
@@ -386,15 +386,13 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
             ) l2 ON TRUE
             LEFT JOIN LATERAL (
                 SELECT section_a_technical, section_b_flow, section_c_macro,
-                       rsi_14, macd_histogram, bb_width AS bb_pctb,
-                       COALESCE(trend_slope_90d, 0) AS atr_pct,
-                       COALESCE(volume_surge_ratio, 1.0) AS volume_ratio_20d
+                       rsi_14, macd_histogram, bb_width, COALESCE(trend_slope_90d, 0) AS atr_pct, COALESCE(volume_surge_ratio, 1.0) AS volume_ratio_20d
                 FROM technical_indicators
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
             ) ti ON TRUE
             LEFT JOIN LATERAL (
-                SELECT weighted_score, current_grade, calc_date
+                SELECT weighted_score, grade, calc_date
                 FROM stock_final_scores
                 WHERE stock_id = s.stock_id AND calc_date <= %s
                 ORDER BY calc_date DESC LIMIT 1
@@ -494,7 +492,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
         # ── Technical Raw (5개) ──
         rsi = _f(r.get("rsi_14"))
         macd_hist = _f(r.get("macd_histogram"))
-        bb_pctb = _f(r.get("bb_pctb"))
+        bb_pctb = _f(r.get("bb_width"))
         atr_pct = _f(r.get("atr_pct"))
         vol_ratio = _f(r.get("volume_ratio_20d"))
 
@@ -582,7 +580,7 @@ def _build_features_v2(target_date: date, with_label: bool = False) -> tuple:
 
 
 def _get_macro_data(target_date: date) -> dict:
-    """매크로 데이터 조회 (올바른 컬럼명 사용)"""
+    """매크로 데이터 조회 (기존 호환)"""
     result = {"regime_num": 1, "vix_close": 20.0, "macro_score": 50.0, "risk_appetite": 0.0}
     try:
         with get_cursor() as cur:
@@ -601,22 +599,17 @@ def _get_macro_data(target_date: date) -> dict:
             """, (target_date,))
             row = cur.fetchone()
             if row:
-                if row.get("cross_asset_total"):
-                    result["macro_score"] = float(row["cross_asset_total"])
-                if row.get("risk_appetite_score"):
-                    result["risk_appetite"] = float(row["risk_appetite_score"])
-
-            cur.execute("""
-                SELECT vix_close FROM market_regime
-                WHERE regime_date <= %s ORDER BY regime_date DESC LIMIT 1
-            """, (target_date,))
-            row = cur.fetchone()
-            if row and row.get("vix_close"):
-                result["vix_close"] = float(row["vix_close"])
+                if row.get("cross_asset_total"): result["macro_score"] = float(row["cross_asset_total"])
+                if row.get("risk_appetite_score"): result["risk_appetite"] = float(row["risk_appetite_score"])
+                if True: pass
     except Exception as e:
-        logger.warning(f"[XGB-v2] macro fail: {e}")
+        logger.warning(f"[XGB-v2] 매크로 조회 실패: {e}")
     return result
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Purged Walk-Forward CV
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _purged_walk_forward_splits(n_samples, n_folds, purge, embargo):
     """
@@ -925,7 +918,7 @@ def _build_features_v1(target_date):
     ]
     with get_cursor() as cur:
         cur.execute("""
-            SELECT s.stock_id, s.sector_code,
+            SELECT s.stock_id, s.sector_id AS sector_code,
                    sfs.weighted_score, sfs.layer1_score, sfs.layer2_score, sfs.layer3_score,
                    l1.moat_score, l1.value_score, l1.momentum_score, l1.stability_score,
                    l2.news_sentiment_score AS news_score, l2.analyst_rating_score AS analyst_score,
