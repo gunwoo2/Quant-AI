@@ -499,22 +499,6 @@ def run_portfolio_backtest(run_id: str = None, rebal_freq: int = 21):
 # CLI
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Walk-Forward Backtest Engine")
-    parser.add_argument("--track", choices=["ic", "portfolio", "both", "quick"], default="quick")
-    parser.add_argument("--horizon", type=int, default=10, help="Forward return horizon (days)")
-    args = parser.parse_args()
-    
-    if args.track == "quick":
-        run_quick_ic_test(horizon_days=args.horizon)
-    elif args.track in ("ic", "both"):
-        run_ic_backtest()
-    if args.track in ("portfolio", "both"):
-        run_portfolio_backtest()
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Quick IC Test (데이터 부족 시 사용)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -658,3 +642,18 @@ def run_quick_ic_test(horizon_days: int = 10):
     print(f"{'='*55}")
     
     return results
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Walk-Forward Backtest Engine")
+    parser.add_argument("--track", choices=["ic", "portfolio", "both", "quick"], default="quick")
+    parser.add_argument("--horizon", type=int, default=10, help="Forward return horizon (days)")
+    args = parser.parse_args()
+    
+    if args.track == "quick":
+        run_quick_ic_test(horizon_days=args.horizon)
+    elif args.track in ("ic", "both"):
+        run_ic_backtest()
+    if args.track in ("portfolio", "both"):
+        run_portfolio_backtest()
