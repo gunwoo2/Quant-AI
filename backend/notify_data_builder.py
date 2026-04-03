@@ -1,21 +1,21 @@
 """
-notify_data_builder.py — QUANT AI v4.0 알림 데이터 계산 엔진
+notify_data_builder.py - QUANT AI v4.0 알림 데이터 계산 엔진
 =============================================================
 설계서: NOTIFICATION_V4_DESIGN.md 기반 구현
 
 notifier_v4.py는 "포맷+전송"만 담당.
 이 모듈이 "계산+데이터 조립"을 담당.
 
-scheduler → notify_data_builder → notifier_v4
+scheduler -> notify_data_builder -> notifier_v4
   (DB로드)     (계산 로직)         (Discord 전송)
 
 구현 방법론:
-  ① Goldman Conviction + Bridgewater Because → build_buy_rationale()
-  ② Grinold-Kahn IC + Hit Rate              → calc_signal_ic(), calc_hit_rate()
-  ③ MAE/MFE + Devil's Advocate              → build_sell_analysis()
-  ④ Historical VaR + Stress Test            → build_risk_dashboard()
-  ⑤ Brinson Attribution                     → build_weekly_brinson()
-  ⑥ Regime Probability                      → calc_regime_probability()
+  ① Goldman Conviction + Bridgewater Because -> build_buy_rationale()
+  ② Grinold-Kahn IC + Hit Rate              -> calc_signal_ic(), calc_hit_rate()
+  ③ MAE/MFE + Devil's Advocate              -> build_sell_analysis()
+  ④ Historical VaR + Stress Test            -> build_risk_dashboard()
+  ⑤ Brinson Attribution                     -> build_weekly_brinson()
+  ⑥ Regime Probability                      -> calc_regime_probability()
 """
 import math
 import numpy as np
@@ -30,7 +30,7 @@ logger = logging.getLogger("notify_builder")
 
 
 # ═══════════════════════════════════════════════════════════
-#  1. BUY — 투자 근거 카드 (Goldman Conviction + Bridgewater Because)
+#  1. BUY - 투자 근거 카드 (Goldman Conviction + Bridgewater Because)
 # ═══════════════════════════════════════════════════════════
 
 def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
@@ -169,7 +169,7 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
                     SELECT SUM(shares * current_price) as sector_val
                     FROM portfolio_positions
                     WHERE status = 'OPEN' AND portfolio_id = 1
-                      AND stock_id IN (SELECT stock_id FROM stocks WHERE sector = %s)
+                      AND stock_id IN (SELECT s2.stock_id FROM stocks s2 JOIN sectors sec2 ON s2.sector_id = sec2.sector_id WHERE sec2.sector_name = %s)
                 """, (sector,))
                 row = cur.fetchone()
                 sector_val = float(row["sector_val"] or 0) if row else 0
@@ -342,7 +342,7 @@ def _check_correlation(stock_id: int, ticker: str) -> Optional[dict]:
 
 
 # ═══════════════════════════════════════════════════════════
-#  2. SELL — MAE/MFE + 점수 변화 + 역대 성과
+#  2. SELL - MAE/MFE + 점수 변화 + 역대 성과
 # ═══════════════════════════════════════════════════════════
 
 def build_sell_analysis(stock_id: int, ticker: str, calc_date: date,
@@ -487,7 +487,7 @@ def _calc_historical_reason_stats(reason: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════
-#  3. MORNING — Grinold IC + Hit Rate + 국면 확률
+#  3. MORNING - Grinold IC + Hit Rate + 국면 확률
 # ═══════════════════════════════════════════════════════════
 
 def calc_signal_ic(lookback_days: int = 30, forward_days: int = 5) -> dict:
@@ -652,7 +652,7 @@ def calc_regime_probability() -> dict:
 
 
 # ═══════════════════════════════════════════════════════════
-#  4. RISK — Historical VaR + Stress Test + 집중도 + 상관
+#  4. RISK - Historical VaR + Stress Test + 집중도 + 상관
 # ═══════════════════════════════════════════════════════════
 
 def build_risk_dashboard(calc_date: date) -> dict:
@@ -725,13 +725,15 @@ def build_risk_dashboard(calc_date: date) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT pp.stock_id, pp.shares * pp.entry_price AS market_value, s.ticker, s.sector
+                SELECT pp.stock_id,
+                       pp.shares * pp.entry_price AS market_value,
+                       s.ticker,
+                       COALESCE(sec.sector_name, 'Other') AS sector
                 FROM portfolio_positions pp
                 JOIN stocks s ON pp.stock_id = s.stock_id
+                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE pp.status = 'OPEN' AND pp.portfolio_id = 1
             """)
-            positions = cur.fetchall()
-
         if positions:
             total_val = sum(float(p["market_value"] or 0) for p in positions)
 
@@ -867,7 +869,7 @@ def _calc_portfolio_correlation(stock_ids: list, days: int = 60) -> Optional[dic
 
 
 # ═══════════════════════════════════════════════════════════
-#  5. WEEKLY — Brinson Attribution + 국면별 성과
+#  5. WEEKLY - Brinson Attribution + 국면별 성과
 # ═══════════════════════════════════════════════════════════
 
 def build_weekly_brinson(calc_date: date) -> dict:
@@ -1062,7 +1064,7 @@ def _safe_float(val, default=0.0) -> float:
 
 
 def _get_prices(stock_id: int, days: int = 60) -> list:
-    """최근 N일 종가 리스트 (최신→과거)"""
+    """최근 N일 종가 리스트 (최신->과거)"""
     try:
         with get_cursor() as cur:
             cur.execute("""
@@ -1075,15 +1077,15 @@ def _get_prices(stock_id: int, days: int = 60) -> list:
 
 
 # ══════════════════════════════════════════════════════════════════
-#  AI Module 데이터 빌더 (v4.1 — XGBoost + SHAP + IC + Decay)
+#  AI Module 데이터 빌더 (v4.1 - XGBoost + SHAP + IC + Decay)
 # ══════════════════════════════════════════════════════════════════
 
 def build_ai_morning_data(calc_date: date) -> dict:
     """
     모닝 브리핑용 AI 요약 데이터 수집.
-    ★ FIX: xgboost_predictions → ai_scores_daily
-    ★ FIX: shap_top_positive/negative → shap_top5_pos/neg
-    ★ FIX: xgboost_models → ml_model_meta
+    * FIX: xgboost_predictions -> ai_scores_daily
+    * FIX: shap_top_positive/negative -> shap_top5_pos/neg
+    * FIX: xgboost_models -> ml_model_meta
     Returns:
         {
             "ai_top": [...],        # AI 점수 Top 5
@@ -1254,8 +1256,8 @@ def build_ai_morning_data(calc_date: date) -> dict:
 def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
     """
     개별 종목 AI 데이터 (매수/매도 시그널 보강용).
-    ★ FIX: xgboost_predictions → ai_scores_daily
-    ★ FIX: shap_values → shap_all + shap_top5_pos/neg
+    * FIX: xgboost_predictions -> ai_scores_daily
+    * FIX: shap_values -> shap_all + shap_top5_pos/neg
     Returns:
         {
             "ai_score": float,
@@ -1282,13 +1284,13 @@ def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
                 result["ai_score"] = _safe_float(row.get("ai_score"))
                 result["ensemble_score"] = _safe_float(row.get("ensemble_score"))
 
-                # SHAP positive — shap_top5_pos 우선
+                # SHAP positive - shap_top5_pos 우선
                 shap_pos = row.get("shap_top5_pos")
                 shap_neg = row.get("shap_top5_neg")
                 shap_all = row.get("shap_all")
 
                 def _parse_shap_list(raw, limit=3):
-                    """SHAP 리스트/딕트 → [{"feature":..., "shap":...}] 변환"""
+                    """SHAP 리스트/딕트 -> [{"feature":..., "shap":...}] 변환"""
                     items = []
                     if raw is None:
                         return items
@@ -1372,18 +1374,25 @@ def build_ai_risk_data(calc_date: date) -> dict:
         # Alpha Decay DEAD
         with get_cursor() as cur:
             cur.execute("""
-                SELECT grade, holding_period, avg_return, hit_rate, ic_value, signal_status
-                FROM alpha_decay_matrix
-                WHERE calc_date = %s AND signal_status = 'DEAD'
-                ORDER BY grade
+                SELECT add_t.grade,
+                       add_t.horizon_days AS holding_period,
+                       add_t.avg_return,
+                       add_t.hit_rate,
+                       add_t.decay_ic AS ic_value
+                FROM alpha_decay_daily add_t
+                JOIN signal_halflife sh
+                  ON add_t.grade = sh.grade AND add_t.calc_date = sh.calc_date
+                WHERE add_t.calc_date = %s
+                  AND sh.status = 'DEAD'
+                ORDER BY add_t.grade
             """, (calc_date,))
             for row in cur.fetchall():
                 result["decay_dead"].append({
                     "grade": row["grade"],
-                    "period": row["holding_period"],
-                    "hit": round(_safe_float(row["hit_rate"]) * 100, 1),
-                    "ic": round(_safe_float(row["ic_value"]), 4),
-                    "avg_return": round(_safe_float(row["avg_return"]) * 100, 2),
+                    "period": row.get("holding_period", 0),
+                    "hit": round(_safe_float(row.get("hit_rate")) * 100, 1) if row.get("hit_rate") else 0,
+                    "ic": round(_safe_float(row.get("ic_value")), 4) if row.get("ic_value") else 0,
+                    "avg_return": round(_safe_float(row.get("avg_return")) * 100, 2) if row.get("avg_return") else 0,
                 })
 
     except Exception as e:
@@ -1395,15 +1404,15 @@ def build_ai_risk_data(calc_date: date) -> dict:
 def build_ai_batch_summary(calc_date: date) -> dict:
     """
     배치 완료용 AI 요약 (AUC + Feature Top + 추론 건수).
-    ★ FIX: xgboost_models → ml_model_meta
-    ★ FIX: xgboost_predictions → ai_scores_daily
+    * FIX: xgboost_models -> ml_model_meta
+    * FIX: xgboost_predictions -> ai_scores_daily
     """
     from db_pool import get_cursor
     result = {"auc": None, "ai_weight": None, "predict_count": 0, "feature_top3": []}
 
     try:
         with get_cursor() as cur:
-            # ★ FIX: xgboost_models → ml_model_meta
+            # * FIX: xgboost_models -> ml_model_meta
             cur.execute("""
                 SELECT train_auc, valid_auc, feature_count
                 FROM ml_model_meta
@@ -1439,7 +1448,7 @@ def build_ai_batch_summary(calc_date: date) -> dict:
                 except Exception:
                     pass
 
-            # ★ FIX: xgboost_predictions → ai_scores_daily
+            # * FIX: xgboost_predictions -> ai_scores_daily
             cur.execute("""
                 SELECT COUNT(*) as cnt FROM ai_scores_daily WHERE calc_date = %s
             """, (calc_date,))
