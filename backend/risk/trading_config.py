@@ -62,9 +62,9 @@ REGIME_PARAMS = {
         "max_sector_names":    11,
         "correlation_max":     0.80,
         "turnover_budget_monthly": 0.30,
-        "blend_rp": 0.30,
-        "blend_hk": 0.40,
-        "blend_conv": 0.30,
+        "blend_rp": 0.00,
+        "blend_hk": 0.00,
+        "blend_conv": 1.00,
     },
     "NEUTRAL": {
         "max_positions":       15,
@@ -87,9 +87,9 @@ REGIME_PARAMS = {
         "max_sector_names":    8,
         "correlation_max":     0.75,
         "turnover_budget_monthly": 0.25,
-        "blend_rp": 0.40,
-        "blend_hk": 0.30,
-        "blend_conv": 0.30,
+        "blend_rp": 0.00,
+        "blend_hk": 0.00,
+        "blend_conv": 1.00,
     },
     "BEAR": {
         "max_positions":       10,
@@ -112,9 +112,9 @@ REGIME_PARAMS = {
         "max_sector_names":    5,
         "correlation_max":     0.65,
         "turnover_budget_monthly": 0.20,
-        "blend_rp": 0.50,
-        "blend_hk": 0.20,
-        "blend_conv": 0.30,
+        "blend_rp": 0.00,
+        "blend_hk": 0.00,
+        "blend_conv": 1.00,
     },
     "CRISIS": {
         "max_positions":       5,
@@ -137,9 +137,9 @@ REGIME_PARAMS = {
         "max_sector_names":    3,
         "correlation_max":     0.50,
         "turnover_budget_monthly": 0.50,
-        "blend_rp": 0.70,
-        "blend_hk": 0.10,
-        "blend_conv": 0.20,
+        "blend_rp": 0.00,
+        "blend_hk": 0.00,
+        "blend_conv": 1.00,
     },
 }
 
@@ -171,7 +171,6 @@ class TradingConfig:
     sector_max_pct: float = 0.30
     position_size_mult: float = 0.80
     rebalance_freq_days: int = 7
-    initial_capital: float = 100000.0       # v5.1 FIX: batch_trading_signals 호환
 
 
 class DynamicConfig(TradingConfig):
@@ -184,9 +183,9 @@ class DynamicConfig(TradingConfig):
     dd_mode: str = "NORMAL"
 
     # 블렌딩 비율
-    blend_rp: float = 0.15
-    blend_hk: float = 0.10
-    blend_conv: float = 0.75
+    blend_rp: float = 0.40
+    blend_hk: float = 0.30
+    blend_conv: float = 0.30
 
     # 추가 파라미터
     min_holding_days: int = 5

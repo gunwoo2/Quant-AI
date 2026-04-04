@@ -1,5 +1,5 @@
 """
-batch/batch_final_score.py — 최종 점수 합산 v4.1 (Adaptive Threshold + Self-Improving Weights)
+batch/batch_final_score.py — 최종 점수 합산 v6.0 (Winsorize + Adaptive Shrinkage + Z-Score + IC Guard)
 =====================================================================
 v4.0 변경:
   ★ Cross-Sectional Percentile 기반 등급 (Barra USE4 방법론)
@@ -255,7 +255,7 @@ def run_final_score(calc_date: date = None):
     stocks = []
     with get_cursor() as cur:
         cur.execute("""
-            SELECT s.stock_id, s.ticker, s.sector_id,
+            SELECT s.stock_id, s.ticker,
                    l1.layer1_score,
                    l2.layer2_total_score,
                    COALESCE(l3.layer3_total_score, l3.layer3_technical_score) AS layer3_score
@@ -286,34 +286,119 @@ def run_final_score(calc_date: date = None):
         return {"ok": 0, "fail": 0}
 
     # ══════════════════════════════════════════════
-    #  Pass 1: 전 종목 weighted_score 계산
+    #  Pass 1: weighted_score 계산 (v6: Winsorize + Adaptive Shrinkage + Z-Score)
     # ══════════════════════════════════════════════
-    print("[FINAL] Pass 1: weighted_score 계산...")
+    print("[FINAL v6] Pass 1: Winsorize → Z-Score → Adaptive Blend → Score...")
 
+    # ── v6 Step 1: Raw Score 수집 ──
+    raw_l1_list, raw_l2_list, raw_l3_list = [], [], []
     for s in stocks:
-        l1 = _f(s.get("layer1_score"))
-        l2 = _f(s.get("layer2_total_score"))
-        l3 = _f(s.get("layer3_score"))
+        raw_l1_list.append(_f(s.get("layer1_score")))
+        raw_l2_list.append(_f(s.get("layer2_total_score")))
+        raw_l3_list.append(_f(s.get("layer3_score")))
 
-        layers = {"L1": (l1, adj_l1), "L2": (l2, adj_l2), "L3": (l3, adj_l3)}
+    # ── v6 Step 2: Winsorize (극단값 처리, Barra USE4 방법론) ──
+    # 양쪽 2.5% clip → 1종목의 극단값이 전체 분포 왜곡 방지
+    from scipy.stats.mstats import winsorize as _winsorize
+
+    def _safe_winsorize(arr, limits=(0.025, 0.025)):
+        """None 제외하고 Winsorize, 원래 None 위치는 보존."""
+        vals = np.array([v if v is not None else np.nan for v in arr])
+        valid_mask = ~np.isnan(vals)
+        if valid_mask.sum() < 10:
+            return arr  # 데이터 부족하면 원본 유지
+        valid_vals = vals[valid_mask]
+        winsorized = np.array(_winsorize(valid_vals, limits=limits))
+        result = list(arr)
+        j = 0
+        for i in range(len(result)):
+            if valid_mask[i]:
+                result[i] = float(winsorized[j])
+                j += 1
+        return result
+
+    raw_l1_list = _safe_winsorize(raw_l1_list)
+    raw_l2_list = _safe_winsorize(raw_l2_list)
+    raw_l3_list = _safe_winsorize(raw_l3_list)
+    print(f"  [v6] Winsorize 적용 (양쪽 2.5%)")
+
+    # ── v6 Step 3: Z-Score 정규화 (레이어 간 스케일 통일) ──
+    def _zscore_normalize(arr):
+        """None 보존하면서 Z-Score 정규화 → 50 + 15*z (0~100 범위 매핑)."""
+        vals = np.array([v if v is not None else np.nan for v in arr])
+        valid = ~np.isnan(vals)
+        if valid.sum() < 10:
+            return arr
+        mu = np.nanmean(vals)
+        sigma = np.nanstd(vals)
+        if sigma < 0.01:
+            return arr
+        result = list(arr)
+        for i in range(len(result)):
+            if result[i] is not None:
+                z = (result[i] - mu) / sigma
+                result[i] = float(np.clip(50 + 15 * z, 0, 100))  # 50 중심, σ=15
+        return result
+
+    norm_l1 = _zscore_normalize(raw_l1_list)
+    norm_l2 = _zscore_normalize(raw_l2_list)
+    norm_l3 = _zscore_normalize(raw_l3_list)
+    print(f"  [v6] Z-Score 정규화 (50±15 범위)")
+
+    # ── v6 Step 4: Adaptive Shrinkage (IC 기반 차등 수축) ──
+    # IC 높은 레이어: 결측 시 약하게 수축 (데이터 살림)
+    # IC 낮은 레이어: 결측 시 강하게 수축 (노이즈 제거)
+    SHRINKAGE_BASE = 0.05   # 기본 수축률 (IC 높은 레이어)
+    SHRINKAGE_PENALTY = 0.15  # IC 낮은 레이어 추가 수축
+
+    def _adaptive_shrinkage_rate(layer_weight):
+        """IC Guard 가중치 기반 수축률. 가중치 높으면 수축 약하게."""
+        if layer_weight >= 0.5:
+            return SHRINKAGE_BASE  # IC 높음 → 약한 수축
+        elif layer_weight >= 0.1:
+            return SHRINKAGE_BASE + SHRINKAGE_PENALTY * 0.5
+        else:
+            return SHRINKAGE_BASE + SHRINKAGE_PENALTY  # IC 낮음 → 강한 수축
+
+    shrinkage_l1 = _adaptive_shrinkage_rate(adj_l1)
+    shrinkage_l2 = _adaptive_shrinkage_rate(adj_l2)
+    shrinkage_l3 = _adaptive_shrinkage_rate(adj_l3)
+    print(f"  [v6] Adaptive Shrinkage: L1={shrinkage_l1:.3f} L2={shrinkage_l2:.3f} L3={shrinkage_l3:.3f}")
+
+    # ── v6 Step 5: 가중 합산 ──
+    for idx, s in enumerate(stocks):
+        l1 = norm_l1[idx]
+        l2 = norm_l2[idx]
+        l3 = norm_l3[idx]
+
+        layers = {"L1": (l1, adj_l1, shrinkage_l1), 
+                  "L2": (l2, adj_l2, shrinkage_l2), 
+                  "L3": (l3, adj_l3, shrinkage_l3)}
         available = {}
-        missing_count = 0
-        for name, (score, base_w) in layers.items():
+        total_shrinkage = 0.0
+        for name, (score, base_w, shr) in layers.items():
             if score is not None:
                 available[name] = (float(score), base_w)
             else:
-                missing_count += 1
+                total_shrinkage += shr  # 레이어별 차등 수축
+
         if not available:
             result = {"weighted_score": 50.0, "data_completeness": 0.0,
                       "l1_weight_actual": 0.0, "l2_weight_actual": 0.0,
                       "l3_weight_actual": 0.0, "confidence_level": "LOW"}
         else:
             total_w = sum(w for _, w in available.values())
-            actual = {n: w / total_w for n, (_, w) in available.items()}
-            wv = sum(s * actual[n] for n, (s, _) in available.items())
-            shrinkage = missing_count * SHRINKAGE_ALPHA
-            wv = wv * (1.0 - shrinkage) + 50.0 * shrinkage
+            if total_w > 0:
+                actual = {n: w / total_w for n, (_, w) in available.items()}
+            else:
+                actual = {n: 1.0 / len(available) for n in available}
+            
+            wv = sum(s_val * actual[n] for n, (s_val, _) in available.items())
+            
+            # Adaptive Shrinkage 적용
+            wv = wv * (1.0 - total_shrinkage) + 50.0 * total_shrinkage
             wv = _clamp(round(wv, 2), 0.0, 100.0)
+            
             dc = len(available) / 3.0
             conf = "HIGH" if dc >= 1.0 else ("MEDIUM" if dc >= 0.67 else "LOW")
             result = {"weighted_score": wv, "data_completeness": round(dc, 2),
@@ -322,9 +407,9 @@ def run_final_score(calc_date: date = None):
                       "l3_weight_actual": round(actual.get("L3", 0), 4),
                       "confidence_level": conf}
 
-        s["l1_raw"] = l1
-        s["l2_raw"] = l2
-        s["l3_raw"] = l3
+        s["l1_raw"] = raw_l1_list[idx]  # Winsorize된 원본 (디버깅용)
+        s["l2_raw"] = raw_l2_list[idx]
+        s["l3_raw"] = raw_l3_list[idx]
         s["weighted"] = result["weighted_score"]
         s["dc"] = result["data_completeness"]
         s["conf"] = result["confidence_level"]
@@ -340,37 +425,8 @@ def run_final_score(calc_date: date = None):
     all_l2 = np.array([s["l2_raw"] or 50.0 for s in stocks])
     all_l3 = np.array([s["l3_raw"] or 50.0 for s in stocks])
 
-    # ①-b 섹터 중립화 (Sector-Relative Z-Score)
-    from collections import defaultdict
-    import math
-
-    def _norm_cdf(z):
-        """scipy 없이 정규분포 CDF 계산"""
-        return 0.5 * (1 + math.erf(z / math.sqrt(2)))
-
-    sector_groups = defaultdict(list)
-    for idx, s in enumerate(stocks):
-        sid = s.get("sector_id", 0) or 0
-        sector_groups[sid].append(idx)
-
-    sector_zscore = np.zeros(len(stocks))
-    for sid, indices in sector_groups.items():
-        if len(indices) < 3:
-            for idx in indices:
-                sector_zscore[idx] = (all_weighted[idx] - np.mean(all_weighted)) / max(np.std(all_weighted), 0.1)
-        else:
-            sector_scores = all_weighted[indices]
-            mu, sigma = np.mean(sector_scores), max(np.std(sector_scores), 0.1)
-            for idx in indices:
-                sector_zscore[idx] = (all_weighted[idx] - mu) / sigma
-
-    SECTOR_NEUTRAL_WEIGHT = 0.30
-    sector_pct = np.array([_norm_cdf(z) * 100 for z in sector_zscore])
-    blended_weighted = all_weighted * (1 - SECTOR_NEUTRAL_WEIGHT) + sector_pct * SECTOR_NEUTRAL_WEIGHT
-    print(f"  [SECTOR-NEUTRAL] {len(sector_groups)}개 섹터 중립화 (blend={SECTOR_NEUTRAL_WEIGHT:.0%})")
-
-    # ② Percentile Rank (Barra MAD Z-Score 기반) — 섹터 중립화 적용
-    pct_weighted = compute_cross_sectional_percentiles(blended_weighted)
+    # ② Percentile Rank (Barra MAD Z-Score 기반)
+    pct_weighted = compute_cross_sectional_percentiles(all_weighted)
     pct_l1 = compute_cross_sectional_percentiles(all_l1)
     pct_l2 = compute_cross_sectional_percentiles(all_l2)
     pct_l3 = compute_cross_sectional_percentiles(all_l3)
@@ -541,4 +597,3 @@ if __name__ == "__main__":
     from db_pool import init_pool
     init_pool()
     run_final_score()
-

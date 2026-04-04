@@ -426,8 +426,8 @@ def _update_market_returns(calc_date: date):
                     ORDER BY calc_date DESC LIMIT %s
                 """, (calc_date, days + 5))
                 # 대체: stock_prices_daily에서 SPY 직접 조회하는 것도 가능
-        except Exception as e:
-            logger.debug(f"Handled: {e}")
+        except:
+            pass
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -513,7 +513,7 @@ def _optimize_monthly_weights(calc_date: date) -> dict:
                 """, (factor_db, calc_date, IC_LOOKBACK))
                 row = cur.fetchone()
                 avg_ics[factor] = float(row["avg_ic"]) if row and row["avg_ic"] else None
-        except Exception as e:
+        except:
             avg_ics[factor] = None
 
     valid_ics = {k: v for k, v in avg_ics.items() if v is not None and v > 0}
@@ -548,8 +548,8 @@ def _get_prev_weights():
             row = cur.fetchone()
             if row:
                 return {"l1": float(row["w_l1"]), "l2": float(row["w_l2"]), "l3": float(row["w_l3"])}
-    except Exception as e:
-        logger.debug(f"Handled: {e}")
+    except:
+        pass
     return DEFAULT_WEIGHTS.copy()
 
 
@@ -576,16 +576,41 @@ def _save_weights(calc_date, w1, w2, w3, avg_ics, method):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def get_adaptive_weights():
-    """batch_final_score.py에서 호출 (기존 인터페이스 유지)"""
+    """
+    batch_final_score.py에서 호출 (기존 인터페이스 유지)
+    v5.1: adaptive_weights(일별 IC Guard) → factor_weights_monthly → fallback
+    """
+    # 1순위: IC Guard 일별 가중치 (batch_ic_guard.py가 매일 업데이트)
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT l1_weight, l2_weight, l3_weight, calc_date 
+                FROM adaptive_weights 
+                ORDER BY calc_date DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row:
+                w1, w2, w3 = float(row["l1_weight"]), float(row["l2_weight"]), float(row["l3_weight"])
+                print(f"  [WEIGHTS] IC Guard 적응형: L1={w1:.2f} L2={w2:.2f} L3={w3:.2f} ({row['calc_date']})")
+                return w1, w2, w3
+    except Exception:
+        pass
+    
+    # 2순위: 월별 팩터 가중치 (기존 방식)
     try:
         with get_cursor() as cur:
             cur.execute("SELECT w_l1, w_l2, w_l3 FROM factor_weights_monthly ORDER BY month DESC LIMIT 1")
             row = cur.fetchone()
             if row:
-                return float(row["w_l1"]), float(row["w_l2"]), float(row["w_l3"])
-    except Exception as e:
-        logger.debug(f"Handled: {e}")
-    return 0.50, 0.25, 0.25
+                w1, w2, w3 = float(row["w_l1"]), float(row["w_l2"]), float(row["w_l3"])
+                print(f"  [WEIGHTS] Monthly: L1={w1:.2f} L2={w2:.2f} L3={w3:.2f}")
+                return w1, w2, w3
+    except Exception:
+        pass
+    
+    # 3순위: Fallback (L3 집중 — IC 테스트 기반)
+    print("  [WEIGHTS] Fallback: L1=0.00 L2=0.00 L3=1.00")
+    return 0.00, 0.00, 1.00
 
 
 def get_ic_guard_status(calc_date: date = None) -> dict:
