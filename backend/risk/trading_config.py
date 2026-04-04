@@ -62,9 +62,9 @@ REGIME_PARAMS = {
         "max_sector_names":    11,
         "correlation_max":     0.80,
         "turnover_budget_monthly": 0.30,
-        "blend_rp": 0.00,
-        "blend_hk": 0.00,
-        "blend_conv": 1.00,
+        "blend_rp": 0.30,
+        "blend_hk": 0.40,
+        "blend_conv": 0.30,
     },
     "NEUTRAL": {
         "max_positions":       15,
@@ -87,9 +87,9 @@ REGIME_PARAMS = {
         "max_sector_names":    8,
         "correlation_max":     0.75,
         "turnover_budget_monthly": 0.25,
-        "blend_rp": 0.00,
-        "blend_hk": 0.00,
-        "blend_conv": 1.00,
+        "blend_rp": 0.40,
+        "blend_hk": 0.30,
+        "blend_conv": 0.30,
     },
     "BEAR": {
         "max_positions":       10,
@@ -112,9 +112,9 @@ REGIME_PARAMS = {
         "max_sector_names":    5,
         "correlation_max":     0.65,
         "turnover_budget_monthly": 0.20,
-        "blend_rp": 0.00,
-        "blend_hk": 0.00,
-        "blend_conv": 1.00,
+        "blend_rp": 0.50,
+        "blend_hk": 0.20,
+        "blend_conv": 0.30,
     },
     "CRISIS": {
         "max_positions":       5,
@@ -137,9 +137,9 @@ REGIME_PARAMS = {
         "max_sector_names":    3,
         "correlation_max":     0.50,
         "turnover_budget_monthly": 0.50,
-        "blend_rp": 0.00,
-        "blend_hk": 0.00,
-        "blend_conv": 1.00,
+        "blend_rp": 0.70,
+        "blend_hk": 0.10,
+        "blend_conv": 0.20,
     },
 }
 
@@ -157,6 +157,7 @@ GRADE_CONVICTION = {
 
 @dataclass
 class TradingConfig:
+    initial_capital: float = 100000.0
     max_positions: int = 15
     max_position_pct: float = 0.08
     cash_minimum: float = 0.20
@@ -182,10 +183,10 @@ class DynamicConfig(TradingConfig):
     regime: str = "NEUTRAL"
     dd_mode: str = "NORMAL"
 
-    # 블렌딩 비율
-    blend_rp: float = 0.40
-    blend_hk: float = 0.30
-    blend_conv: float = 0.30
+    # 블렌딩 비율 (IC Guard v3 fallback — adaptive_weights 우선)
+    blend_rp: float = 0.00      # L1 재무 (IC Guard가 override)
+    blend_hk: float = 0.00      # L2 감성 (IC Guard가 override)
+    blend_conv: float = 1.00    # L3 기술 (IC Guard가 override)
 
     # 추가 파라미터
     min_holding_days: int = 5
