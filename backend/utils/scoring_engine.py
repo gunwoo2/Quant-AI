@@ -108,7 +108,8 @@ def zscore_to_sigmoid(value: float, mean: float, std: float,
     z = (fval - fmean) / fstd
     # Z-score → 0~100 percentile (대략적)
     # 표준정규분포 CDF 근사: Φ(z) ≈ sigmoid(1.7*z)
-    pct = 100.0 / (1.0 + np.exp(-1.7 * z))
+    z_clipped = np.clip(z, -500, 500)
+    pct = 100.0 / (1.0 + np.exp(-1.7 * z_clipped))
     
     return sigmoid_score(pct, max_points, steepness)
 

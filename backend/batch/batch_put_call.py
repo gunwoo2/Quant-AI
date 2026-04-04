@@ -196,10 +196,9 @@ def run_put_call(calc_date: date = None):
     # ── 종목 목록 조회 (시총 상위 순) ──
     with get_cursor() as cur:
         cur.execute("""
-            SELECT s.stock_id, s.ticker
+            SELECT DISTINCT s.stock_id, s.ticker, sp.current_price
             FROM stocks s
             LEFT JOIN stock_prices_realtime sp ON s.stock_id = sp.stock_id
-            LEFT JOIN stock_final_scores sfs ON s.stock_id = sfs.stock_id
             WHERE s.is_active = TRUE
             ORDER BY sp.current_price DESC NULLS LAST
         """)
@@ -223,9 +222,22 @@ def run_put_call(calc_date: date = None):
     fail = 0
     results = []
 
+    # 옵션 데이터가 없는 것으로 알려진 종목 스킵 (시간 절약)
+    SKIP_TICKERS = {"BRK-B", "BF-B", "NVR"}  # 초고가주 또는 특수 티커
+    
     for idx, stock in enumerate(top_stocks):
         ticker = stock["ticker"]
         stock_id = stock["stock_id"]
+        
+        if ticker in SKIP_TICKERS:
+            # 시장 P/C 값으로 대체
+            results.append({
+                "stock_id": stock_id, "ticker": ticker,
+                "put_oi": 0, "call_oi": 0, "put_vol": 0, "call_vol": 0,
+                "pc_ratio_oi": market_ratio, "pc_ratio_volume": market_ratio,
+                "pc_score": market_score, "source": "market_fallback",
+            })
+            continue
 
         if idx % 20 == 0 and idx > 0:
             print(f"  [P/C] 진행: {idx}/{len(top_stocks)} (성공: {success}, 실패: {fail})")

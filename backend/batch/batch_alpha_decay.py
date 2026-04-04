@@ -67,7 +67,7 @@ def _ensure_tables():
             CREATE TABLE IF NOT EXISTS alpha_decay_daily (
                 id              SERIAL PRIMARY KEY,
                 calc_date       DATE NOT NULL,
-                grade           VARCHAR(5) NOT NULL,
+                grade           VARCHAR(5) NOT NULL,`
                 horizon_days    INT NOT NULL,
                 avg_return      NUMERIC(8,4),
                 median_return   NUMERIC(8,4),
@@ -76,14 +76,14 @@ def _ensure_tables():
                 ic_pvalue       NUMERIC(8,6),
                 sample_size     INT,
                 win_avg         NUMERIC(8,4),
-                loss_avg        NUMERIC(8,4),
+                loss_avg        NUMERIC(8,4),`
                 profit_factor   NUMERIC(8,4),
                 updated_at      TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(calc_date, grade, horizon_days)
             )
-        """)
+        """)``
 
-        # 2. 등급별 Half-Life 기록
+        # 2. 등급별 Half-Life 기록``
         cur.execute("""
             CREATE TABLE IF NOT EXISTS signal_halflife (
                 id              SERIAL PRIMARY KEY,
@@ -91,7 +91,7 @@ def _ensure_tables():
                 grade           VARCHAR(5) NOT NULL,
                 half_life_days  NUMERIC(6,2),
                 peak_ic         NUMERIC(8,6),
-                peak_horizon    INT,
+                peak_horizon    INT,`
                 recommended_expiry INT,
                 status          VARCHAR(20) DEFAULT 'ACTIVE',
                 notes           TEXT,

@@ -261,13 +261,12 @@ def _get_todays_signals(calc_date: date) -> dict:
     buys, sells = [], []
     with get_cursor() as cur:
         cur.execute("""
-            SELECT ts.stock_id, s.ticker, ts.signal_type AS action, 
-                   ts.final_score, ts.signal_strength AS grade,
-                   ts.current_price AS entry_price
-            FROM trading_signals ts
-            JOIN stocks s ON ts.stock_id = s.stock_id
-            WHERE ts.signal_date = %s AND ts.signal_type IN ('BUY', 'SELL', 'STOP_LOSS')
-            ORDER BY ts.final_score DESC
+            SELECT stock_id, ticker, action, final_score, grade,
+                   target_weight, entry_price, exit_reason,
+                   percentile_rank
+            FROM trading_signals
+            WHERE calc_date = %s AND action IN ('BUY', 'SELL', 'STOP_LOSS')
+            ORDER BY final_score DESC
         """, (calc_date,))
         for row in cur.fetchall():
             r = dict(row)
@@ -291,12 +290,14 @@ def _get_current_price(stock_id: int, calc_date: date) -> float:
 
 
 def _get_volume_avg(stock_id: int, calc_date: date) -> float:
-    """20일 평균 거래량"""
+    """20일 평균 거래량 (서브쿼리로 최근 20일 선택 후 평균)"""
     with get_cursor() as cur:
         cur.execute("""
-            SELECT AVG(volume) as adv FROM stock_prices_daily
-            WHERE stock_id = %s AND trade_date <= %s
-            ORDER BY trade_date DESC LIMIT 20
+            SELECT AVG(volume) as adv FROM (
+                SELECT volume FROM stock_prices_daily
+                WHERE stock_id = %s AND trade_date <= %s
+                ORDER BY trade_date DESC LIMIT 20
+            ) sub
         """, (stock_id, calc_date))
         row = cur.fetchone()
         return float(row["adv"]) if row and row["adv"] else 100000

@@ -54,7 +54,7 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
             # Moat
             cur.execute("""
                 SELECT roic_score, gpa_score, fcf_margin_score,
-                       net_debt_ebitda_score, f_score_points, total_moat_score
+                       net_debt_ebitda_score, total_moat_score
                 FROM quant_moat_scores
                 WHERE stock_id = %s ORDER BY calc_date DESC LIMIT 1
             """, (stock_id,))
@@ -71,7 +71,7 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
 
             # Momentum
             cur.execute("""
-                SELECT f_score_raw, f_score_points, earnings_surprise_score,
+                SELECT f_score_raw, earnings_surprise_score,
                        earnings_revision_score, total_momentum_score
                 FROM quant_momentum_scores
                 WHERE stock_id = %s ORDER BY calc_date DESC LIMIT 1
@@ -166,10 +166,10 @@ def build_buy_rationale(stock_id: int, ticker: str, calc_date: date,
         if sector:
             with get_cursor() as cur:
                 cur.execute("""
-                    SELECT SUM(shares * current_price) as sector_val
+                    SELECT SUM(market_value) as sector_val
                     FROM portfolio_positions
                     WHERE status = 'OPEN' AND portfolio_id = 1
-                      AND stock_id IN (SELECT s2.stock_id FROM stocks s2 JOIN sectors sec2 ON s2.sector_id = sec2.sector_id WHERE sec2.sector_name = %s)
+                      AND stock_id IN (SELECT stock_id FROM stocks WHERE sector = %s)
                 """, (sector,))
                 row = cur.fetchone()
                 sector_val = float(row["sector_val"] or 0) if row else 0
@@ -725,13 +725,9 @@ def build_risk_dashboard(calc_date: date) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute("""
-                SELECT pp.stock_id,
-                       pp.shares * pp.entry_price AS market_value,
-                       s.ticker,
-                       COALESCE(sec.sector_name, 'Other') AS sector
+                SELECT pp.stock_id, pp.shares * pp.entry_price, s.ticker, s.sector
                 FROM portfolio_positions pp
                 JOIN stocks s ON pp.stock_id = s.stock_id
-                LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
                 WHERE pp.status = 'OPEN' AND pp.portfolio_id = 1
             """)
             positions = cur.fetchall()
@@ -1083,103 +1079,151 @@ def _get_prices(stock_id: int, days: int = 60) -> list:
 # ══════════════════════════════════════════════════════════════════
 
 def build_ai_morning_data(calc_date: date) -> dict:
-    """AI morning data: Top 5/Bottom 3 + model meta + grade dist."""
+    """
+    모닝 브리핑용 AI 요약 데이터 수집.
+    Returns:
+        {
+            "ai_top": [...],        # AI Score 상위 5종목
+            "ai_bottom": [...],     # AI Score 하위 3종목
+            "feature_top3": [...],  # Feature Importance Top 3
+            "model_auc": float,     # 최근 학습 AUC
+            "ai_weight": float,     # AI 가중치
+            "grade_dist": {...},    # 등급 분포
+        }
+    """
     from db_pool import get_cursor
-    import json as _json
-    result = {"ai_top": [], "ai_bottom": [], "feature_top3": [], "model_auc": None, "ai_weight": None, "grade_dist": {}}
+    result = {
+        "ai_top": [], "ai_bottom": [], "feature_top3": [],
+        "model_auc": None, "ai_weight": None, "grade_dist": {},
+    }
+
     try:
         with get_cursor() as cur:
+            # AI Score Top 5 (상승)
             cur.execute("""
-                SELECT s.ticker, asd.ai_score, asd.ensemble_score, fs.grade, fs.weighted_score, asd.shap_top5_pos
-                FROM ai_scores_daily asd
-                JOIN stocks s ON asd.stock_id = s.stock_id
-                LEFT JOIN (SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score FROM stock_final_scores ORDER BY stock_id, calc_date DESC) fs ON asd.stock_id = fs.stock_id
-                WHERE asd.calc_date = %s AND asd.ai_score IS NOT NULL ORDER BY asd.ai_score DESC LIMIT 5
+                SELECT s.ticker, xp.ai_score, xp.ensemble_score,
+                       fs.grade, fs.weighted_score,
+                       xp.shap_top_positive
+                FROM xgboost_predictions xp
+                JOIN stocks s ON xp.stock_id = s.stock_id
+                LEFT JOIN (
+                    SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
+                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
+                ) fs ON xp.stock_id = fs.stock_id
+                WHERE xp.calc_date = %s AND xp.ai_score IS NOT NULL
+                ORDER BY xp.ai_score DESC LIMIT 5
             """, (calc_date,))
             for row in cur.fetchall():
-                shap_pos = row.get("shap_top5_pos")
-                shap_str = ""
-                if shap_pos:
-                    if isinstance(shap_pos, str): shap_pos = _json.loads(shap_pos)
-                    if isinstance(shap_pos, list):
-                        parts = []
-                        for item in shap_pos[:3]:
-                            if isinstance(item, dict): parts.append(f"{item.get('feature', item.get('f','?'))}(+{item.get('shap', item.get('v',0)):.2f})")
-                            elif isinstance(item, (list, tuple)) and len(item) >= 2: parts.append(f"{item[0]}(+{item[1]:.2f})")
-                        shap_str = ", ".join(parts)
-                result["ai_top"].append({"ticker": row["ticker"], "ai_score": _safe_float(row.get("ai_score")), "grade": row.get("grade", "?"), "score": _safe_float(row.get("weighted_score")), "shap_reason": shap_str[:60] if shap_str else ""})
+                shap_pos = row.get("shap_top_positive") or ""
+                result["ai_top"].append({
+                    "ticker": row["ticker"],
+                    "ai_score": _safe_float(row["ai_score"]),
+                    "grade": row.get("grade", "?"),
+                    "score": _safe_float(row.get("weighted_score")),
+                    "shap_reason": shap_pos[:60] if isinstance(shap_pos, str) else "",
+                })
+
+            # AI Score Bottom 3 (하락 경고)
             cur.execute("""
-                SELECT s.ticker, asd.ai_score, fs.grade, fs.weighted_score, asd.shap_top5_neg
-                FROM ai_scores_daily asd
-                JOIN stocks s ON asd.stock_id = s.stock_id
-                LEFT JOIN (SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score FROM stock_final_scores ORDER BY stock_id, calc_date DESC) fs ON asd.stock_id = fs.stock_id
-                WHERE asd.calc_date = %s AND asd.ai_score IS NOT NULL ORDER BY asd.ai_score ASC LIMIT 3
+                SELECT s.ticker, xp.ai_score, fs.grade, fs.weighted_score,
+                       xp.shap_top_negative
+                FROM xgboost_predictions xp
+                JOIN stocks s ON xp.stock_id = s.stock_id
+                LEFT JOIN (
+                    SELECT DISTINCT ON (stock_id) stock_id, grade, weighted_score
+                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
+                ) fs ON xp.stock_id = fs.stock_id
+                WHERE xp.calc_date = %s AND xp.ai_score IS NOT NULL
+                ORDER BY xp.ai_score ASC LIMIT 3
             """, (calc_date,))
             for row in cur.fetchall():
-                shap_neg = row.get("shap_top5_neg")
-                shap_str = ""
-                if shap_neg:
-                    if isinstance(shap_neg, str): shap_neg = _json.loads(shap_neg)
-                    if isinstance(shap_neg, list):
-                        parts = []
-                        for item in shap_neg[:3]:
-                            if isinstance(item, dict): parts.append(f"{item.get('feature', item.get('f','?'))}({item.get('shap', item.get('v',0)):.2f})")
-                            elif isinstance(item, (list, tuple)) and len(item) >= 2: parts.append(f"{item[0]}({item[1]:.2f})")
-                        shap_str = ", ".join(parts)
-                result["ai_bottom"].append({"ticker": row["ticker"], "ai_score": _safe_float(row.get("ai_score")), "grade": row.get("grade", "?"), "shap_reason": shap_str[:60] if shap_str else ""})
-            cur.execute("SELECT train_auc, valid_auc, feature_count FROM ml_model_meta WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1")
+                shap_neg = row.get("shap_top_negative") or ""
+                result["ai_bottom"].append({
+                    "ticker": row["ticker"],
+                    "ai_score": _safe_float(row["ai_score"]),
+                    "grade": row.get("grade", "?"),
+                    "shap_reason": shap_neg[:60] if isinstance(shap_neg, str) else "",
+                })
+
+            # 모델 메타 (최근 학습 결과)
+            cur.execute("""
+                SELECT train_auc, ai_weight, feature_importance
+                FROM xgboost_models
+                WHERE is_active = TRUE
+                ORDER BY created_at DESC LIMIT 1
+            """)
             model = cur.fetchone()
             if model:
                 result["model_auc"] = _safe_float(model.get("train_auc"))
-                cur.execute("SELECT AVG(ai_weight) as avg_weight FROM ai_scores_daily WHERE calc_date = %s AND ai_weight IS NOT NULL", (calc_date,))
-                wrow = cur.fetchone()
-                if wrow and wrow.get("avg_weight"): result["ai_weight"] = _safe_float(wrow["avg_weight"])
-                try:
-                    cur.execute("SELECT feature_name, importance FROM xgb_feature_importance ORDER BY importance DESC LIMIT 3")
-                    fi_rows = cur.fetchall()
-                    if fi_rows: result["feature_top3"] = [{"name": r["feature_name"], "pct": round(float(r["importance"]) * 100, 1)} for r in fi_rows]
-                except Exception: pass
-            cur.execute("SELECT grade, COUNT(*) as cnt FROM stock_final_scores WHERE calc_date = %s AND grade IS NOT NULL GROUP BY grade ORDER BY grade", (calc_date,))
-            for row in cur.fetchall(): result["grade_dist"][row["grade"]] = int(row["cnt"])
+                result["ai_weight"] = _safe_float(model.get("ai_weight"))
+                fi = model.get("feature_importance")
+                if fi and isinstance(fi, (dict, str)):
+                    import json
+                    if isinstance(fi, str):
+                        fi = json.loads(fi)
+                    sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)[:3]
+                    result["feature_top3"] = [{"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi]
+
+            # 등급 분포
+            cur.execute("""
+                SELECT grade, COUNT(*) as cnt
+                FROM (
+                    SELECT DISTINCT ON (stock_id) stock_id, grade
+                    FROM stock_final_scores ORDER BY stock_id, calc_date DESC
+                ) sub
+                WHERE grade IS NOT NULL
+                GROUP BY grade ORDER BY grade
+            """)
+            for row in cur.fetchall():
+                result["grade_dist"][row["grade"]] = row["cnt"]
+
     except Exception as e:
-        logger.warning(f"  [AI-MORNING] data build fail: {e}")
+        print(f"  [AI-BUILDER] 모닝 데이터 실패: {e}")
+
     return result
 
 
 def build_ai_signal_data(stock_id: int, calc_date: date) -> dict:
-    """AI signal data per stock."""
+    """
+    개별 종목 AI 데이터 (매수/매도 시그널 보강용).
+    Returns:
+        {
+            "ai_score": float,
+            "ensemble_score": float,
+            "shap_positive": [{"feature": ..., "shap": ...}, ...],
+            "shap_negative": [{"feature": ..., "shap": ...}, ...],
+        }
+    """
     from db_pool import get_cursor
-    import json as _json
     result = {"ai_score": None, "ensemble_score": None, "shap_positive": [], "shap_negative": []}
+
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT ai_score, ensemble_score, shap_all, shap_top5_pos, shap_top5_neg FROM ai_scores_daily WHERE stock_id = %s AND calc_date = %s", (stock_id, calc_date))
+            cur.execute("""
+                SELECT ai_score, ensemble_score, shap_values
+                FROM xgboost_predictions
+                WHERE stock_id = %s AND calc_date = %s
+            """, (stock_id, calc_date))
             row = cur.fetchone()
             if row:
                 result["ai_score"] = _safe_float(row.get("ai_score"))
                 result["ensemble_score"] = _safe_float(row.get("ensemble_score"))
-                def _parse_shap(raw, limit=3):
-                    items = []
-                    if raw is None: return items
-                    if isinstance(raw, str): raw = _json.loads(raw)
-                    if isinstance(raw, list):
-                        for item in raw[:limit]:
-                            if isinstance(item, dict): items.append({"feature": item.get("feature", item.get("f","?")), "shap": round(float(item.get("shap", item.get("v",0))), 2)})
-                            elif isinstance(item, (list, tuple)) and len(item) >= 2: items.append({"feature": str(item[0]), "shap": round(float(item[1]), 2)})
-                    elif isinstance(raw, dict):
-                        for k, v in sorted(raw.items(), key=lambda x: abs(x[1]), reverse=True)[:limit]: items.append({"feature": k, "shap": round(float(v), 2)})
-                    return items
-                result["shap_positive"] = _parse_shap(row.get("shap_top5_pos"))
-                result["shap_negative"] = _parse_shap(row.get("shap_top5_neg"))
-                if not result["shap_positive"] or not result["shap_negative"]:
-                    shap_all = row.get("shap_all")
-                    if shap_all:
-                        if isinstance(shap_all, str): shap_all = _json.loads(shap_all)
-                        if isinstance(shap_all, dict):
-                            if not result["shap_positive"]: result["shap_positive"] = [{"feature": k, "shap": round(v,2)} for k,v in sorted(shap_all.items(), key=lambda x: x[1], reverse=True)[:3] if v > 0]
-                            if not result["shap_negative"]: result["shap_negative"] = [{"feature": k, "shap": round(v,2)} for k,v in sorted(shap_all.items(), key=lambda x: x[1])[:3] if v < 0]
+                shap_raw = row.get("shap_values")
+                if shap_raw:
+                    import json
+                    if isinstance(shap_raw, str):
+                        shap_raw = json.loads(shap_raw)
+                    if isinstance(shap_raw, dict):
+                        sorted_shap = sorted(shap_raw.items(), key=lambda x: x[1], reverse=True)
+                        for k, v in sorted_shap[:3]:
+                            if v > 0:
+                                result["shap_positive"].append({"feature": k, "shap": round(v, 2)})
+                        for k, v in sorted(shap_raw.items(), key=lambda x: x[1])[:3]:
+                            if v < 0:
+                                result["shap_negative"].append({"feature": k, "shap": round(v, 2)})
     except Exception as e:
-        logger.warning(f"  [AI-BUILDER] signal data fail ({stock_id}): {e}")
+        print(f"  [AI-BUILDER] signal data 실패 ({stock_id}): {e}")
+
     return result
 
 
@@ -1219,24 +1263,18 @@ def build_ai_risk_data(calc_date: date) -> dict:
         # Alpha Decay DEAD
         with get_cursor() as cur:
             cur.execute("""
-                SELECT ad.grade,
-                       ad.horizon_days AS holding_period,
-                       ad.avg_return,
-                       ad.hit_rate,
-                       ad.decay_ic AS ic_value
-                FROM alpha_decay_daily ad
-                JOIN signal_halflife sh
-                  ON ad.grade = sh.grade AND ad.calc_date = sh.calc_date
-                WHERE ad.calc_date = %s AND sh.status = 'DEAD'
-                ORDER BY ad.grade
+                SELECT grade, holding_period, avg_return, hit_rate, ic_value, signal_status
+                FROM alpha_decay_matrix
+                WHERE calc_date = %s AND signal_status = 'DEAD'
+                ORDER BY grade
             """, (calc_date,))
             for row in cur.fetchall():
                 result["decay_dead"].append({
                     "grade": row["grade"],
-                    "period": row.get("holding_period", 0),
-                    "hit": round(_safe_float(row.get("hit_rate")) * 100, 1) if row.get("hit_rate") else 0,
-                    "ic": round(_safe_float(row.get("ic_value")), 4) if row.get("ic_value") else 0,
-                    "avg_return": round(_safe_float(row.get("avg_return")) * 100, 2) if row.get("avg_return") else 0,
+                    "period": row["holding_period"],
+                    "hit": round(_safe_float(row["hit_rate"]) * 100, 1),
+                    "ic": round(_safe_float(row["ic_value"]), 4),
+                    "avg_return": round(_safe_float(row["avg_return"]) * 100, 2),
                 })
 
     except Exception as e:
@@ -1246,25 +1284,37 @@ def build_ai_risk_data(calc_date: date) -> dict:
 
 
 def build_ai_batch_summary(calc_date: date) -> dict:
-    """Batch summary: AUC + Feature Top + inference count."""
+    """
+    배치 완료용 AI 요약 (AUC + Feature Top + 추론 건수).
+    """
     from db_pool import get_cursor
     result = {"auc": None, "ai_weight": None, "predict_count": 0, "feature_top3": []}
+
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT train_auc, valid_auc, feature_count FROM ml_model_meta WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1")
+            cur.execute("""
+                SELECT train_auc, ai_weight, feature_importance
+                FROM xgboost_models
+                WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1
+            """)
             model = cur.fetchone()
             if model:
                 result["auc"] = _safe_float(model.get("train_auc"))
-                cur.execute("SELECT AVG(ai_weight) as avg_w FROM ai_scores_daily WHERE calc_date = %s AND ai_weight IS NOT NULL", (calc_date,))
-                wrow = cur.fetchone()
-                if wrow and wrow.get("avg_w"): result["ai_weight"] = _safe_float(wrow["avg_w"])
-                try:
-                    cur.execute("SELECT feature_name, importance FROM xgb_feature_importance ORDER BY importance DESC LIMIT 3")
-                    fi_rows = cur.fetchall()
-                    if fi_rows: result["feature_top3"] = [{"name": r["feature_name"], "pct": round(float(r["importance"]) * 100, 1)} for r in fi_rows]
-                except Exception: pass
-            cur.execute("SELECT COUNT(*) as cnt FROM ai_scores_daily WHERE calc_date = %s", (calc_date,))
+                result["ai_weight"] = _safe_float(model.get("ai_weight"))
+                fi = model.get("feature_importance")
+                if fi:
+                    import json
+                    if isinstance(fi, str):
+                        fi = json.loads(fi)
+                    sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)[:3]
+                    result["feature_top3"] = [{"name": k, "pct": round(v * 100, 1)} for k, v in sorted_fi]
+
+            cur.execute("""
+                SELECT COUNT(*) as cnt FROM xgboost_predictions WHERE calc_date = %s
+            """, (calc_date,))
             result["predict_count"] = cur.fetchone()["cnt"]
+
     except Exception as e:
-        print(f"  [AI-BUILDER] batch summary fail: {e}")
+        print(f"  [AI-BUILDER] batch summary 실패: {e}")
+
     return result
